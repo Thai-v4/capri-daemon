@@ -10,8 +10,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, channel};
 use std::time::{Duration, Instant};
 
-use capri_chat::{ApiKey, BoundKey, Brain, KeyAccount, Provider, ReplyEvent, Role, Turn};
-use capri_net::{Client, Limits, Problem};
+use capri_chat::{ApiKey, BoundKey, Brain, KeyAccount, Place, Provider, ReplyEvent, Role, Turn};
+use capri_net::{Ask, Client, Limits, Problem};
 use serde_json::{Value, json};
 
 const STREAM_HEAD: &[u8] =
@@ -148,6 +148,11 @@ fn plain(status: &str, content_type: &str, body: &str) -> Vec<u8> {
     .into_bytes()
 }
 
+/// Une demande dont la panne s'affichera dans la bulle.
+fn bubble<'a>(brain: &'a Brain, key: Option<&'a BoundKey>, persona: &'a str, turns: &'a [Turn]) -> Ask<'a> {
+    Ask { place: Place::Bubble, brain, key, persona, turns }
+}
+
 fn conversation() -> Vec<Turn> {
     vec![
         Turn { role: Role::User, text: "Salut".to_owned() },
@@ -160,9 +165,11 @@ fn conversation() -> Vec<Turn> {
 fn ask(client: &Client, brain: &Brain) -> (Vec<ReplyEvent>, Duration) {
     let started = Instant::now();
     let mut events = Vec::new();
-    client.answer(brain, None, "Tu es Capri.", &conversation(), &AtomicBool::new(false), &mut |event| {
-        events.push(event)
-    });
+    client.answer(
+        &bubble(brain, None, "Tu es Capri.", &conversation()),
+        &AtomicBool::new(false),
+        &mut |event| events.push(event),
+    );
     (events, started.elapsed())
 }
 
@@ -226,7 +233,7 @@ fn she_can_be_cut_off_and_the_server_is_told() {
     let cancelled = AtomicBool::new(false);
     let mut events = Vec::new();
     let started = Instant::now();
-    Client::new().answer(&server.brain(), None, "", &conversation(), &cancelled, &mut |event| {
+    Client::new().answer(&bubble(&server.brain(), None, "", &conversation()), &cancelled, &mut |event| {
         events.push(event);
         if events.len() == 3 {
             cancelled.store(true, Ordering::Relaxed);
@@ -257,8 +264,9 @@ fn a_cancel_before_the_first_word_stops_at_the_server_s_first_sign() {
     });
     let mut events = Vec::new();
     let started = Instant::now();
-    Client::new()
-        .answer(&server.brain(), None, "", &conversation(), &cancelled, &mut |event| events.push(event));
+    Client::new().answer(&bubble(&server.brain(), None, "", &conversation()), &cancelled, &mut |event| {
+        events.push(event)
+    });
     assert_eq!(events, [], "rien n'est émis");
     assert!(started.elapsed() < Duration::from_secs(2), "{:?}", started.elapsed());
     assert!(server.wait_for_hang_up());
@@ -545,10 +553,7 @@ fn provider_at(provider: Provider, address: SocketAddr) -> Brain {
 fn ask_with(brain: &Brain, key: Option<&BoundKey>) -> Vec<ReplyEvent> {
     let mut events = Vec::new();
     Client::new().answer(
-        brain,
-        key,
-        "Tu es Capri.",
-        &conversation(),
+        &bubble(brain, key, "Tu es Capri.", &conversation()),
         &AtomicBool::new(false),
         &mut |event| events.push(event),
     );
@@ -615,9 +620,8 @@ fn a_provider_that_needs_a_key_is_not_contacted_without_one() {
         assert_eq!(
             ask_with(&brain, None),
             [failed(&format!(
-                "{} demande une clé, et je n'en ai pas pour {address}. Pour me la donner : capri chat key {}",
-                provider.name(),
-                provider.id()
+                "{} demande une clé, et je n'en ai pas pour {address}. Pour me la donner : ouvre Réglages… dans mon menu.",
+                provider.name()
             ))]
         );
         assert_eq!(Client::new().models(provider, brain.endpoint(), None), Err(Problem::NoKey));
@@ -639,7 +643,7 @@ fn a_refused_key_says_how_to_put_it_back_and_never_quotes_it() {
     let events = ask_with(&brain, Some(&key_for(&brain)));
     assert_eq!(
         events,
-        [failed("OpenRouter refuse ma clé (401). Pour la remettre : capri chat key openrouter")]
+        [failed("OpenRouter refuse ma clé (401). Pour la remettre : ouvre Réglages… dans mon menu.")]
     );
 
     // un 403 est cité, puisqu'il peut dire autre chose qu'une mauvaise clé, mais masqué
@@ -650,7 +654,7 @@ fn a_refused_key_says_how_to_put_it_back_and_never_quotes_it() {
     assert_eq!(
         events,
         [failed(
-            "ProxyAPI refuse (403) : Key [clé masquée] may not use this model. Si c'est ma clé, pour la remettre : capri chat key proxyapi"
+            "ProxyAPI refuse (403) : Key [clé masquée] may not use this model. Si c'est ma clé, pour la remettre : ouvre Réglages… dans mon menu."
         )]
     );
 
@@ -673,7 +677,7 @@ fn a_server_that_wants_a_key_says_so() {
     assert_eq!(
         events,
         [failed(
-            "LM Studio demande une clé (401) : token required. Pour me la donner : capri chat key lmstudio"
+            "LM Studio demande une clé (401) : token required. Pour me la donner : ouvre Réglages… dans mon menu."
         )]
     );
 }
@@ -760,7 +764,7 @@ fn a_key_given_for_another_address_is_never_sent() {
     assert_eq!(
         ask_with(&brain, Some(&other_port)),
         [failed(&format!(
-            "OpenRouter demande une clé, et je n'en ai pas pour {address}. Pour me la donner : capri chat key openrouter"
+            "OpenRouter demande une clé, et je n'en ai pas pour {address}. Pour me la donner : ouvre Réglages… dans mon menu."
         ))]
     );
     assert_eq!(

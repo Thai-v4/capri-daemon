@@ -134,7 +134,7 @@ impl InputPanel {
             field.setTarget(Some(&panel));
             field.setAction(Some(sel!(capriSubmit:)));
         }
-        // la vue qui le porte fait marcher ⌘X, ⌘C, ⌘V, ⌘A et ⌘Z dans le champ
+        // la vue qui le porte fait marcher ⌘X, ⌘C, ⌘V, ⌘A et ⌘Z dans le champ, et ⌘W, ⌘Q, ⌘H le ferment
         let content = EditKeysView::create(mtm, frame);
         content.addSubview(&field);
         panel.setContentView(Some(&content));

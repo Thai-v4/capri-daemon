@@ -31,7 +31,9 @@ use std::time::Duration;
 
 use capri_chat::openai::{self, End};
 use capri_chat::sse::SseDecoder;
-use capri_chat::{BoundKey, Brain, Endpoint, KeyError, KeyNeed, Provider, Reach, ReplyEvent, Turn, key};
+use capri_chat::{
+    BoundKey, Brain, Endpoint, KeyError, KeyJob, KeyNeed, Place, Provider, Reach, ReplyEvent, Turn, key,
+};
 
 /// Ce système sait-il parler `https://` ?
 pub const TLS: bool = cfg!(any(target_os = "macos", windows));
@@ -118,20 +120,32 @@ impl Problem {
         kind.to_owned()
     }
 
-    /// La phrase que Capri dit dans sa bulle, ou qu'affiche la ligne de commande. Elle ne cite
+    /// La phrase que Capri dit dans sa bulle, qu'affiche la fenêtre de réglages ou la ligne de
+    /// commande. Elle ne cite
     /// jamais une clé : le message d'un fournisseur y arrive déjà masqué, et celui d'un refus de
     /// clé (401) n'est pas cité du tout.
     ///
-    /// `chosen` : le cerveau des réglages, s'il y en a un. La commande proposée pour donner une clé
-    /// à `endpoint` n'a besoin de `--url` que si, sans lui, elle viserait une autre adresse.
-    pub fn explain(&self, provider: Provider, endpoint: &Endpoint, chosen: Option<&Brain>) -> String {
+    /// `place` : où elle s'affiche. Le conseil qui la termine en dépend ([`Place`]) : un terminal
+    /// reçoit une commande, la bulle et la fenêtre jamais.
+    ///
+    /// `chosen` : le cerveau des réglages, s'il y en a un. La commande proposée à un terminal pour
+    /// donner une clé à `endpoint` n'a besoin de `--url` que si, sans lui, elle viserait une autre
+    /// adresse.
+    pub fn explain(
+        &self,
+        place: Place,
+        provider: Provider,
+        endpoint: &Endpoint,
+        chosen: Option<&Brain>,
+    ) -> String {
         let host = endpoint.display_host();
         // qui parle : le fournisseur, ou, pour un serveur personnalisé, son adresse
         let (who, whom) = match provider {
             Provider::Custom => (host.clone(), host.clone()),
             _ => (provider.name().to_owned(), format!("{} ({host})", provider.name())),
         };
-        let set_key = key::set_key_command(provider, endpoint, chosen);
+        let command = key::set_key_command(provider, endpoint, chosen);
+        let how_to = |job| place.how_to_key(job, &command);
         match self {
             Self::NoTls => "Je ne sais pas me connecter en https sur ce système.".to_owned(),
             Self::Unreachable if endpoint.reach() == Reach::Internet => {
@@ -143,22 +157,30 @@ impl Problem {
             }
             Self::TimedOut => format!("{who} met trop de temps à répondre."),
             Self::NoKey => {
-                format!("{who} demande une clé, et je n'en ai pas pour {host}. Pour me la donner : {set_key}")
+                format!(
+                    "{who} demande une clé, et je n'en ai pas pour {host}. Pour me la donner : {}",
+                    how_to(KeyJob::Give)
+                )
             }
             Self::KeyInClear => {
                 format!("Je n'envoie pas ma clé en clair à {host} : seulement en https, ou à cette machine.")
             }
             Self::KeyRefused { status: 401, .. } => {
-                format!("{who} refuse ma clé (401). Pour la remettre : {set_key}")
+                format!("{who} refuse ma clé (401). Pour la remettre : {}", how_to(KeyJob::PutBack))
             }
             Self::KeyRefused { status, reason } => {
                 format!(
-                    "{who} refuse ({status}){}. Si c'est ma clé, pour la remettre : {set_key}",
-                    quote(reason)
+                    "{who} refuse ({status}){}. Si c'est ma clé, pour la remettre : {}",
+                    quote(reason),
+                    how_to(KeyJob::PutBack)
                 )
             }
             Self::KeyNeeded { status, reason } => {
-                format!("{who} demande une clé ({status}){}. Pour me la donner : {set_key}", quote(reason))
+                format!(
+                    "{who} demande une clé ({status}){}. Pour me la donner : {}",
+                    quote(reason),
+                    how_to(KeyJob::Give)
+                )
             }
             Self::Refused { status, reason: Some(reason) } => {
                 format!("{who} refuse ({status}) : {}", brief(reason))
@@ -192,6 +214,23 @@ fn brief(reason: &str) -> String {
 enum Outcome {
     Complete,
     Cancelled,
+}
+
+/// Ce qu'on demande au cerveau, et pour qui.
+#[derive(Clone, Copy)]
+pub struct Ask<'a> {
+    /// Où s'affichera le message de panne : le conseil qui le termine en dépend
+    /// ([`Problem::explain`]).
+    pub place: Place,
+    /// Le cerveau des réglages : c'est pour lui que sont écrits les conseils d'un message de panne
+    /// (« Pour me la donner : … »).
+    pub brain: &'a Brain,
+    /// La clé du fournisseur, s'il en a une. Elle part dans l'en-tête `Authorization`, seulement si
+    /// le fournisseur en prend une, si elle a été donnée pour l'adresse du cerveau, et si cette
+    /// adresse a le droit de la recevoir.
+    pub key: Option<&'a BoundKey>,
+    pub persona: &'a str,
+    pub turns: &'a [Turn],
 }
 
 pub struct Client {
@@ -237,24 +276,12 @@ impl Client {
     /// `Delta`, puis `Done` ou `Failed`. Bloque jusqu'à la fin : à appeler hors du thread
     /// principal.
     ///
-    /// `brain` est le cerveau des réglages : c'est pour lui que sont écrits les conseils d'un
-    /// message de panne (« Pour me la donner : capri chat key … »).
-    ///
-    /// `key` : la clé du fournisseur, s'il en a une. Elle part dans l'en-tête `Authorization`,
-    /// seulement si le fournisseur en prend une, si elle a été donnée pour l'adresse du cerveau, et
-    /// si cette adresse a le droit de la recevoir.
+    /// Ce qu'il faut savoir de la demande : voir [`Ask`].
     ///
     /// Dès que `cancelled` passe à vrai, la lecture s'arrête, la connexion est fermée (le serveur
     /// cesse alors d'écrire) et plus rien n'est émis, pas même `Done`.
-    pub fn answer(
-        &self,
-        brain: &Brain,
-        key: Option<&BoundKey>,
-        persona: &str,
-        turns: &[Turn],
-        cancelled: &AtomicBool,
-        emit: &mut dyn FnMut(ReplyEvent),
-    ) {
+    pub fn answer(&self, ask: &Ask, cancelled: &AtomicBool, emit: &mut dyn FnMut(ReplyEvent)) {
+        let Ask { place, brain, key, persona, turns } = *ask;
         let outcome =
             self.stream(brain, key, persona, turns, cancelled, &mut |text| emit(ReplyEvent::Delta(text)));
         match outcome {
@@ -262,7 +289,12 @@ impl Client {
             Ok(Outcome::Complete) => emit(ReplyEvent::Done),
             Err(problem) => {
                 log::warn!("pas de réponse du cerveau : {}", problem.for_log());
-                emit(ReplyEvent::Failed(problem.explain(brain.provider(), brain.endpoint(), Some(brain))));
+                emit(ReplyEvent::Failed(problem.explain(
+                    place,
+                    brain.provider(),
+                    brain.endpoint(),
+                    Some(brain),
+                )));
             }
         }
     }
@@ -508,7 +540,7 @@ mod tests {
     #[test]
     fn each_problem_is_said_in_one_plain_sentence() {
         let endpoint = Endpoint::parse("http://localhost:11434/v1").expect("valide");
-        let say = |problem: Problem| problem.explain(Provider::Ollama, &endpoint, None);
+        let say = |problem: Problem| problem.explain(Place::Terminal, Provider::Ollama, &endpoint, None);
         assert_eq!(
             say(Problem::Unreachable),
             "Je n'arrive pas à joindre Ollama (localhost:11434). Il est lancé ?"
@@ -537,7 +569,8 @@ mod tests {
     #[test]
     fn a_key_problem_says_how_to_fix_it_without_quoting_the_key() {
         let openrouter = Endpoint::parse("https://openrouter.ai/api/v1").expect("valide");
-        let say = |problem: Problem| problem.explain(Provider::OpenRouter, &openrouter, None);
+        let say =
+            |problem: Problem| problem.explain(Place::Terminal, Provider::OpenRouter, &openrouter, None);
         assert_eq!(
             say(Problem::NoKey),
             "OpenRouter demande une clé, et je n'en ai pas pour openrouter.ai:443. Pour me la donner : capri chat key openrouter"
@@ -562,34 +595,95 @@ mod tests {
 
         let lan = Endpoint::parse("http://192.168.1.20:1234/v1").expect("valide");
         assert_eq!(
-            Problem::KeyInClear.explain(Provider::Custom, &lan, None),
+            Problem::KeyInClear.explain(Place::Terminal, Provider::Custom, &lan, None),
             "Je n'envoie pas ma clé en clair à 192.168.1.20:1234 : seulement en https, ou à cette machine."
         );
         // un serveur personnalisé est désigné par son adresse, et sa clé se donne avec elle
         assert_eq!(
-            Problem::KeyNeeded { status: 401, reason: None }.explain(Provider::Custom, &lan, None),
+            Problem::KeyNeeded { status: 401, reason: None }.explain(
+                Place::Terminal,
+                Provider::Custom,
+                &lan,
+                None
+            ),
             "192.168.1.20:1234 demande une clé (401). Pour me la donner : capri chat key custom --url http://192.168.1.20:1234/v1"
         );
         // … sauf si c'est le cerveau choisi : `capri chat key custom` vise alors son adresse
         let chosen = Brain::new(Provider::Custom, Some("http://192.168.1.20:1234/v1"), "m").expect("valide");
         assert_eq!(
-            Problem::KeyNeeded { status: 401, reason: None }.explain(Provider::Custom, &lan, Some(&chosen)),
+            Problem::KeyNeeded { status: 401, reason: None }.explain(
+                Place::Terminal,
+                Provider::Custom,
+                &lan,
+                Some(&chosen)
+            ),
             "192.168.1.20:1234 demande une clé (401). Pour me la donner : capri chat key custom"
         );
         assert_eq!(
-            Problem::TimedOut.explain(Provider::Custom, &lan, None),
+            Problem::TimedOut.explain(Place::Terminal, Provider::Custom, &lan, None),
             "192.168.1.20:1234 met trop de temps à répondre."
         );
         assert_eq!(
-            Problem::Unreachable.explain(Provider::Custom, &lan, None),
+            Problem::Unreachable.explain(Place::Terminal, Provider::Custom, &lan, None),
             "Je n'arrive pas à joindre 192.168.1.20:1234. Il est lancé ?"
         );
         // OpenRouter joint ailleurs que chez lui : sa commande dit où
         let proxy = Endpoint::parse("https://proxy.example/api/v1").expect("valide");
         assert_eq!(
-            Problem::NoKey.explain(Provider::OpenRouter, &proxy, None),
+            Problem::NoKey.explain(Place::Terminal, Provider::OpenRouter, &proxy, None),
             "OpenRouter demande une clé, et je n'en ai pas pour proxy.example:443. Pour me la donner : capri chat key openrouter --url https://proxy.example/api/v1"
         );
+    }
+
+    #[test]
+    fn only_a_terminal_is_sent_to_a_command_to_fix_a_key() {
+        let openrouter = Endpoint::parse("https://openrouter.ai/api/v1").expect("valide");
+        let lan = Endpoint::parse("http://192.168.1.20:1234/v1").expect("valide");
+        let say = |place, problem: Problem| problem.explain(place, Provider::OpenRouter, &openrouter, None);
+        let refused = || Problem::KeyRefused { status: 401, reason: None };
+        let flagged = || Problem::KeyRefused { status: 403, reason: None };
+        // la bulle renvoie aux réglages
+        assert_eq!(
+            say(Place::Bubble, Problem::NoKey),
+            "OpenRouter demande une clé, et je n'en ai pas pour openrouter.ai:443. Pour me la donner : ouvre Réglages… dans mon menu."
+        );
+        assert_eq!(
+            say(Place::Bubble, refused()),
+            "OpenRouter refuse ma clé (401). Pour la remettre : ouvre Réglages… dans mon menu."
+        );
+        assert_eq!(
+            say(Place::Bubble, flagged()),
+            "OpenRouter refuse (403). Si c'est ma clé, pour la remettre : ouvre Réglages… dans mon menu."
+        );
+        assert_eq!(
+            Problem::KeyNeeded { status: 401, reason: None }.explain(
+                Place::Bubble,
+                Provider::Custom,
+                &lan,
+                None
+            ),
+            "192.168.1.20:1234 demande une clé (401). Pour me la donner : ouvre Réglages… dans mon menu."
+        );
+        // la fenêtre dit quoi faire sur place
+        assert_eq!(
+            say(Place::Window, refused()),
+            "OpenRouter refuse ma clé (401). Pour la remettre : remets-la ci-dessus."
+        );
+        assert_eq!(
+            say(Place::Window, Problem::NoKey),
+            "OpenRouter demande une clé, et je n'en ai pas pour openrouter.ai:443. Pour me la donner : saisis-la ci-dessus."
+        );
+        // seul le conseil change : le reste de la phrase est le même partout
+        for problem in
+            [Problem::NoKey, refused(), flagged(), Problem::KeyNeeded { status: 403, reason: None }]
+        {
+            let terminal = say(Place::Terminal, problem.clone());
+            let advice = terminal.rfind(" : ").map(|at| &terminal[..at]).expect("un conseil");
+            for place in [Place::Bubble, Place::Window] {
+                let said = say(place, problem.clone());
+                assert!(said.starts_with(advice) && !said.contains("capri chat"), "{said}");
+            }
+        }
     }
 
     #[test]

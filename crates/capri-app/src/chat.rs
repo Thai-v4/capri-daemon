@@ -23,9 +23,9 @@ use std::time::{Duration, Instant};
 
 use capri_chat::plain::PlainStream;
 use capri_chat::voice::{Sentences, speakable};
-use capri_chat::{Conversation, ReplyEvent, Role, Turn, echo, reply};
+use capri_chat::{Conversation, Place, ReplyEvent, Role, Turn, echo, reply};
 use capri_core::Speech;
-use capri_net::Client;
+use capri_net::{Ask, Client};
 use capri_platform::Voice;
 
 use crate::keys::{self, KeyStore};
@@ -316,8 +316,8 @@ fn think(
         Ok(setup) => setup.flatten(),
         Err(err) => {
             log::error!("cerveau : {err:#}");
-            let problem = "Mes réglages sont illisibles : capri chat status te dira pourquoi.";
-            return emit(ReplyEvent::Failed(problem.to_owned()));
+            let problem = format!("Mes réglages sont illisibles : {}", Place::Bubble.where_to_see_why());
+            return emit(ReplyEvent::Failed(problem));
         }
     };
     let Some(setup) = setup else { return repeat(turns, cancelled, &mut emit) };
@@ -327,8 +327,9 @@ fn think(
         Err(err) => {
             log::error!("clé de {} : {err:#}", provider.name());
             let problem = format!(
-                "Je n'ai pas pu lire ma clé dans {} : capri chat status te dira pourquoi.",
-                keys.name()
+                "Je n'ai pas pu lire ma clé dans {} : {}",
+                keys.name(),
+                Place::Bubble.where_to_see_why()
             );
             return emit(ReplyEvent::Failed(problem));
         }
@@ -341,15 +342,15 @@ fn think(
     );
     // un modèle écrit volontiers du Markdown, qui n'a aucun sens dans une bulle ni à voix haute
     let mut plain = PlainStream::new();
-    client.answer(&setup.brain, key.as_ref(), &setup.persona, turns, cancelled, &mut |event| {
-        plain.filter(event, &mut emit)
-    });
+    let ask =
+        Ask { place: Place::Bubble, brain: &setup.brain, key: key.as_ref(), persona: &setup.persona, turns };
+    client.answer(&ask, cancelled, &mut |event| plain.filter(event, &mut emit));
 }
 
 /// Le cerveau de secours : il répète le dernier message, mot à mot.
 fn repeat(turns: &[Turn], cancelled: &AtomicBool, emit: &mut dyn FnMut(ReplyEvent)) {
     let message = turns.last().map_or("", |turn| turn.text.as_str());
-    let answer = echo::reply_to(message);
+    let answer = echo::reply_to(Place::Bubble, message);
     for piece in reply::chunks(&answer) {
         if cancelled.load(Ordering::Relaxed) {
             return;
@@ -483,7 +484,7 @@ mod tests {
         let answer = listen(&mut chat);
         assert_eq!(
             answer,
-            format!("{address} refuse ma clé (401). Pour la remettre : capri chat key custom")
+            format!("{address} refuse ma clé (401). Pour la remettre : ouvre Réglages… dans mon menu.")
         );
         assert!(!answer.contains(KEY));
         let _ = std::fs::remove_dir_all(directory);
@@ -500,7 +501,7 @@ mod tests {
         assert_eq!(
             listen(&mut chat),
             format!(
-                "OpenRouter demande une clé, et je n'en ai pas pour {address}. Pour me la donner : capri chat key openrouter"
+                "OpenRouter demande une clé, et je n'en ai pas pour {address}. Pour me la donner : ouvre Réglages… dans mon menu."
             )
         );
 
@@ -510,7 +511,7 @@ mod tests {
         chat.say("Coucou");
         assert_eq!(
             listen(&mut chat),
-            "Je n'ai pas pu lire ma clé dans le trousseau de test : capri chat status te dira pourquoi."
+            "Je n'ai pas pu lire ma clé dans le trousseau de test : Réglages… dans mon menu te dira pourquoi."
         );
         assert!(requests.recv_timeout(Duration::from_millis(100)).is_err(), "personne n'a été contacté");
         let _ = std::fs::remove_dir_all(directory);
@@ -544,7 +545,7 @@ mod tests {
         assert_eq!(
             listen(&mut chat),
             format!(
-                "OpenRouter demande une clé, et je n'en ai pas pour {address}. Pour me la donner : capri chat key openrouter"
+                "OpenRouter demande une clé, et je n'en ai pas pour {address}. Pour me la donner : ouvre Réglages… dans mon menu."
             )
         );
         assert!(requests.recv_timeout(Duration::from_millis(100)).is_err(), "personne n'a été contacté");

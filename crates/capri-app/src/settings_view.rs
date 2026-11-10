@@ -16,8 +16,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, Sender, channel};
 
-use capri_chat::persona;
 use capri_chat::settings::{Done, Effect, Environment, Forgotten, LegacyKey, Outcome, Settings, Task};
+use capri_chat::{Place, persona};
 use capri_core::form::{Form, FormEvent};
 use capri_net::Client;
 use capri_platform::{SettingsWindow, SettingsWindowError, Voice};
@@ -247,10 +247,16 @@ impl Effects {
                 log::debug!("réglages : liste des modèles de {}", endpoint.display_host());
                 let (keys, client) = (Arc::clone(&self.keys), Arc::clone(&self.client));
                 in_background("capri-modeles", move || {
-                    let result =
-                        brain_setup::list_models(&*keys, &client, provider, &endpoint, chosen.as_ref())
-                            .map(|listed| listed.models)
-                            .map_err(text);
+                    let result = brain_setup::list_models(
+                        &*keys,
+                        &client,
+                        Place::Window,
+                        provider,
+                        &endpoint,
+                        chosen.as_ref(),
+                    )
+                    .map(|listed| listed.models)
+                    .map_err(text);
                     send(Outcome::ModelsListed { provider, endpoint, result });
                 });
             }
@@ -266,8 +272,7 @@ impl Effects {
                     let talked = brain_setup::talk(
                         &*keys,
                         &client,
-                        &brain,
-                        &persona,
+                        &brain_setup::Speaker { place: Place::Window, brain: &brain, persona: &persona },
                         &message,
                         &closing,
                         &mut |piece| {
@@ -534,11 +539,11 @@ mod tests {
         assert_eq!(header(&head, "authorization"), Some(format!("Bearer {KEY}")));
         assert!(!body.contains(KEY));
 
-        // une clé refusée : le message de `capri chat test`, sans la clé
+        // une clé refusée : le message de sa bulle, mais avec le conseil de la fenêtre, sans la clé
         window.press(rubric::TALK, None);
         assert_eq!(
             window.note(rubric::TALK_NOTE),
-            format!("{address} refuse ma clé (401). Pour la remettre : capri chat key custom")
+            format!("{address} refuse ma clé (401). Pour la remettre : remets-la ci-dessus.")
         );
         assert!(!format!("{:?}", window.settings.form()).contains(KEY));
         let _ = std::fs::remove_dir_all(directory);

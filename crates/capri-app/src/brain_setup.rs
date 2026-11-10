@@ -25,10 +25,10 @@ use capri_chat::phrases::{
 };
 use capri_chat::plain::PlainStream;
 use capri_chat::{
-    ApiKey, BoundKey, Brain, Endpoint, KeyAccount, KeyNeed, Provider, Reach, ReplyEvent, Role, Turn, key,
-    persona,
+    ApiKey, BoundKey, Brain, Endpoint, KeyAccount, KeyJob, KeyNeed, Place, Provider, Reach, ReplyEvent, Role,
+    Turn, key, persona,
 };
-use capri_net::{Client, Problem};
+use capri_net::{Ask, Client, Problem};
 
 use crate::keys::{self, KeyStore, SystemKeychain};
 
@@ -374,7 +374,11 @@ impl Cli<'_> {
                 }
             }
             Err(problem) => {
-                writeln!(self.out, "serveur  : {}", problem.explain(provider, endpoint, Some(brain)))?;
+                writeln!(
+                    self.out,
+                    "serveur  : {}",
+                    problem.explain(Place::Terminal, provider, endpoint, Some(brain))
+                )?;
                 if let Some(hint) = how_to_fix(provider, &problem) {
                     writeln!(self.out, "           {hint}")?;
                 }
@@ -420,7 +424,8 @@ impl Cli<'_> {
     fn choose(&mut self, provider: Provider, model: Option<&str>, url: Option<&str>) -> Result<()> {
         let endpoint = endpoint_for(provider, url)?;
         let chosen = self.chosen();
-        let listed = list_models(self.keys, &self.client, provider, &endpoint, chosen.as_ref())?;
+        let listed =
+            list_models(self.keys, &self.client, Place::Terminal, provider, &endpoint, chosen.as_ref())?;
         let model = pick_model(provider, &endpoint, &listed.models, model)?;
         let brain = Brain::new(provider, Some(&endpoint.url("")), &model)?;
         let file = save(&self.directory, &brain)?;
@@ -546,7 +551,9 @@ impl Cli<'_> {
     fn models(&mut self, provider: Provider, word: Option<&str>, url: Option<&str>) -> Result<()> {
         let endpoint = endpoint_for(provider, url)?;
         let chosen = self.chosen();
-        let models = list_models(self.keys, &self.client, provider, &endpoint, chosen.as_ref())?.models;
+        let models =
+            list_models(self.keys, &self.client, Place::Terminal, provider, &endpoint, chosen.as_ref())?
+                .models;
         let word = word.map(str::to_lowercase);
         let found = search_models(&models, word.as_deref().unwrap_or(""));
         let (name, id) = (provider.name(), provider.id());
@@ -587,8 +594,7 @@ impl Cli<'_> {
         let talked = talk(
             *keys,
             client,
-            &setup.brain,
-            &setup.persona,
+            &Speaker { place: Place::Terminal, brain: &setup.brain, persona: &setup.persona },
             message,
             &AtomicBool::new(false),
             &mut |text| {
@@ -646,19 +652,21 @@ pub struct Listed {
 /// Les modèles que propose le serveur de `provider` à `endpoint`, demandés avec la clé rangée pour
 /// cette adresse s'il en faut une (les règles de [`key_for_server`] : personne n'est contacté
 /// sans la clé exigée). `capri chat use`, `capri chat models` et la fenêtre de réglages passent
-/// par ici. `chosen` : le cerveau choisi, pour les commandes que proposent les messages.
+/// par ici. `place` : où s'afficheront les messages, pour leurs conseils ([`Place`]). `chosen` : le
+/// cerveau choisi, pour les commandes que proposent les messages d'un terminal.
 /// Bloque : hors du thread principal.
 pub fn list_models(
     keys: &dyn KeyStore,
     client: &Client,
+    place: Place,
     provider: Provider,
     endpoint: &Endpoint,
     chosen: Option<&Brain>,
 ) -> Result<Listed> {
-    let key = key_for_server(keys, provider, endpoint, chosen)?;
+    let key = key_for_server(keys, place, provider, endpoint, chosen)?;
     let models = client.models(provider, endpoint, key.as_ref()).map_err(|problem| {
         let hint = how_to_fix(provider, &problem).map(|hint| format!("\n{hint}")).unwrap_or_default();
-        anyhow!("{}{hint}", problem.explain(provider, endpoint, chosen))
+        anyhow!("{}{hint}", problem.explain(place, provider, endpoint, chosen))
     })?;
     Ok(Listed { models, with_key: key.is_some() })
 }
@@ -669,6 +677,15 @@ pub struct Talked {
     pub total: Duration,
 }
 
+/// Qui parle dans [`talk`], et où s'affichera sa panne.
+#[derive(Clone, Copy)]
+pub struct Speaker<'a> {
+    /// Où s'affichera la panne, pour son conseil ([`Place`]).
+    pub place: Place,
+    pub brain: &'a Brain,
+    pub persona: &'a str,
+}
+
 /// Dit `message` à `brain`, avec la clé rangée pour son adresse s'il en prend une, et passe sa
 /// réponse à `on_text` au fil de l'eau, nettoyée comme pour sa bulle. Une panne est l'erreur
 /// rendue, dans les mots de sa bulle. `capri chat test` et l'essai de la fenêtre de réglages
@@ -676,12 +693,12 @@ pub struct Talked {
 pub fn talk(
     keys: &dyn KeyStore,
     client: &Client,
-    brain: &Brain,
-    persona: &str,
+    speaker: &Speaker,
     message: &str,
     cancelled: &AtomicBool,
     on_text: &mut dyn FnMut(&str),
 ) -> Result<Talked> {
+    let Speaker { place, brain, persona } = *speaker;
     let provider = brain.provider();
     let key = keys::key_for(keys, provider, brain.endpoint())
         .with_context(|| format!("pas de réponse : la clé {} est illisible", of_provider(provider)))?;
@@ -691,7 +708,8 @@ pub fn talk(
     let mut failure = None;
     // le même nettoyage que pour sa bulle : on voit ici ce qu'elle dirait
     let mut plain = PlainStream::new();
-    client.answer(brain, key.as_ref(), persona, &turns, cancelled, &mut |event| {
+    let ask = Ask { place, brain, key: key.as_ref(), persona, turns: &turns };
+    client.answer(&ask, cancelled, &mut |event| {
         plain.filter(event, &mut |event| match event {
             ReplyEvent::Delta(text) => {
                 first_word.get_or_insert_with(|| started.elapsed());
@@ -721,9 +739,11 @@ fn url_option(provider: Provider, endpoint: &Endpoint) -> String {
 
 /// La clé à envoyer à ce serveur, celle rangée pour son adresse, après avoir vérifié qu'il en faut
 /// une et qu'elle a le droit d'y aller : jamais en clair sur le réseau. Rien n'est contacté ici.
-/// `chosen` : le cerveau choisi, pour la commande à proposer.
+/// `place` : où s'affichera le message ; `chosen` : le cerveau choisi, pour la commande à proposer
+/// à un terminal.
 fn key_for_server(
     keys: &dyn KeyStore,
+    place: Place,
     provider: Provider,
     endpoint: &Endpoint,
     chosen: Option<&Brain>,
@@ -731,15 +751,18 @@ fn key_for_server(
     let address = KeyAccount::new(provider, endpoint).address().to_owned();
     let key = keys::key_for(keys, provider, endpoint)
         .with_context(|| format!("la clé {} pour {address} est illisible", of_provider(provider)))?;
-    let set_key = key::set_key_command(provider, endpoint, chosen);
+    let command = key::set_key_command(provider, endpoint, chosen);
+    let how_to = |job| place.how_to_key(job, &command);
     match (provider.key_need(), &key) {
         (KeyNeed::Required, None) => bail!(
-            "{} demande une clé, et il n'y en a pas pour {address}. Range-la d'abord : {set_key}",
-            provider.name()
+            "{} demande une clé, et il n'y en a pas pour {address}. Range-la d'abord : {}",
+            provider.name(),
+            how_to(KeyJob::Give)
         ),
         (_, Some(_)) if !endpoint.may_carry_secret() => bail!(
-            "la clé {} rangée pour {address} ne partirait pas en clair : donne une adresse en https, ou retire la clé ({set_key} --forget)",
+            "la clé {} rangée pour {address} ne partirait pas en clair : donne une adresse en https, ou retire la clé ({})",
             of_provider(provider),
+            how_to(KeyJob::Forget)
         ),
         _ => Ok(key),
     }
@@ -1248,6 +1271,29 @@ mod tests {
     }
 
     #[test]
+    fn the_window_never_sends_the_user_to_a_terminal_for_a_key() {
+        // aucun contact : la clé manque, ou ne partirait pas en clair
+        let openrouter = Endpoint::parse("https://openrouter.ai/api/v1").expect("adresse valable");
+        let said = |place, keys: &MemoryKeys, provider, endpoint: &Endpoint| {
+            format!("{:#}", key_for_server(keys, place, provider, endpoint, None).expect_err("refusé"))
+        };
+        let empty = MemoryKeys::default();
+        assert_eq!(
+            said(Place::Terminal, &empty, Provider::OpenRouter, &openrouter),
+            "OpenRouter demande une clé, et il n'y en a pas pour openrouter.ai:443. Range-la d'abord : capri chat key openrouter"
+        );
+        assert_eq!(
+            said(Place::Window, &empty, Provider::OpenRouter, &openrouter),
+            "OpenRouter demande une clé, et il n'y en a pas pour openrouter.ai:443. Range-la d'abord : saisis-la ci-dessus."
+        );
+        let lan = Endpoint::parse("http://192.168.1.20:1234/v1").expect("adresse valable");
+        let keys = MemoryKeys::with(Provider::Custom, "https://192.168.1.20:1234/v1", KEY);
+        let window = said(Place::Window, &keys, Provider::Custom, &lan);
+        assert!(window.ends_with("ou retire la clé (bouton « Retirer la clé »)"), "{window}");
+        assert!(!window.contains("capri chat"), "{window}");
+    }
+
+    #[test]
     fn a_key_never_goes_in_clear_to_another_machine() {
         // vérifié avant tout contact : ce test n'ouvre aucune connexion. Une clé donnée en https
         // pour un serveur du réseau privé est celle du même hôte et du même port en http.
@@ -1258,8 +1304,10 @@ mod tests {
             ("http://192.168.1.20:1234/v1", "192.168.1.20:1234"),
             ("http://10.0.0.5:8080/v1", "10.0.0.5:8080"),
         ] {
-            let error =
-                format!("{:#}", key_for_server(&keys, Provider::Custom, &at(url), None).expect_err("refusé"));
+            let error = format!(
+                "{:#}",
+                key_for_server(&keys, Place::Terminal, Provider::Custom, &at(url), None).expect_err("refusé")
+            );
             assert_eq!(
                 error,
                 format!(
@@ -1268,7 +1316,7 @@ mod tests {
             );
         }
         let permitted = |keys: &MemoryKeys, provider, url: &str| {
-            key_for_server(keys, provider, &at(url), None).expect("permis").is_some()
+            key_for_server(keys, Place::Terminal, provider, &at(url), None).expect("permis").is_some()
         };
         assert!(permitted(&keys, Provider::Custom, "https://192.168.1.20:1234/v1"));
         assert!(permitted(&keys, Provider::Custom, "http://localhost:1234/v1"));
