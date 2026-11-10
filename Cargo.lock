@@ -426,6 +426,7 @@ version = "0.1.0"
 dependencies = [
  "block2 0.6.2",
  "dispatch2",
+ "libc",
  "log",
  "objc2 0.6.5",
  "objc2-app-kit 0.3.2",
@@ -433,6 +434,7 @@ dependencies = [
  "objc2-foundation 0.3.2",
  "objc2-speech",
  "raw-window-handle",
+ "security-framework",
  "thiserror 2.0.21",
  "windows-sys 0.61.2",
  "winit",
