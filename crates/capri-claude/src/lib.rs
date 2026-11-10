@@ -5,7 +5,9 @@
 //! - [`sessions`] : à partir de ces messages, quoi afficher dans le bandeau ;
 //! - [`settings`] : brancher et débrancher le hook dans `settings.json`, de texte à texte ;
 //! - [`places`] : où vivent les réglages de Capri et ceux de Claude Code, pour que le hook et
-//!   l'app trouvent les mêmes.
+//!   l'app trouvent les mêmes ;
+//! - [`style`] : le style de sortie « Capri », que l'utilisateur installe et choisit dans Claude
+//!   Code.
 //!
 //! Les noms d'événements et de champs viennent de la référence des hooks de Claude Code
 //! (<https://code.claude.com/docs/en/hooks>). Tout ce qui est inconnu est ignoré en silence :
@@ -16,6 +18,7 @@ pub mod places;
 pub mod protocol;
 pub mod sessions;
 pub mod settings;
+pub mod style;
 pub mod text;
 
 pub use protocol::{Event, Message};

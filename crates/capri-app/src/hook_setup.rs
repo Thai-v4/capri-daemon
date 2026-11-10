@@ -1,5 +1,5 @@
 //! Brancher et débrancher le hook dans le `settings.json` de Claude Code : la partie fichiers,
-//! et la commande `capri hook …`.
+//! et la commande `capri hook …` (qui installe aussi le style de sortie : `style_setup`).
 //!
 //! Ce que le fichier doit contenir est décidé par `capri_claude::settings`, qui ne lit ni n'écrit
 //! rien. Ici, on trouve le fichier, on le sauvegarde, et on le remplace d'un seul coup.
@@ -11,6 +11,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use anyhow::{Context, Result, anyhow, bail};
 use capri_claude::places;
 use capri_claude::settings::{self, BACKUP_PREFIX, SettingsError, Status};
+use capri_claude::style::StyleState;
+
+use crate::style_setup;
 
 /// Nombre de sauvegardes gardées à côté du fichier.
 const KEPT_BACKUPS: usize = 5;
@@ -134,10 +137,11 @@ fn save_backup(directory: &Path, target: &Path, original: &[u8]) -> Result<PathB
 
 /// Remplace `target` par `updated` d'un seul coup : un fichier temporaire, écrit et synchronisé,
 /// puis renommé. `original` : le contenu lu au départ (`None` si le fichier n'existait pas) ; s'il
-/// a changé entre-temps, on n'écrit rien.
-fn replace_atomically(target: &Path, original: Option<&[u8]>, updated: &[u8]) -> Result<()> {
-    let directory = target.parent().context("le fichier de réglages n'a pas de dossier")?;
-    let temporary = directory.join(format!(".settings.json.capri-tmp-{}", std::process::id()));
+/// a changé entre-temps, on n'écrit rien. Sert aussi au style de sortie (`style_setup`).
+pub(crate) fn replace_atomically(target: &Path, original: Option<&[u8]>, updated: &[u8]) -> Result<()> {
+    let directory = target.parent().context("le fichier n'a pas de dossier")?;
+    let name = target.file_name().map(|name| name.to_string_lossy()).unwrap_or_default();
+    let temporary = directory.join(format!(".{name}.capri-tmp-{}", std::process::id()));
     let _ = std::fs::remove_file(&temporary);
 
     let written = (|| -> Result<()> {
@@ -191,22 +195,32 @@ fn prune_backups(directory: &Path) {
     }
 }
 
+const USAGE: &str = "\
+usage : capri hook install [--dry-run]    brancher Capri sur Claude Code
+        capri hook uninstall [--dry-run]  la débrancher
+        capri hook status                 où en sont le branchement et le style
+        capri hook style install          installer le style de sortie « Capri » de Claude Code
+        capri hook style uninstall        le retirer";
+
 /// La commande `capri hook <action>`. Rend le code de sortie du processus.
 pub fn run_cli(args: &[String]) -> i32 {
     let (action, dry_run) = match args.iter().map(String::as_str).collect::<Vec<_>>()[..] {
         [action @ ("install" | "uninstall")] => (action, false),
         [action @ ("install" | "uninstall"), "--dry-run"] => (action, true),
         ["status"] => ("status", false),
+        ["style", "install"] => ("style install", false),
+        ["style", "uninstall"] => ("style uninstall", false),
         _ => {
-            eprintln!(
-                "usage : capri hook install [--dry-run]    brancher Capri sur Claude Code\n\
-                 \x20       capri hook uninstall [--dry-run]  la débrancher\n\
-                 \x20       capri hook status                 où en est le branchement"
-            );
+            eprintln!("{USAGE}");
             return 2;
         }
     };
-    match cli(action, dry_run) {
+    let done = match action {
+        "style install" => style_cli(true),
+        "style uninstall" => style_cli(false),
+        _ => cli(action, dry_run),
+    };
+    match done {
         Ok(()) => 0,
         Err(err) => {
             eprintln!("capri : {err:#}");
@@ -227,30 +241,8 @@ pub fn run_cli(args: &[String]) -> i32 {
 fn cli(action: &str, dry_run: bool) -> Result<()> {
     let settings_file = settings_path()?;
     if action == "status" {
-        let status = status(&settings_file)?;
-        println!("réglages : {}", settings_file.display());
-        if !status.is_installed() {
-            println!("Claude Code n'est pas branché sur Capri. Pour le brancher : capri hook install");
-            return Ok(());
-        }
-        let coverage = if status.is_complete() {
-            "tous les événements suivis"
-        } else {
-            "une partie seulement des événements"
-        };
-        println!("Claude Code est branché sur Capri ({} événements, {coverage}).", status.events.len());
-        for command in &status.commands {
-            let found = if Path::new(command).is_file() {
-                "présent"
-            } else {
-                "INTROUVABLE : rebranche avec capri hook install"
-            };
-            println!("binaire  : {command} ({found})");
-        }
-        if status.all_hooks_disabled {
-            println!("attention : « disableAllHooks » est activé dans ce fichier, aucun hook ne s'exécute.");
-        }
-        return Ok(());
+        hook_status(&settings_file)?;
+        return style_status();
     }
 
     let outcome = match action {
@@ -275,6 +267,63 @@ fn cli(action: &str, dry_run: bool) -> Result<()> {
             }
             println!("Les sessions ouvertes le prennent en compte toutes seules ; vérifie avec /hooks.");
         }
+    }
+    Ok(())
+}
+
+/// Ce que `capri hook status` dit du branchement.
+fn hook_status(settings_file: &Path) -> Result<()> {
+    let status = status(settings_file)?;
+    println!("réglages : {}", settings_file.display());
+    if !status.is_installed() {
+        println!("Claude Code n'est pas branché sur Capri. Pour le brancher : capri hook install");
+        return Ok(());
+    }
+    let coverage = if status.is_complete() {
+        "tous les événements suivis"
+    } else {
+        "une partie seulement des événements"
+    };
+    println!("Claude Code est branché sur Capri ({} événements, {coverage}).", status.events.len());
+    for command in &status.commands {
+        let found = if Path::new(command).is_file() {
+            "présent"
+        } else {
+            "INTROUVABLE : rebranche avec capri hook install"
+        };
+        println!("binaire  : {command} ({found})");
+    }
+    if status.all_hooks_disabled {
+        println!("attention : « disableAllHooks » est activé dans ce fichier, aucun hook ne s'exécute.");
+    }
+    Ok(())
+}
+
+/// Ce que `capri hook status` dit du style de sortie.
+fn style_status() -> Result<()> {
+    let found = style_setup::status(&style_setup::styles_dir()?)?;
+    println!("style    : {}", capri_claude::style::describe(found.state, &found.file.display().to_string()));
+    match found.state {
+        StyleState::Absent => println!("           Pour l'installer : capri hook style install"),
+        StyleState::Ours { current: false } => {
+            println!("           Pour le mettre à jour : capri hook style install")
+        }
+        StyleState::Ours { current: true } => println!("           {}", capri_claude::style::HOW_TO_CHOOSE),
+        StyleState::Foreign => {}
+    }
+    Ok(())
+}
+
+/// `capri hook style install` ou `capri hook style uninstall`.
+fn style_cli(install: bool) -> Result<()> {
+    let directory = style_setup::styles_dir()?;
+    if install {
+        let (file, done) = style_setup::install(&directory)?;
+        println!("{}", capri_claude::style::installed(done, &file.display().to_string()));
+        println!("{}", capri_claude::style::HOW_TO_CHOOSE);
+    } else {
+        let (file, done) = style_setup::uninstall(&directory)?;
+        println!("{}", capri_claude::style::removed(done, &file.display().to_string()));
     }
     Ok(())
 }

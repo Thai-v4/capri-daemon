@@ -8,7 +8,8 @@
 //! mais on ne redessine que quand sa pose ou son bandeau change : environ 12 fois par seconde au
 //! repos.
 //!
-//! `capri hook install | uninstall | status` branche Claude Code sur Capri,
+//! `capri hook install | uninstall | status | style …` branche Claude Code sur Capri et installe
+//! son style de sortie,
 //! `capri chat use | key | models | status | test | off` lui choisit un cerveau (et range la clé
 //! d'un fournisseur dans le trousseau du système), et
 //! `capri voice on | off | status | list | use | test` lui donne une voix, sans lancer la fenêtre.
@@ -29,6 +30,7 @@ mod keys;
 mod menu;
 #[cfg(any(target_os = "macos", windows))]
 mod settings_view;
+mod style_setup;
 mod voice_setup;
 
 use std::time::{Duration, Instant};
