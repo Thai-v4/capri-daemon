@@ -2,14 +2,25 @@
 
 Compagne de bureau (Capri, *Cyberpunk: Edgerunners* 2) écrite en Rust, 100 % native, pour macOS
 (cible principale, Apple Silicon) et Windows. Projet de fan non commercial. Le README décrit l'état
-du projet et la feuille de route ; jalon suivant : le hook Claude Code (jalon 2).
+du projet et la feuille de route ; jalons 1 (elle flotte) et 2 (le bandeau Claude Code) faits.
 
 ## Architecture : où va quoi
 
 - `capri-core` : logique pure, **aucune dépendance système ni GPU**. Tout ce qui peut être testé
   sans écran va ici, avec des tests.
-- `capri-render` : wgpu uniquement. Couleurs prémultipliées de bout en bout.
-- `capri-platform` : **seul endroit** pour les appels système et l'`unsafe` lié à l'OS.
+- `capri-claude` : tout ce que Capri sait de Claude Code, lui aussi **sans dépendance système** :
+  lecture de l'entrée des hooks, protocole, suivi des sessions, édition de `settings.json` de
+  texte à texte. Avec des tests.
+- `capri-render` : wgpu, et le tracé du texte du bandeau (cosmic-text, polices du système).
+  Couleurs prémultipliées de bout en bout.
+- Les appels système et l'`unsafe` lié à l'OS vivent dans **deux crates, et nulle part
+  ailleurs** : `capri-platform` (la fenêtre) et `capri-ipc` (le canal local).
+- `capri-ipc` : socket Unix ou tube nommé Windows, réservés à l'utilisateur. À part de
+  `capri-platform` parce que `capri-hook` le charge à chaque événement de Claude Code : ni winit
+  ni AppKit ici.
+- `capri-hook` : le binaire que les hooks appellent. Deux dépendances (`capri-claude`,
+  `capri-ipc`), rien d'autre.
+- `capri-platform` : la fenêtre et son `unsafe`.
   L'API publique est dans `lib.rs` (le type `Overlay` et ses événements), avec une
   implémentation par plateforme : `macos.rs` (un `NSPanel` non activant, sans fenêtre winit :
   cliquer sur Capri ne doit jamais prendre le focus) et `winit_overlay.rs` (fenêtre winit, réglée
@@ -32,8 +43,9 @@ précisément quoi vérifier plutôt que de l'affirmer.
 ## Règles
 
 - **API des crates** : wgpu 30, winit 0.30, objc2 0.6 / objc2-app-kit 0.3, windows-sys 0.61,
-  tray-icon 0.26. Ces API changent souvent : vérifier dans les sources (`~/.cargo/registry/src`)
-  ou docs.rs, pas de mémoire.
+  tray-icon 0.26, cosmic-text 0.19. Ces API changent souvent : vérifier dans les sources
+  (`~/.cargo/registry/src`) ou docs.rs, pas de mémoire. Même règle pour Claude Code : le format
+  des hooks se vérifie dans sa documentation (<https://code.claude.com/docs/en/hooks>).
 - Chaque bloc `unsafe` a un commentaire `// SAFETY:` qui justifie pourquoi il est sûr.
 - Commentaires et textes affichés en français ; identifiants en anglais.
 - Animation façon anime : poses clés tenues un nombre entier d'images à 24 i/s, pas
@@ -46,5 +58,13 @@ précisément quoi vérifier plutôt que de l'affirmer.
   `tools/fetch-assets.sh`, qui vérifie leurs empreintes. Le code les charge au lancement.
   Dans un worktree sans images, utiliser `CAPRI_ASSETS=/chemin/vers/assets`.
 - Aucune télémétrie, rien n'envoyé sur le réseau sans action explicite de l'utilisateur.
-- Pour le hook Claude Code (jalon 2) : socket Unix (Windows : named pipe) accessible au seul
-  utilisateur, jamais un port TCP sans authentification.
+- Le canal du hook : socket Unix (Windows : named pipe) accessible au seul utilisateur, jamais
+  un port TCP sans authentification.
+- `capri-hook` ne doit **jamais gêner Claude Code** : rien sur la sortie standard, toujours le
+  code de sortie 0, une durée de vie bornée. Les hooks sont déclarés `async`.
+- Le bandeau ne transmet ni n'affiche jamais le texte d'un prompt, le contenu d'un fichier ou la
+  sortie d'une commande. Dans le doute, il se tait plutôt que d'affirmer quelque chose de périmé.
+- Le `settings.json` de Claude Code appartient à l'utilisateur et à d'autres outils : toute
+  modification passe par `capri_claude::settings` (réécriture à l'octet près, vérification) et
+  par `hook_setup` (sauvegarde, écriture atomique). Jamais d'édition directe.
+- CapriChooms/CapriCore (GPL-3.0) : on s'inspire de ses idées, on ne copie pas son code.

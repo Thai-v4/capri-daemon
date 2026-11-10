@@ -29,5 +29,11 @@ remplacer sans recompiler.
 [CyberMoonie/capri-macos](https://github.com/CyberMoonie/capri-macos), mais **aucune ligne de leur
 code n'est reprise**.
 
+Le bandeau doit plusieurs idées à [CapriChooms/CapriCore](https://github.com/CapriChooms/CapriCore)
+(GPL-3.0) : un dialogue flottant qui se retire tout seul, un état affiché sans ambiguïté, une
+cadence décidée par des règles locales avant tout appel de modèle, et le silence comme choix
+valide. Là encore, **aucune ligne de son code n'est reprise**, et aucune de ses images.
+
 L'icône de la barre des menus est dessinée par le programme lui-même et ne reprend aucune image de
-la série.
+la série. Le texte du bandeau est tracé avec les polices déjà présentes sur ta machine : aucune
+police n'est distribuée avec ce projet.

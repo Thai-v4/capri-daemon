@@ -15,6 +15,14 @@ pub struct Feed {
     tracker: Tracker,
     /// Origine de l'horloge du suivi.
     origin: Instant,
+    endpoint: Endpoint,
+}
+
+impl Drop for Feed {
+    /// Le thread d'écoute ne s'arrête qu'avec le processus : c'est ici qu'on range le canal.
+    fn drop(&mut self) {
+        capri_ipc::retire(&self.endpoint);
+    }
 }
 
 impl Feed {
@@ -62,7 +70,7 @@ impl Feed {
             .ok()?;
 
         log::info!("à l'écoute de Claude Code sur {}", endpoint.path().display());
-        Some(Self { messages, tracker: Tracker::new(), origin: Instant::now() })
+        Some(Self { messages, tracker: Tracker::new(), origin: Instant::now(), endpoint })
     }
 
     fn now_ms(&self) -> u64 {

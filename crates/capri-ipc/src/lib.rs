@@ -86,6 +86,13 @@ impl Listener {
     }
 }
 
+/// À appeler quand Capri s'arrête : retire du disque ce qui annonce le canal (la socket, ou sous
+/// Windows le fichier qui porte le nom du tube), pour que le hook sache tout de suite qu'elle
+/// n'écoute plus. À n'appeler que par l'instance qui a ouvert le canal.
+pub fn retire(endpoint: &Endpoint) {
+    imp::retire(endpoint.path());
+}
+
 /// Le côté du hook : envoie une ligne à Capri, en `timeout` au plus. Si Capri n'écoute pas, rend
 /// [`IpcError::NotRunning`] sans attendre.
 pub fn send_line(endpoint: &Endpoint, line: &str, timeout: Duration) -> Result<(), IpcError> {
@@ -205,6 +212,19 @@ mod channel_tests {
         // après la fermeture de Capri non plus
         drop(Listener::bind(&endpoint, MAX).unwrap());
         assert!(matches!(send_line(&endpoint, "x", SOON), Err(IpcError::NotRunning)));
+    }
+
+    #[test]
+    fn retiring_the_channel_tells_the_hook_at_once() {
+        let endpoint = endpoint_in(&scratch_dir("retraite"));
+        let listener = Listener::bind(&endpoint, MAX).unwrap();
+        assert!(endpoint.path().exists());
+        // Capri s'arrête alors que son thread d'écoute tient encore le canal ouvert
+        retire(&endpoint);
+        assert!(!endpoint.path().exists());
+        assert!(matches!(send_line(&endpoint, "x", SOON), Err(IpcError::NotRunning)));
+        drop(listener);
+        retire(&endpoint); // une seconde fois, ou sans rien à retirer : sans effet
     }
 
     #[test]

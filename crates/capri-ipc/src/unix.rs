@@ -95,6 +95,15 @@ impl Drop for Listener {
     }
 }
 
+pub fn retire(path: &Path) {
+    // seulement notre propre socket : ni fichier ordinaire, ni lien, ni socket d'un autre
+    let ours = std::fs::symlink_metadata(path)
+        .is_ok_and(|meta| meta.file_type().is_socket() && meta.uid() == current_uid());
+    if ours {
+        let _ = std::fs::remove_file(path);
+    }
+}
+
 pub fn send_line(path: &Path, line: &str, timeout: Duration) -> Result<(), IpcError> {
     // Jamais vers autre chose que notre propre socket : ni lien symbolique, ni socket d'un autre.
     let ours = match std::fs::symlink_metadata(path) {

@@ -123,6 +123,13 @@ impl Drop for Listener {
     }
 }
 
+pub fn retire(pointer: &Path) {
+    // seulement un fichier qui a bien la forme des nôtres
+    if published_name(pointer).is_some() {
+        let _ = std::fs::remove_file(pointer);
+    }
+}
+
 pub fn send_line(pointer: &Path, line: &str, timeout: Duration) -> Result<(), IpcError> {
     let name = published_name(pointer).ok_or(IpcError::NotRunning)?;
     let deadline = Instant::now() + timeout;

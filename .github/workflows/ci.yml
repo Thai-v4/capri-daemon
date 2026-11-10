@@ -26,7 +26,7 @@ jobs:
         run: cargo test --workspace
       - name: Build release
         if: matrix.os != 'ubuntu-latest'
-        run: cargo build --release -p capri-app
+        run: cargo build --release -p capri-app -p capri-hook
       - uses: actions/upload-artifact@v4
         if: matrix.os != 'ubuntu-latest'
         with:
@@ -34,4 +34,6 @@ jobs:
           path: |
             target/release/capri
             target/release/capri.exe
+            target/release/capri-hook
+            target/release/capri-hook.exe
           if-no-files-found: ignore
