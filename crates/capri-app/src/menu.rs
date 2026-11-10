@@ -21,6 +21,8 @@ pub enum Action {
     ToggleVisible,
     /// Brancher ou débrancher le hook de Claude Code.
     ToggleClaudeHook,
+    /// Ouvrir la fenêtre de réglages, ou la ramener devant.
+    Settings,
     Quit,
 }
 
@@ -133,12 +135,14 @@ fn build_menu() -> Built {
     let shortcut = Accelerator::new(Modifiers::CONTROL | Modifiers::ALT, Code::KeyC);
     let toggle = MenuItem::new("Cacher Capri", true, Some(shortcut));
     let hook = MenuItem::new("Brancher Claude Code", true, None);
+    let settings = MenuItem::new("Réglages…", true, None);
     let quit = MenuItem::new("Quitter", true, None);
     let menu = Menu::new();
     let separator = PredefinedMenuItem::separator;
     let (first, second, third) = (separator(), separator(), separator());
     if let Err(err) = menu.append_items(&[
-        &title, &first, &talk, &listen, &hush, &forget, &voice, &second, &toggle, &hook, &third, &quit,
+        &title, &first, &talk, &listen, &hush, &forget, &voice, &second, &toggle, &hook, &settings, &third,
+        &quit,
     ]) {
         log::warn!("menu incomplet : {err}");
     }
@@ -150,6 +154,7 @@ fn build_menu() -> Built {
         (Action::ToggleVoice, voice),
         (Action::ToggleVisible, toggle),
         (Action::ToggleClaudeHook, hook),
+        (Action::Settings, settings),
         (Action::Quit, quit),
     ];
     Built { menu, items }

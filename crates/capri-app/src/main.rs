@@ -12,6 +12,8 @@
 //! `capri chat use | key | models | status | test | off` lui choisit un cerveau (et range la clé
 //! d'un fournisseur dans le trousseau du système), et
 //! `capri voice on | off | status | list | use | test` lui donne une voix, sans lancer la fenêtre.
+//! Sur macOS, « Réglages… » dans son menu ouvre une fenêtre qui fait la même chose sans terminal
+//! (`settings_view`).
 
 mod assets;
 mod banner_view;
@@ -25,6 +27,8 @@ mod hook_setup;
 mod keys;
 #[cfg(any(target_os = "macos", windows))]
 mod menu;
+#[cfg(any(target_os = "macos", windows))]
+mod settings_view;
 mod voice_setup;
 
 use std::time::{Duration, Instant};
@@ -132,7 +136,23 @@ struct App {
     hotkeys: Option<Hotkeys>,
     #[cfg(any(target_os = "macos", windows))]
     menus: Option<menu::Menus>,
+    /// La fenêtre de réglages, tant qu'elle est ouverte.
+    #[cfg(any(target_os = "macos", windows))]
+    settings: Option<settings_view::SettingsView>,
+    /// Une répétition de la fenêtre de réglages, pour les essais (version de débogage).
+    #[cfg(all(debug_assertions, any(target_os = "macos", windows)))]
+    rehearsal: Option<Rehearsal>,
     fatal: Option<anyhow::Error>,
+}
+
+/// En version de débogage, `CAPRI_SETTINGS_REHEARSAL=1` ouvre la fenêtre de réglages au
+/// lancement, y choisit chaque fournisseur l'un après l'autre comme le ferait l'utilisateur, puis
+/// quitte : de quoi vérifier, sans la toucher, que la fenêtre s'ouvre et se refait sans planter.
+/// N'existe pas dans la version livrée.
+#[cfg(all(debug_assertions, any(target_os = "macos", windows)))]
+struct Rehearsal {
+    next: Instant,
+    step: usize,
 }
 
 /// Les raccourcis globaux : ils répondent depuis n'importe quelle app.
@@ -187,6 +207,8 @@ impl ApplicationHandler for App {
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
         self.handle_menus(event_loop);
+        #[cfg(any(target_os = "macos", windows))]
+        self.handle_settings(event_loop);
         self.handle_hotkey();
         self.handle_overlay(event_loop);
         if let Some(r) = self.running.as_mut() {
@@ -234,6 +256,12 @@ impl App {
             self.menus = Some(menu::Menus::new());
             self.refresh_hook_menu();
             self.refresh_voice_menu();
+        }
+        #[cfg(all(debug_assertions, any(target_os = "macos", windows)))]
+        if std::env::var_os("CAPRI_SETTINGS_REHEARSAL").is_some() {
+            log::info!("répétition de la fenêtre de réglages");
+            self.open_settings();
+            self.rehearsal = Some(Rehearsal { next: Instant::now() + Duration::from_millis(800), step: 0 });
         }
         if !capri_platform::INTERACTIVE {
             log::warn!("système pas encore pris en charge : Capri s'affiche mais ne peut pas être attrapée");
@@ -353,12 +381,116 @@ impl App {
                     menu::Action::ToggleVoice => self.toggle_voice(),
                     menu::Action::ToggleVisible => self.toggle_hidden(),
                     menu::Action::ToggleClaudeHook => self.toggle_claude_hook(),
+                    menu::Action::Settings => self.open_settings(),
                     menu::Action::Quit => event_loop.exit(),
                 }
             }
         }
         #[cfg(not(any(target_os = "macos", windows)))]
         let _ = event_loop;
+    }
+
+    /// Ouvre la fenêtre de réglages, ou la ramène devant si elle l'est déjà : une seule à la fois.
+    #[cfg(any(target_os = "macos", windows))]
+    fn open_settings(&mut self) {
+        if let Some(view) = self.settings.as_ref().filter(|view| view.is_open()) {
+            return view.show();
+        }
+        match settings_view::SettingsView::open() {
+            Ok(view) => self.settings = Some(view),
+            Err(err) => {
+                log::warn!("réglages : {err}");
+                self.with_banner(|banner| {
+                    banner.notify(
+                        "Pas encore de réglages ici : capri chat et capri voice",
+                        capri_claude::Tone::Failed,
+                    )
+                });
+            }
+        }
+    }
+
+    /// Ce qui s'est passé dans la fenêtre de réglages ; elle disparaît une fois fermée.
+    #[cfg(any(target_os = "macos", windows))]
+    fn handle_settings(&mut self, event_loop: &ActiveEventLoop) {
+        #[cfg(debug_assertions)]
+        self.rehearse(event_loop);
+        #[cfg(not(debug_assertions))]
+        let _ = event_loop;
+        let Some(view) = self.settings.as_mut() else { return };
+        let changes = view.pump();
+        if !view.is_open() {
+            self.settings = None;
+        }
+        for change in changes {
+            match change {
+                settings_view::Change::Voice { enabled } => {
+                    if !enabled {
+                        self.with_banner(BannerView::silence);
+                    }
+                    self.refresh_voice_menu();
+                }
+            }
+        }
+    }
+
+    /// Un pas de la répétition des réglages, s'il y en a une : chaque fournisseur, du dernier au
+    /// premier, puis une clé factice collée dans le champ secret d'OpenRouter, rangée (dans le
+    /// trousseau que désigne `CAPRI_KEYCHAIN_SERVICE`) et retirée. Le journal dit ce que la
+    /// fenêtre affiche, jamais la clé.
+    #[cfg(all(debug_assertions, any(target_os = "macos", windows)))]
+    fn rehearse(&mut self, event_loop: &ActiveEventLoop) {
+        use capri_chat::settings::brain;
+        let Some(rehearsal) = self.rehearsal.as_mut() else { return };
+        if Instant::now() < rehearsal.next {
+            return;
+        }
+        let Some(view) = self.settings.as_mut() else {
+            log::error!("répétition : la fenêtre de réglages ne s'est pas ouverte");
+            return event_loop.exit();
+        };
+        let providers = capri_chat::Provider::ALL.len();
+        let openrouter = 1 + capri_chat::Provider::ALL
+            .iter()
+            .position(|&provider| provider == capri_chat::Provider::OpenRouter)
+            .unwrap_or_default();
+        let step = rehearsal.step;
+        rehearsal.step += 1;
+        rehearsal.next = Instant::now() + Duration::from_millis(700);
+        if step == 0 {
+            log::info!("répétition : la fenêtre a le clavier : {}", view.has_keyboard());
+        }
+        let note =
+            |view: &settings_view::SettingsView, id| view.note(id).unwrap_or_else(|| "(aucune)".to_owned());
+        match step.checked_sub(providers + 1) {
+            None => {
+                let provider = providers - step;
+                view.rehearse(provider);
+                log::info!("répétition : fournisseur n° {provider} choisi, {} lignes", view.rows());
+            }
+            Some(0) => {
+                view.rehearse(openrouter);
+                log::info!("répétition : OpenRouter choisi");
+            }
+            Some(1) => {
+                log::info!("répétition : clé avant : {}", note(view, brain::KEY_STATUS));
+                view.rehearse_typing_then_press(brain::KEY, "sk-test-repetition-0123456789", brain::KEY_SAVE);
+            }
+            Some(2) => {
+                log::info!("répétition : après « Enregistrer la clé » : {}", note(view, brain::KEY_NOTE));
+                log::info!("répétition : état de la clé : {}", note(view, brain::KEY_STATUS));
+                view.rehearse_press(brain::KEY_FORGET);
+            }
+            Some(3) => {
+                log::info!("répétition : après « Retirer la clé » : {}", note(view, brain::KEY_NOTE));
+                log::info!("répétition : état de la clé : {}", note(view, brain::KEY_STATUS));
+                log::info!("répétition : la fenêtre a le clavier : {}", view.has_keyboard());
+            }
+            Some(_) => {
+                log::info!("répétition finie");
+                event_loop.exit();
+            }
+        }
     }
 
     /// Agit sur ce qui s'affiche au-dessus d'elle, si elle est lancée.
@@ -397,6 +529,9 @@ impl App {
             banner.notify(text, tone);
         });
         self.refresh_voice_menu();
+        if let Some(view) = self.settings.as_mut() {
+            view.reload_voice();
+        }
     }
 
     /// Accorde le menu à ce que disent les réglages de la voix.
