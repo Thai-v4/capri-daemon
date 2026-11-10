@@ -10,11 +10,20 @@
 //! - Une durée de vie bornée, même si l'entrée ne se ferme jamais ou si Capri est figée.
 //!
 //! Pour comprendre ce qu'il fait : `CAPRI_HOOK_DEBUG=1` lui fait écrire une ligne sur la sortie
-//! d'erreur, que Claude Code ne montre que dans son journal de débogage.
+//! d'erreur, que Claude Code ne montre que dans son journal de débogage. Elle ne cite jamais ce
+//! qu'il transmet.
+//!
+//! Le miroir (`capri_claude::mirror`, désactivé par défaut) : s'il est activé dans le dossier de
+//! Capri, la fin de tour de la session principale porte la ligne que Claude a écrite pour Capri,
+//! et rien d'autre de sa réponse. Désactivé, ou au moindre doute sur son réglage, la réponse de
+//! Claude n'est même pas lue.
 
-use std::io::Write;
+use std::io::{Read, Write};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use capri_claude::mirror::{self, MirrorSettings};
+use capri_claude::places;
+use capri_claude::protocol::Event;
 use capri_ipc::{Endpoint, IpcError};
 
 /// Temps laissé à l'envoi quand Capri écoute.
@@ -51,14 +60,42 @@ fn run() -> Result<&'static str, String> {
         return Ok("session lancée par Capri, ignorée");
     }
     let at_ms = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |since| since.as_millis() as u64);
-    let message = capri_claude::hook_input::read(std::io::stdin().lock(), at_ms)
-        .map_err(|err| format!("entrée illisible ({err})"))?;
-    let Some(message) = message else { return Ok("événement non suivi") };
-    let line = message.encode().map_err(|err| err.to_string())?;
+    let stdin = std::io::stdin().lock();
+    let message = if mirror_enabled() {
+        capri_claude::hook_input::read_mirrored(stdin, at_ms)
+    } else {
+        capri_claude::hook_input::read(stdin, at_ms)
+    }
+    .map_err(|err| format!("entrée illisible ({err})"))?;
+    let Some(mut message) = message else { return Ok("événement non suivi") };
+    let line = message.encode_or_shed().map_err(|err| err.to_string())?;
+    let sent = match &message.event {
+        Event::TurnEnd { said: Some(_) } => "fin de tour transmise, avec une phrase pour Capri",
+        _ => "événement transmis",
+    };
     let endpoint = Endpoint::for_current_user().map_err(|err| err.to_string())?;
     match capri_ipc::send_line(&endpoint, &line, SEND_TIMEOUT) {
-        Ok(()) => Ok("événement transmis"),
+        Ok(()) => Ok(sent),
         Err(IpcError::NotRunning) => Ok("Capri n'écoute pas"),
         Err(err) => Err(err.to_string()),
     }
+}
+
+/// Le miroir est-il activé ? Relu dans le dossier de Capri à chaque appel, le même que celui de
+/// l'app (`capri_claude::places`). Au moindre doute (dossier introuvable, fichier absent, qui
+/// n'est pas un fichier ordinaire, trop gros ou illisible), non.
+fn mirror_enabled() -> bool {
+    let Ok(directory) = places::capri_dir(|name| std::env::var_os(name), places::System::CURRENT) else {
+        return false;
+    };
+    let file = directory.join(mirror::SETTINGS_FILE);
+    // un tube nommé à cette place bloquerait la lecture : seulement un fichier ordinaire
+    let Ok(meta) = std::fs::metadata(&file) else { return false };
+    if !meta.is_file() || meta.len() > mirror::MAX_SETTINGS_BYTES {
+        return false;
+    }
+    let mut text = String::new();
+    let read = std::fs::File::open(&file)
+        .and_then(|handle| handle.take(mirror::MAX_SETTINGS_BYTES + 1).read_to_string(&mut text));
+    read.is_ok() && MirrorSettings::from_json(&text).is_ok_and(|settings| settings.enabled)
 }

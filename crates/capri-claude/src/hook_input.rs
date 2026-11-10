@@ -3,13 +3,20 @@
 //! On ne garde que les champs utiles au bandeau, et on tolère tout le reste : un champ absent,
 //! d'un type inattendu ou inconnu ne fait jamais échouer la lecture. Les gros champs qu'on ne
 //! lit pas (le contenu d'un fichier écrit, la sortie d'un outil) sont sautés sans être copiés.
+//!
+//! La réponse de Claude (`last_assistant_message`) est sautée elle aussi, sauf quand le miroir
+//! est activé ([`read_mirrored`]) : on n'en garde alors que la ligne écrite pour Capri
+//! (`crate::mirror::marked_line`), extraite au passage, et seulement sur le `Stop` de la session
+//! principale.
 
+use std::fmt;
 use std::io::Read;
 
-use serde::de::IgnoredAny;
+use serde::de::{IgnoredAny, MapAccess, SeqAccess, Visitor};
 use serde::{Deserialize, Deserializer};
 
-use crate::protocol::{Event, Message, VERSION};
+use crate::mirror::marked_line;
+use crate::protocol::{Event, Message, Said, VERSION};
 use crate::text::{file_name, one_line};
 
 /// Longueur maximale des textes libres transmis (résumé, erreur, message).
@@ -19,21 +26,113 @@ const MAX_NAME_CHARS: usize = 128;
 /// Longueur maximale du dossier de travail.
 const MAX_PATH_CHARS: usize = 1024;
 
-/// Lit l'entrée d'un hook depuis un flux. `at_ms` : l'heure à noter dans le message.
+/// Lit l'entrée d'un hook depuis un flux, miroir désactivé : la réponse de Claude n'est pas lue.
+/// `at_ms` : l'heure à noter dans le message.
 ///
 /// `Ok(None)` : un événement que Capri ne suit pas. Ce n'est pas une erreur.
 pub fn read(reader: impl Read, at_ms: u64) -> Result<Option<Message>, serde_json::Error> {
-    serde_json::from_reader::<_, HookInput>(reader).map(|input| input.into_message(at_ms))
+    serde_json::from_reader::<_, HookInput<IgnoredAny>>(reader).map(|input| input.into_message(at_ms))
 }
 
 /// Comme [`read`], à partir d'un texte.
 pub fn parse(json: &str, at_ms: u64) -> Result<Option<Message>, serde_json::Error> {
-    serde_json::from_str::<HookInput>(json).map(|input| input.into_message(at_ms))
+    serde_json::from_str::<HookInput<IgnoredAny>>(json).map(|input| input.into_message(at_ms))
 }
 
-/// Les champs de l'entrée des hooks que Capri lit, tous événements confondus.
-#[derive(Default, Deserialize)]
-struct HookInput {
+/// Comme [`read`], miroir activé : la fin de tour de la session principale porte la ligne que
+/// Claude a écrite pour Capri, s'il y en a une. Rien d'autre ne change.
+pub fn read_mirrored(reader: impl Read, at_ms: u64) -> Result<Option<Message>, serde_json::Error> {
+    serde_json::from_reader::<_, HookInput<MarkedLine>>(reader).map(|input| input.into_message(at_ms))
+}
+
+/// Comme [`read_mirrored`], à partir d'un texte.
+pub fn parse_mirrored(json: &str, at_ms: u64) -> Result<Option<Message>, serde_json::Error> {
+    serde_json::from_str::<HookInput<MarkedLine>>(json).map(|input| input.into_message(at_ms))
+}
+
+/// Ce qu'on garde de `last_assistant_message`.
+trait LastMessage: Default {
+    fn into_said(self) -> Option<Said>;
+}
+
+/// Miroir désactivé : rien. Le texte est sauté sans être copié.
+impl LastMessage for IgnoredAny {
+    fn into_said(self) -> Option<Said> {
+        None
+    }
+}
+
+/// Miroir activé : la ligne marquée seulement, extraite pendant la lecture. Le texte entier ne
+/// passe que par la mémoire tampon du lecteur JSON, le temps de l'extraction.
+#[derive(Default)]
+struct MarkedLine(Option<Said>);
+
+impl LastMessage for MarkedLine {
+    fn into_said(self) -> Option<Said> {
+        self.0
+    }
+}
+
+impl<'de> Deserialize<'de> for MarkedLine {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        deserializer.deserialize_any(MarkedLineVisitor)
+    }
+}
+
+/// Tolérant comme le reste : autre chose qu'un texte ne donne rien, sans erreur.
+struct MarkedLineVisitor;
+
+impl<'de> Visitor<'de> for MarkedLineVisitor {
+    type Value = MarkedLine;
+
+    fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("la réponse de Claude")
+    }
+
+    fn visit_str<E>(self, text: &str) -> Result<MarkedLine, E> {
+        Ok(MarkedLine(marked_line(text)))
+    }
+
+    fn visit_bool<E>(self, _: bool) -> Result<MarkedLine, E> {
+        Ok(MarkedLine(None))
+    }
+
+    fn visit_i64<E>(self, _: i64) -> Result<MarkedLine, E> {
+        Ok(MarkedLine(None))
+    }
+
+    fn visit_u64<E>(self, _: u64) -> Result<MarkedLine, E> {
+        Ok(MarkedLine(None))
+    }
+
+    fn visit_f64<E>(self, _: f64) -> Result<MarkedLine, E> {
+        Ok(MarkedLine(None))
+    }
+
+    fn visit_unit<E>(self) -> Result<MarkedLine, E> {
+        Ok(MarkedLine(None))
+    }
+
+    fn visit_none<E>(self) -> Result<MarkedLine, E> {
+        Ok(MarkedLine(None))
+    }
+
+    fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<MarkedLine, A::Error> {
+        while seq.next_element::<IgnoredAny>()?.is_some() {}
+        Ok(MarkedLine(None))
+    }
+
+    fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<MarkedLine, A::Error> {
+        while map.next_entry::<IgnoredAny, IgnoredAny>()?.is_some() {}
+        Ok(MarkedLine(None))
+    }
+}
+
+/// Les champs de l'entrée des hooks que Capri lit, tous événements confondus. `M` : ce qu'on
+/// garde de la réponse de Claude ([`LastMessage`]).
+#[derive(Deserialize)]
+#[serde(bound(deserialize = "M: Deserialize<'de> + Default"))]
+struct HookInput<M> {
     #[serde(default, deserialize_with = "lenient")]
     hook_event_name: Option<String>,
     #[serde(default, deserialize_with = "lenient")]
@@ -71,6 +170,9 @@ struct HookInput {
     // SessionEnd
     #[serde(default, deserialize_with = "lenient")]
     reason: Option<String>,
+    // Stop, SubagentStop, StopFailure
+    #[serde(default)]
+    last_assistant_message: M,
 }
 
 /// Les arguments d'outil dont on peut tirer un résumé court.
@@ -110,7 +212,7 @@ where
     })
 }
 
-impl HookInput {
+impl<M: LastMessage> HookInput<M> {
     fn into_message(self, at_ms: u64) -> Option<Message> {
         let name =
             |text: Option<String>| text.map(|t| one_line(&t, MAX_NAME_CHARS)).filter(|t| !t.is_empty());
@@ -122,6 +224,10 @@ impl HookInput {
         let id = name(self.tool_use_id);
         let agent_type = name(self.agent_type);
         let mut inside_agent = agent_type.clone();
+        // un sous-agent, ou un coéquipier, porte un identifiant : seule la session principale parle
+        // à Capri
+        let in_an_agent = self.agent_id.as_deref().is_some_and(|id| !id.trim().is_empty());
+        let said = self.last_assistant_message.into_said().filter(|_| !in_an_agent);
 
         let event = match self.hook_event_name.as_deref()? {
             "SessionStart" => Event::SessionStart { source: name(self.source), model: name(self.model) },
@@ -148,7 +254,7 @@ impl HookInput {
                 inside_agent = None;
                 Event::AgentEnd { agent_type, agent_id: name(self.agent_id) }
             }
-            "Stop" => Event::TurnEnd,
+            "Stop" => Event::TurnEnd { said },
             "StopFailure" => Event::TurnFailed { error: free(self.error) },
             "SessionEnd" => Event::SessionEnd { reason: name(self.reason) },
             _ => return None,
@@ -372,7 +478,7 @@ mod tests {
         )
         .unwrap()
         .unwrap();
-        assert_eq!(stop.event, Event::TurnEnd);
+        assert_eq!(stop.event, Event::TurnEnd { said: None });
         assert!(!stop.encode().unwrap().contains("refactoring"), "la réponse de Claude n'est pas transmise");
 
         assert_eq!(
@@ -481,5 +587,106 @@ mod tests {
         assert!(parse("", AT).is_err());
         let json = r#"{"session_id":"s","hook_event_name":"Stop"}"#;
         assert_eq!(read(json.as_bytes(), AT).unwrap(), parse(json, AT).unwrap());
+    }
+
+    /// Un `Stop` comme celui de la documentation, avec cette réponse de Claude.
+    fn stop(answer: &str, extra: &str) -> String {
+        format!(
+            r#"{{"session_id":"abc123","permission_mode":"default","hook_event_name":"Stop",
+                "stop_hook_active":false,"last_assistant_message":{},
+                "background_tasks":[],"session_crons":[]{extra}}}"#,
+            serde_json::to_string(answer).unwrap()
+        )
+    }
+
+    const ANSWER: &str =
+        "J'ai relu `secret.rs` : la clé sk-123 traînait.\n\n[Capri] C'est réglé, on peut souffler.";
+
+    #[test]
+    fn with_the_mirror_the_turn_end_carries_only_the_marked_line() {
+        let message = parse_mirrored(&stop(ANSWER, ""), AT).unwrap().unwrap();
+        assert_eq!(
+            message.event,
+            Event::TurnEnd { said: Some(Said::new("C'est réglé, on peut souffler.".into())) }
+        );
+        let line = message.encode().unwrap();
+        assert!(
+            !line.contains("secret.rs") && !line.contains("sk-123"),
+            "rien d'autre de la réponse : {line}"
+        );
+        // un flux donne la même chose qu'un texte
+        assert_eq!(read_mirrored(stop(ANSWER, "").as_bytes(), AT).unwrap(), Some(message));
+    }
+
+    #[test]
+    fn without_the_mirror_nothing_of_the_answer_is_kept() {
+        let message = parse(&stop(ANSWER, ""), AT).unwrap().unwrap();
+        assert_eq!(message.event, Event::TurnEnd { said: None });
+        let line = message.encode().unwrap();
+        assert!(!line.contains("souffler") && !line.contains("said"), "{line}");
+    }
+
+    #[test]
+    fn the_mirror_only_speaks_for_the_main_session() {
+        // un Stop dans un sous-agent ou un coéquipier (il porte un identifiant d'agent)
+        let in_agent = parse_mirrored(&stop(ANSWER, r#","agent_id":"a1","agent_type":"Explore""#), AT);
+        assert_eq!(in_agent.unwrap().unwrap().event, Event::TurnEnd { said: None });
+        // la session lancée avec --agent n'a qu'un type : c'est bien la session principale
+        let with_agent = parse_mirrored(&stop(ANSWER, r#","agent_type":"reviewer""#), AT).unwrap().unwrap();
+        assert!(matches!(with_agent.event, Event::TurnEnd { said: Some(_) }));
+        // SubagentStop et StopFailure ne disent rien, même avec une ligne marquée
+        let subagent = parse_mirrored(
+            r#"{"session_id":"s","hook_event_name":"SubagentStop","agent_id":"def456","agent_type":"Explore",
+                "last_assistant_message":"[Capri] Je ne devrais pas parler."}"#,
+            AT,
+        );
+        assert_eq!(
+            subagent.unwrap().unwrap().event,
+            Event::AgentEnd { agent_type: Some("Explore".into()), agent_id: Some("def456".into()) }
+        );
+        let failure = parse_mirrored(
+            r#"{"session_id":"s","hook_event_name":"StopFailure","error":"rate_limit",
+                "last_assistant_message":"[Capri] API Error"}"#,
+            AT,
+        );
+        assert_eq!(failure.unwrap().unwrap().event, Event::TurnFailed { error: Some("rate_limit".into()) });
+    }
+
+    #[test]
+    fn with_the_mirror_everything_else_reads_the_same() {
+        let examples = [
+            stop("Fini, sans ligne pour Capri.", ""),
+            stop(ANSWER, r#","agent_id":"a1""#),
+            r#"{"session_id":"abc123","hook_event_name":"PreToolUse","tool_name":"Bash",
+                "tool_input":{"command":"npm test","description":"Run test suite"}}"#
+                .to_owned(),
+            r#"{"session_id":"s","hook_event_name":"UserPromptSubmit","prompt":"[Capri] dis bonjour"}"#
+                .to_owned(),
+            r#"{"session_id":"s","hook_event_name":"PreCompact"}"#.to_owned(),
+        ];
+        for json in &examples {
+            assert_eq!(parse_mirrored(json, AT).unwrap(), parse(json, AT).unwrap(), "{json}");
+        }
+        // une réponse qui n'est pas du texte ne fait rien échouer
+        for odd in ["null", "42", "true", "[\"[Capri] x\"]", "{\"text\":\"[Capri] x\"}"] {
+            let json =
+                format!(r#"{{"session_id":"s","hook_event_name":"Stop","last_assistant_message":{odd}}}"#);
+            assert_eq!(
+                parse_mirrored(&json, AT).unwrap().unwrap().event,
+                Event::TurnEnd { said: None },
+                "{odd}"
+            );
+        }
+        assert!(parse_mirrored("{ pas du json", AT).is_err());
+    }
+
+    #[test]
+    fn a_huge_answer_with_the_mirror_becomes_a_small_line() {
+        let answer = format!("{}\n[Capri] {}", "x".repeat(3_000_000), "très long ".repeat(500));
+        let message = read_mirrored(stop(&answer, "").as_bytes(), AT).unwrap().unwrap();
+        let line = message.encode().expect("sous la limite du protocole");
+        assert!(line.len() < 2_000, "{} octets", line.len());
+        let Event::TurnEnd { said: Some(said) } = message.event else { panic!("pas de phrase") };
+        assert_eq!(said.text().chars().count(), crate::mirror::MAX_SAID_CHARS);
     }
 }

@@ -7,13 +7,16 @@
 //! - [`places`] : où vivent les réglages de Capri et ceux de Claude Code, pour que le hook et
 //!   l'app trouvent les mêmes ;
 //! - [`style`] : le style de sortie « Capri », que l'utilisateur installe et choisit dans Claude
-//!   Code.
+//!   Code ;
+//! - [`mirror`] : le miroir, désactivé par défaut, qui fait dire à Capri la ligne que Claude a
+//!   écrite pour elle, et rien d'autre de sa réponse.
 //!
 //! Les noms d'événements et de champs viennent de la référence des hooks de Claude Code
 //! (<https://code.claude.com/docs/en/hooks>). Tout ce qui est inconnu est ignoré en silence :
 //! un hook ne doit jamais gêner la session qu'il observe.
 
 pub mod hook_input;
+pub mod mirror;
 pub mod places;
 pub mod protocol;
 pub mod sessions;

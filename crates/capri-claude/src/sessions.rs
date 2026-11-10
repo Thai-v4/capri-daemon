@@ -241,7 +241,7 @@ impl Session {
             },
             // Les sous-agents se voient par les outils qu'ils lancent.
             Event::AgentStart { .. } | Event::AgentEnd { .. } => {}
-            Event::TurnEnd => {
+            Event::TurnEnd { .. } => {
                 self.tools.clear();
                 self.set_phase(Phase::Done, now_ms);
             }
@@ -490,7 +490,7 @@ mod tests {
             "un outil qui échoue, c'est la routine"
         );
 
-        s.at(10_000, Event::TurnEnd);
+        s.at(10_000, Event::TurnEnd { said: None });
         assert_eq!(s.text(10_100).as_deref(), Some("Claude a fini"));
         assert_eq!(s.tone(10_100), Some(Tone::Done));
         assert_eq!(s.text(10_000 + DONE_FOR_MS), None, "puis le bandeau se tait");
@@ -573,7 +573,7 @@ mod tests {
         assert_eq!(s.text(6_100).as_deref(), Some("Claude te soumet son plan"));
 
         let mut s = Scenario::new();
-        s.at(0, Event::TurnEnd);
+        s.at(0, Event::TurnEnd { said: None });
         s.at(60_000, Event::Notification { notification_type: "idle_prompt".into(), message: None });
         assert_eq!(s.text(60_100).as_deref(), Some("Claude t'attend"));
         assert_eq!(s.text(60_000 + IDLE_PROMPT_FOR_MS), None);
@@ -663,7 +663,7 @@ mod tests {
         let mut s = Scenario::new();
         s.at(0, Event::TurnStart);
         s.at(100, start("Read", "t1", Some("a.rs")));
-        s.at(200, Event::TurnEnd);
+        s.at(200, Event::TurnEnd { said: None });
         s.at(210, end("Read", "t1"));
         assert_eq!(s.text(300).as_deref(), Some("Claude a fini"));
         assert_eq!(s.text(210 + DONE_FOR_MS), None);
@@ -703,7 +703,7 @@ mod tests {
         assert_eq!(headline.text, "capri · Claude attend ton accord : main.rs");
         assert_eq!(headline.tone, Tone::Waiting, "une attente passe avant un travail en cours");
 
-        tracker.apply(&message("a", None, Event::TurnEnd), 500);
+        tracker.apply(&message("a", None, Event::TurnEnd { said: None }), 500);
         assert_eq!(tracker.headline(600).unwrap().text, "portfolio · Claude lance : npm test");
         tracker.apply(&message("b", None, Event::SessionEnd { reason: None }), 700);
         assert_eq!(tracker.headline(800).unwrap().text, "Claude a fini");

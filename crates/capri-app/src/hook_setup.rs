@@ -1,5 +1,6 @@
 //! Brancher et débrancher le hook dans le `settings.json` de Claude Code : la partie fichiers,
-//! et la commande `capri hook …` (qui installe aussi le style de sortie : `style_setup`).
+//! et la commande `capri hook …`, qui règle aussi le miroir (`claude-code.json`, dans le dossier
+//! de Capri) et installe le style de sortie (`style_setup`).
 //!
 //! Ce que le fichier doit contenir est décidé par `capri_claude::settings`, qui ne lit ni n'écrit
 //! rien. Ici, on trouve le fichier, on le sauvegarde, et on le remplace d'un seul coup.
@@ -9,11 +10,12 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, anyhow, bail};
+use capri_claude::mirror::{self, MirrorSettings};
 use capri_claude::places;
 use capri_claude::settings::{self, BACKUP_PREFIX, SettingsError, Status};
 use capri_claude::style::StyleState;
 
-use crate::style_setup;
+use crate::{brain_setup, style_setup};
 
 /// Nombre de sauvegardes gardées à côté du fichier.
 const KEPT_BACKUPS: usize = 5;
@@ -42,15 +44,38 @@ pub fn settings_path() -> Result<PathBuf> {
     Ok(claude_dir()?.join("settings.json"))
 }
 
-/// Le binaire `capri-hook`, attendu à côté de l'exécutable courant.
-pub fn hook_binary() -> Result<PathBuf> {
+/// Là où le binaire `capri-hook` est attendu : à côté de l'exécutable courant. Ne vérifie pas
+/// qu'il y est.
+pub fn hook_binary_path() -> Result<PathBuf> {
     let exe = std::env::current_exe().context("emplacement de l'exécutable")?;
     let exe = exe.canonicalize().unwrap_or(exe);
-    let hook = exe.with_file_name(format!("{}{}", settings::HOOK_BINARY, std::env::consts::EXE_SUFFIX));
+    Ok(exe.with_file_name(format!("{}{}", settings::HOOK_BINARY, std::env::consts::EXE_SUFFIX)))
+}
+
+/// Le binaire `capri-hook`, attendu à côté de l'exécutable courant (pour un terminal : l'erreur
+/// dit comment le construire).
+pub fn hook_binary() -> Result<PathBuf> {
+    let hook = hook_binary_path()?;
     if !hook.is_file() {
         bail!("{} est introuvable : compile-le avec `cargo build --release`", hook.display());
     }
     Ok(hook)
+}
+
+/// Le réglage du miroir, dans le dossier de Capri (celui que relit `capri-hook`). Sans fichier :
+/// désactivé. Un fichier illisible est une erreur ici ; le hook, lui, le prend pour « désactivé ».
+pub fn load_mirror(directory: &Path) -> Result<MirrorSettings> {
+    let file = directory.join(mirror::SETTINGS_FILE);
+    let Some(text) = brain_setup::read_text(&file)? else { return Ok(MirrorSettings::default()) };
+    if text.len() as u64 > mirror::MAX_SETTINGS_BYTES {
+        bail!("{} est trop gros pour être le réglage du miroir : il compte pour désactivé", file.display());
+    }
+    MirrorSettings::from_json(&text).with_context(|| format!("{} : il compte pour désactivé", file.display()))
+}
+
+/// Écrit le réglage du miroir, d'un seul coup.
+pub fn save_mirror(directory: &Path, settings: MirrorSettings) -> Result<PathBuf> {
+    brain_setup::write_file(directory, mirror::SETTINGS_FILE, &settings.to_json())
 }
 
 pub fn install(settings_file: &Path, hook: &Path, dry_run: bool) -> Result<Outcome> {
@@ -198,27 +223,26 @@ fn prune_backups(directory: &Path) {
 const USAGE: &str = "\
 usage : capri hook install [--dry-run]    brancher Capri sur Claude Code
         capri hook uninstall [--dry-run]  la débrancher
-        capri hook status                 où en sont le branchement et le style
+        capri hook status                 où en sont le branchement, le miroir et le style
+        capri hook mirror on | off        qu'elle dise, ou non, la ligne que Claude écrit pour elle
+                                          (désactivé par défaut)
         capri hook style install          installer le style de sortie « Capri » de Claude Code
         capri hook style uninstall        le retirer";
 
 /// La commande `capri hook <action>`. Rend le code de sortie du processus.
 pub fn run_cli(args: &[String]) -> i32 {
-    let (action, dry_run) = match args.iter().map(String::as_str).collect::<Vec<_>>()[..] {
-        [action @ ("install" | "uninstall")] => (action, false),
-        [action @ ("install" | "uninstall"), "--dry-run"] => (action, true),
-        ["status"] => ("status", false),
-        ["style", "install"] => ("style install", false),
-        ["style", "uninstall"] => ("style uninstall", false),
+    let done = match args.iter().map(String::as_str).collect::<Vec<_>>()[..] {
+        [action @ ("install" | "uninstall")] => cli(action, false),
+        [action @ ("install" | "uninstall"), "--dry-run"] => cli(action, true),
+        ["status"] => cli("status", false),
+        ["mirror", "on"] => mirror_cli(true),
+        ["mirror", "off"] => mirror_cli(false),
+        ["style", "install"] => style_cli(true),
+        ["style", "uninstall"] => style_cli(false),
         _ => {
             eprintln!("{USAGE}");
             return 2;
         }
-    };
-    let done = match action {
-        "style install" => style_cli(true),
-        "style uninstall" => style_cli(false),
-        _ => cli(action, dry_run),
     };
     match done {
         Ok(()) => 0,
@@ -242,6 +266,7 @@ fn cli(action: &str, dry_run: bool) -> Result<()> {
     let settings_file = settings_path()?;
     if action == "status" {
         hook_status(&settings_file)?;
+        mirror_status()?;
         return style_status();
     }
 
@@ -295,6 +320,42 @@ fn hook_status(settings_file: &Path) -> Result<()> {
     }
     if status.all_hooks_disabled {
         println!("attention : « disableAllHooks » est activé dans ce fichier, aucun hook ne s'exécute.");
+    }
+    Ok(())
+}
+
+/// Ce que `capri hook status` dit du miroir.
+fn mirror_status() -> Result<()> {
+    let directory = brain_setup::config_dir()?;
+    match load_mirror(&directory) {
+        Ok(settings) if settings.enabled => println!(
+            "miroir   : activé ({}). Pour le désactiver : capri hook mirror off",
+            directory.join(mirror::SETTINGS_FILE).display()
+        ),
+        Ok(_) => println!("miroir   : désactivé. Pour l'activer : capri hook mirror on"),
+        Err(err) => println!("miroir   : {err:#}"),
+    }
+    Ok(())
+}
+
+/// `capri hook mirror on` ou `capri hook mirror off`.
+fn mirror_cli(enabled: bool) -> Result<()> {
+    let file = save_mirror(&brain_setup::config_dir()?, MirrorSettings { enabled })?;
+    if !enabled {
+        println!("{}", mirror::TURNED_OFF);
+        println!("réglage  : {}", file.display());
+        return Ok(());
+    }
+    println!("{}", mirror::TURNED_ON);
+    println!("{}", mirror::ABOUT);
+    println!("réglage  : {}", file.display());
+    // ce qui manque encore pour qu'une phrase arrive jusqu'à elle
+    if settings_path().and_then(|file| status(&file)).is_ok_and(|status| !status.is_installed()) {
+        println!("{} Pour le brancher : capri hook install", mirror::NOT_PLUGGED);
+    }
+    let style = style_setup::styles_dir().and_then(|directory| style_setup::status(&directory));
+    if style.is_ok_and(|found| !matches!(found.state, StyleState::Ours { .. })) {
+        println!("{} Pour l'installer : capri hook style install", mirror::NO_STYLE);
     }
     Ok(())
 }
@@ -504,5 +565,26 @@ mod tests {
         let backup = done.backup.unwrap();
         assert_eq!(backup.parent().unwrap(), real_dir, "la sauvegarde est à côté du vrai fichier");
         assert_eq!(std::fs::metadata(&backup).unwrap().permissions().mode() & 0o777, 0o600);
+    }
+
+    #[test]
+    fn the_mirror_is_off_until_written_and_read_back_like_the_hook_reads_it() {
+        let dir = scratch_dir("miroir").join("capri");
+        assert_eq!(load_mirror(&dir).unwrap(), MirrorSettings { enabled: false }, "sans fichier");
+        let file = save_mirror(&dir, MirrorSettings { enabled: true }).unwrap();
+        assert_eq!(file, dir.join("claude-code.json"));
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "{\n  \"mirror\": true\n}\n");
+        assert!(load_mirror(&dir).unwrap().enabled);
+        save_mirror(&dir, MirrorSettings { enabled: false }).unwrap();
+        assert!(!load_mirror(&dir).unwrap().enabled);
+
+        // illisible ou trop gros : une erreur qui dit qu'il compte pour désactivé, comme pour le hook
+        for broken in ["{ cassé".to_owned(), format!("{{\"mirror\":true,\"x\":\"{}\"}}", "x".repeat(5_000))]
+        {
+            std::fs::write(&file, broken).unwrap();
+            let error = format!("{:#}", load_mirror(&dir).unwrap_err());
+            assert!(error.contains("compte pour désactivé") && error.contains("claude-code.json"), "{error}");
+        }
+        let _ = std::fs::remove_dir_all(dir.parent().unwrap());
     }
 }
