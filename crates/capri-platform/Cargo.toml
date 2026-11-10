@@ -15,12 +15,40 @@ winit = "0.30.13"
 [target.'cfg(target_os = "macos")'.dependencies]
 dispatch2 = "0.3.1" # MainThreadBound : confier la vue à wgpu sans mentir sur les threads
 objc2 = "0.6.5"
-# La voix : la synthèse vocale du système (AVSpeechSynthesizer).
-objc2-avf-audio = { version = "0.3.2", default-features = false, features = ["std", "AVSpeechSynthesis"] }
+block2 = "0.6.2" # les blocs que le système rappelle : son du micro, texte reconnu
+# La voix (AVSpeechSynthesizer) et le micro (AVAudioEngine).
+objc2-avf-audio = { version = "0.3.2", default-features = false, features = [
+    "std",
+    "block2",
+    "AVAudioApplication", # la permission d'utiliser le micro
+    "AVAudioBuffer",
+    "AVAudioEngine",
+    "AVAudioFormat",
+    "AVAudioIONode",
+    "AVAudioNode",
+    "AVAudioTime",
+    "AVAudioTypes",
+    "AVSpeechSynthesis",
+] }
+# L'écoute : la reconnaissance vocale du système, faite sur l'appareil.
+objc2-speech = { version = "0.3.2", default-features = false, features = [
+    "std",
+    "block2",
+    "objc2-avf-audio",
+    "SFSpeechRecognitionRequest",
+    "SFSpeechRecognitionResult",
+    "SFSpeechRecognitionTask",
+    "SFSpeechRecognitionTaskHint",
+    "SFSpeechRecognizer",
+    "SFTranscription",
+] }
 objc2-foundation = { version = "0.3.2", default-features = false, features = [
     "std",
     "NSArray",
+    "NSBundle", # l'app a-t-elle le droit de demander le micro ?
     "NSDate", # avec NSRunLoop : laisser la voix finir, en ligne de commande
+    "NSError",
+    "NSLocale",
     "NSGeometry",
     "NSNotification",
     "NSRunLoop",

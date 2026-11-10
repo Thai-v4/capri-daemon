@@ -1,26 +1,29 @@
 //! Ce qui s'affiche au-dessus de Capri, côté application : une ligne de bandeau ou sa bulle de
 //! parole, son image, et où elle se dessine.
 //!
-//! Trois sources se partagent cette place, de la plus à la moins prioritaire :
-//! 1. ce que Capri est en train de dire (`chat::Chat`) : on vient de lui parler, on attend sa
+//! Quatre sources se partagent cette place, de la plus à la moins prioritaire :
+//! 1. ce qu'on est en train de lui dire au micro : elle écoute, et montre ce qu'elle comprend ;
+//! 2. ce que Capri est en train de dire (`chat::Chat`) : on vient de lui parler, on attend sa
 //!    réponse, et rien ne doit la masquer — pas même Claude Code qui attend l'utilisateur, ce qui
 //!    peut durer des minutes ;
-//! 2. un message de l'app elle-même, pendant quelques secondes ;
-//! 3. l'activité de Claude Code (`claude::Feed`), qui reprend la place dès qu'elle se tait.
+//! 3. un message de l'app elle-même, pendant quelques secondes ;
+//! 4. l'activité de Claude Code (`claude::Feed`), qui reprend la place dès qu'elle se tait.
 //!
 //! L'animation et le placement sont dans `capri-core`, le tracé du texte dans `capri-render`.
 
 use std::sync::mpsc::{Receiver, TryRecvError, channel};
 use std::time::{Duration, Instant};
 
+use capri_chat::dictation::{Dictation, Said};
 use capri_claude::{Headline, Tone};
 use capri_core::{Banner, Rect, Vec2, place_banner};
+use capri_platform::{Ear, EarEvent};
 use capri_render::banner::{BannerPainter, BannerStyle};
 use capri_render::{Renderer, SpriteDraw, SpriteImage};
 
-use crate::brain_setup;
 use crate::chat::Chat;
 use crate::claude::Feed;
+use crate::{brain_setup, ear_setup};
 
 /// Le suivi de Claude Code est relu à cette cadence (en pas de 60 Hz) même sans nouveau message :
 /// c'est ce qui fait expirer un texte.
@@ -35,6 +38,11 @@ const NIGHT: [u8; 4] = [20, 16, 36, 240];
 /// Les couleurs de sa bulle de parole.
 const SPEECH_STYLE: BannerStyle =
     BannerStyle { text: [250, 246, 255, 255], fill: NIGHT, border: [214, 170, 255, 255] };
+/// Les couleurs de ce qu'elle entend : c'est toi qui parles, pas elle.
+const HEARING_STYLE: BannerStyle =
+    BannerStyle { text: [232, 250, 255, 255], fill: NIGHT, border: [86, 204, 242, 255] };
+/// Ce qu'elle affiche tant qu'elle n'a encore rien compris.
+const LISTENING: &str = "Je t'écoute…";
 
 /// Ce qui occupe la place au-dessus d'elle.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -43,11 +51,18 @@ enum Shown {
     Line(Headline),
     /// Une page de ce que Capri dit ; `more` : une autre suit.
     Speech { text: String, more: bool },
+    /// Ce qu'elle comprend de ce qu'on lui dit au micro.
+    Hearing(String),
 }
 
 pub struct BannerView {
     feed: Option<Feed>,
     chat: Chat,
+    /// Son oreille, créée la première fois qu'on lui parle au micro.
+    ear: Option<Ear>,
+    /// La prise de parole en cours, s'il y en a une.
+    dictation: Dictation,
+    started: Instant,
     banner: Banner<Shown>,
     /// Un message de l'app, affiché jusqu'à l'instant donné.
     notice: Option<(Headline, Instant)>,
@@ -96,6 +111,9 @@ impl BannerView {
         Self {
             feed: Feed::start(),
             chat: Chat::new(settings),
+            ear: None,
+            dictation: Dictation::new(),
+            started: Instant::now(),
             banner: Banner::new(),
             notice: None,
             painter,
@@ -113,8 +131,91 @@ impl BannerView {
             feed.pump();
         }
         self.chat.pump();
+        self.pump_ear();
         self.chat.hold();
         self.refresh = true;
+    }
+
+    /// On commence à lui parler au micro : elle se tait et écoute. Sans effet si elle écoute
+    /// déjà. Si elle ne peut pas écouter, elle dit pourquoi.
+    pub fn listen_start(&mut self) {
+        if self.dictation.is_listening() {
+            return;
+        }
+        self.chat.hush(); // on ne s'écoute pas parler, et on ne lui coupe pas la parole à moitié
+        if self.ear.is_none() {
+            self.ear = Ear::new();
+        }
+        let started = match &mut self.ear {
+            Some(ear) => ear.start().map_err(|err| {
+                log::info!("pas d'écoute : {err}");
+                ear_setup::explain(&err)
+            }),
+            None => Err("Je ne sais pas encore t'écouter sur ce système"),
+        };
+        match started {
+            Ok(()) => self.dictation.begin(),
+            Err(why) => self.notify(why, Tone::Failed),
+        }
+        self.refresh = true;
+    }
+
+    /// On a fini de lui parler : le micro se ferme, et ce qui a été dit part dès que le système
+    /// a rendu son dernier mot.
+    pub fn listen_stop(&mut self) {
+        if !self.dictation.is_listening() {
+            return;
+        }
+        if let Some(ear) = &mut self.ear {
+            ear.stop();
+        }
+        self.dictation.end(self.now_ms());
+        self.refresh = true;
+    }
+
+    /// Commence à écouter, ou arrête si elle écoutait (pour le menu, où rien ne se maintient).
+    #[cfg(any(target_os = "macos", windows))]
+    pub fn listen_toggle(&mut self) {
+        if self.dictation.is_listening() { self.listen_stop() } else { self.listen_start() }
+    }
+
+    fn now_ms(&self) -> u64 {
+        self.started.elapsed().as_millis() as u64
+    }
+
+    /// Prend en compte ce que son oreille a compris depuis le dernier appel.
+    fn pump_ear(&mut self) {
+        let Some(ear) = &mut self.ear else { return };
+        let mut said = None;
+        for event in ear.drain() {
+            self.refresh = true;
+            match event {
+                EarEvent::Heard { text, last } => {
+                    // la longueur seulement : ce qui se dit n'est jamais écrit dans le journal
+                    log::debug!("entendu : {} caractères (définitif : {last})", text.chars().count());
+                    said = said.or(self.dictation.transcribed(&text, last));
+                }
+                EarEvent::Failed => {
+                    log::debug!("l'écoute s'est terminée sans texte définitif");
+                    said = said.or(self.dictation.failed());
+                }
+                EarEvent::PermissionAnswered => {
+                    let text = format!("C'est noté. Maintiens {} pour me parler", ear_setup::SHORTCUT);
+                    self.notice = Some((Headline { text, tone: Tone::Done }, Instant::now() + NOTICE_FOR));
+                }
+            }
+        }
+        if said.is_none() {
+            said = self.dictation.tick(self.started.elapsed().as_millis() as u64);
+            if said.is_some() {
+                ear.cancel(); // le dernier mot n'est pas venu : on n'attend plus rien de cette écoute
+            }
+        }
+        match said {
+            Some(Said::Message(message)) => self.say(&message),
+            Some(Said::Nothing) => self.notify("Je n'ai rien entendu", Tone::Failed),
+            None => {}
+        }
     }
 
     /// Fait dire quelque chose à Capri pendant quelques secondes.
@@ -159,6 +260,7 @@ impl BannerView {
     pub fn update(&mut self, frame: u64, scale: f64, renderer: &mut Renderer) {
         let fresh = self.feed.as_mut().is_some_and(Feed::pump);
         self.chat.pump();
+        self.pump_ear();
         self.ticks = self.ticks.wrapping_add(1);
         // sa parole avance « en deux », comme le reste de l'animation
         let speaking = self.chat.is_speaking() && frame / 2 != self.spoken_drawing;
@@ -191,6 +293,9 @@ impl BannerView {
                         Shown::Speech { text, more } => {
                             painter.paint_speech(text, *more, &SPEECH_STYLE, scale as f32)
                         }
+                        Shown::Hearing(text) => {
+                            painter.paint_speech(text, false, &HEARING_STYLE, scale as f32)
+                        }
                     };
                     let sprite = SpriteImage { width: image.width, height: image.height, rgba: &image.rgba };
                     match renderer.set_banner(Some(sprite)) {
@@ -215,6 +320,17 @@ impl BannerView {
     fn choose(&mut self, frame: u64) {
         if self.notice.as_ref().is_some_and(|(_, until)| Instant::now() >= *until) {
             self.notice = None;
+        }
+        if let Some(heard) = self.dictation.heard() {
+            let hearing =
+                Shown::Hearing(if heard.is_empty() { LISTENING.to_owned() } else { heard.to_owned() });
+            // ce qu'elle comprend s'allonge et se corrige : pas d'à-coup
+            let already_hearing = matches!(self.banner.content(frame), Some(Shown::Hearing(_)));
+            return if already_hearing {
+                self.banner.revise(hearing, frame)
+            } else {
+                self.banner.set(Some(hearing), frame)
+            };
         }
         if let Some((text, more)) = self.chat.page() {
             let page = Shown::Speech { text, more };

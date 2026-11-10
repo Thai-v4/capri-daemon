@@ -135,8 +135,36 @@ modèle écrit la suite.
   Système > Accessibilité > Lire et énoncer > Voix système (libellés de macOS 27) ;
 - ce n'est **pas** la voix de la série, et ça ne le sera pas : pas de clonage de la voix d'une
   comédienne ;
-- macOS seulement pour l'instant. La bulle et la voix avancent chacune à son rythme, sa bouche
-  ne bouge pas, et on ne peut pas encore lui parler au micro.
+- macOS seulement pour l'instant. La bulle et la voix avancent chacune à son rythme, et sa
+  bouche ne bouge pas.
+
+### Lui parler au micro
+
+Maintiens **⌃⌥M** (Ctrl+Alt+M), parle, relâche : ce que tu as dit lui est envoyé comme si tu
+l'avais tapé. Pendant que tu parles, une bulle bleue montre ce qu'elle comprend. Le menu propose
+la même chose (« Lui parler au micro » : un clic pour commencer, un autre pour finir).
+
+```bash
+./tools/bundle-macos.sh                   # fabrique target/Capri.app
+open target/Capri.app                     # quitte d'abord une Capri déjà lancée
+./target/release/capri ear status         # si elle peut t'écouter, et sinon pourquoi
+```
+
+- **le son ne quitte pas ta machine** : la transcription est faite par la reconnaissance vocale
+  de macOS, exigée sur l'appareil. Si le système ne sait pas transcrire le français sans passer
+  par ses serveurs, Capri refuse d'écouter plutôt que d'envoyer ta voix ;
+- **le micro n'est ouvert que pendant que tu maintiens le raccourci** (le témoin orange de macOS
+  le montre), et rien n'est enregistré ;
+- **il faut la lancer depuis `Capri.app`** : macOS n'accorde le micro et la reconnaissance vocale
+  qu'à une app qui dit pourquoi elle les veut. À la première écoute, il te pose les deux
+  questions ; réponds, puis recommence. Lancée nue (`cargo run`), Capri garde tout le reste et dit
+  simplement qu'elle ne peut pas t'écouter ;
+- l'app est signée pour ta machine seulement, et macOS rattache ses permissions à cette
+  signature : après chaque reconstruction, il les redemande ;
+- quand tu commences à parler, elle se tait. Le micro met un instant à s'ouvrir : laisse passer
+  une demi-seconde avant ton premier mot ;
+- pas encore de mot d'éveil, ni de détection de fin de phrase : c'est toi qui dis quand tu as
+  fini, en relâchant. macOS seulement.
 
 ## Installer et lancer
 
@@ -168,7 +196,7 @@ crates/
   capri-core/      logique pure : animation, mouvement, lancer, hit-test, bandeau, parole (testée)
   capri-claude/    logique pure : hooks de Claude Code, protocole, sessions, settings.json (testée)
   capri-chat/      logique pure : conversation, format des fournisseurs, flux de réponse, règles
-                   d'adresse, réglages du cerveau, personnalité, phrases à dire (testée)
+                   d'adresse, réglages du cerveau, personnalité, phrases à dire, dictée (testée)
   capri-net/       le seul crate qui parle au réseau : envoyer la conversation, lire la réponse
                    au fil de l'eau (testé contre un faux serveur local)
   capri-render/    rendu wgpu : Metal sur macOS, DirectX 12 + DirectComposition sur Windows
@@ -178,6 +206,7 @@ crates/
     macos.rs         AppKit via objc2 : un NSPanel non activant, sans fenêtre winit
     macos/input.rs   le champ de saisie : le seul panneau qui prend le clavier, sur demande
     voice.rs         sa voix ; macos/voice.rs : la synthèse vocale du système
+    ear.rs           son oreille ; macos/ear.rs : le micro et la reconnaissance sur l'appareil
     winit_overlay.rs fenêtre winit, pour Windows et les autres systèmes
     windows.rs       Win32 via windows-sys
     other.rs         repli (Linux : affichage seul)
@@ -186,8 +215,9 @@ crates/
     windows.rs       tube nommé au nom aléatoire
   capri-hook/      le binaire appelé par les hooks de Claude Code
   capri-app/       l'application : boucle, souris, menus, raccourci, images, bandeau, bulle,
-                   voix, et les commandes `capri hook`, `capri chat` et `capri voice`
-tools/             récupération vérifiée des images
+                   voix, écoute, et les commandes `capri hook`, `capri chat`, `capri voice`,
+                   `capri ear`
+tools/             récupération vérifiée des images, fabrication de Capri.app (macOS)
 ```
 
 Règle : tout ce qui peut être testé sans écran va dans `capri-core`, `capri-claude` ou
@@ -197,7 +227,7 @@ Règle : tout ce qui peut être testé sans écran va dans `capri-core`, `capri-
 
 Vérifié automatiquement :
 
-- formatage, `clippy -D warnings` et 205 tests sur **macOS Apple Silicon** : animation, lancer et
+- formatage, `clippy -D warnings` et 210 tests sur **macOS Apple Silicon** : animation, lancer et
   rebonds, hit-test, clics, bandeau, parole en pages, bulle sur plusieurs lignes, conversation,
   **validation du shader** par le compilateur de wgpu, lecture
   des exemples de hooks de la documentation de Claude Code, suivi des sessions, aller-retour sur
@@ -210,6 +240,8 @@ Vérifié automatiquement :
   coupée ou sans fin) ;
 - la voix, pour ce qui se teste sans haut-parleur : le découpage en phrases quel que soit le
   rythme d'arrivée du texte, ce qui se prononce ou non, et le choix de la voix ;
+- l'écoute, pour ce qui se teste sans micro : le déroulé d'une prise de parole (texte provisoire,
+  dernier mot attendu puis abandonné, silence, abandon) ;
 - `clippy -D warnings` en compilation croisée pour **Windows x64** et **Linux x64** (le code
   compile, il n'est pas exécuté).
 
@@ -262,7 +294,7 @@ Points à surveiller :
 4. Le chat avec un modèle d'IA : ~~la saisie et la bulle~~, ~~un modèle local par Ollama~~, puis
    les fournisseurs à clé (OpenRouter, DeepSeek, ProxyAPI, Anthropic) avec leurs clés dans le
    trousseau, et Capri dans Claude Code pour qui a un abonnement. Sa voix : ~~ses réponses
-   dites à voix haute~~, puis lui parler au micro (reconnaissance sur la machine), puis un mot
+   dites à voix haute~~, ~~lui parler au micro~~ (reconnaissance sur la machine), puis un mot
    d'éveil.
 5. App signée et notarisée (`.app` / installeur), mises à jour.
 

@@ -17,6 +17,7 @@ mod banner_view;
 mod brain_setup;
 mod chat;
 mod claude;
+mod ear_setup;
 mod hook_setup;
 #[cfg(any(target_os = "macos", windows))]
 mod menu;
@@ -52,12 +53,14 @@ fn main() -> Result<()> {
         Some("hook") => std::process::exit(hook_setup::run_cli(&args[1..])),
         Some("chat") => std::process::exit(brain_setup::run_cli(&args[1..])),
         Some("voice") => std::process::exit(voice_setup::run_cli(&args[1..])),
+        Some("ear") => std::process::exit(ear_setup::run_cli(&args[1..])),
         Some(_) => {
             eprintln!(
                 "usage : capri                  lancer Capri\n\
                  \x20       capri hook <action>    brancher Claude Code (voir capri hook)\n\
                  \x20       capri chat <action>    lui choisir un cerveau (voir capri chat)\n\
-                 \x20       capri voice <action>   lui donner une voix (voir capri voice)"
+                 \x20       capri voice <action>   lui donner une voix (voir capri voice)\n\
+                 \x20       capri ear status       si elle peut t'écouter au micro"
             );
             std::process::exit(2);
         }
@@ -94,6 +97,8 @@ struct Hotkeys {
     toggle: Option<u32>,
     /// ⌃⌥P : lui parler.
     talk: Option<u32>,
+    /// ⌃⌥M, maintenu : lui parler au micro.
+    listen: Option<u32>,
 }
 
 struct Running {
@@ -291,6 +296,12 @@ impl App {
             for action in actions {
                 match action {
                     menu::Action::Talk => self.talk(),
+                    menu::Action::Listen => {
+                        if self.hidden {
+                            self.toggle_hidden();
+                        }
+                        self.with_banner(BannerView::listen_toggle);
+                    }
                     menu::Action::Hush => self.with_banner(BannerView::hush),
                     menu::Action::Forget => self.with_banner(BannerView::forget),
                     menu::Action::ToggleVoice => self.toggle_voice(),
@@ -401,8 +412,13 @@ impl App {
     }
 
     fn handle_hotkey(&mut self) {
-        let Some(Hotkeys { toggle, talk, .. }) = self.hotkeys else { return };
+        let Some(Hotkeys { toggle, talk, listen, .. }) = self.hotkeys else { return };
         while let Ok(event) = GlobalHotKeyEvent::receiver().try_recv() {
+            if Some(event.id) == listen {
+                // le seul raccourci qui se maintient : on parle tant qu'il est enfoncé
+                self.listen(event.state == HotKeyState::Pressed);
+                continue;
+            }
             if event.state != HotKeyState::Pressed {
                 continue;
             }
@@ -411,6 +427,20 @@ impl App {
             } else if Some(event.id) == talk {
                 self.talk();
             }
+        }
+    }
+
+    /// La touche pour lui parler au micro vient d'être enfoncée (`true`) ou relâchée.
+    fn listen(&mut self, pressed: bool) {
+        if pressed && self.hidden {
+            self.toggle_hidden(); // on ne parle pas à quelqu'un qu'on ne voit pas
+        }
+        let Some(r) = self.running.as_mut() else { return };
+        if pressed {
+            r.overlay.hide_input(); // on ne tape pas et on ne parle pas en même temps
+            r.banner.listen_start();
+        } else {
+            r.banner.listen_stop();
         }
     }
 
@@ -534,5 +564,6 @@ fn register_hotkeys() -> Option<Hotkeys> {
             .map(|()| hotkey.id())
     };
     let (toggle, talk) = (register(Code::KeyC, "⌃⌥C"), register(Code::KeyP, "⌃⌥P"));
-    Some(Hotkeys { _manager: manager, toggle, talk })
+    let listen = register(Code::KeyM, ear_setup::SHORTCUT);
+    Some(Hotkeys { _manager: manager, toggle, talk, listen })
 }

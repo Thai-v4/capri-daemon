@@ -13,13 +13,16 @@
 //! - macOS (`macos.rs`) : un `NSPanel` non activant créé par nos soins, sans fenêtre winit ;
 //! - ailleurs (`winit_overlay.rs`) : une fenêtre winit, réglée par `windows.rs` ou `other.rs`.
 //!
-//! C'est aussi ici que vit sa voix ([`Voice`]) : la synthèse vocale du système.
+//! C'est aussi ici que vivent sa voix ([`Voice`], la synthèse vocale du système) et son oreille
+//! ([`Ear`], le micro et la reconnaissance vocale sur l'appareil).
 
 use raw_window_handle::{HandleError, HasDisplayHandle, HasWindowHandle, WindowHandle};
 use winit::event::{MouseButton, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, EventLoopBuilder};
 
+mod ear;
 mod voice;
+pub use ear::{Access, Ear, EarError, EarEvent, EarStatus, Permission};
 pub use voice::{SystemVoice, Voice};
 
 #[cfg(target_os = "macos")]

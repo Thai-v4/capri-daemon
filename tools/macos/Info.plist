@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleName</key>
+    <string>Capri</string>
+    <key>CFBundleDisplayName</key>
+    <string>Capri</string>
+    <key>CFBundleIdentifier</key>
+    <string>local.capri-daemon.capri</string>
+    <key>CFBundleExecutable</key>
+    <string>capri</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>CFBundleShortVersionString</key>
+    <string>@VERSION@</string>
+    <key>CFBundleVersion</key>
+    <string>@VERSION@</string>
+    <!-- Ni icône dans le Dock, ni barre de menus : Capri vit sur le bureau. -->
+    <key>LSUIElement</key>
+    <true/>
+    <key>NSHighResolutionCapable</key>
+    <true/>
+    <!-- Ce que le système affiche en demandant la permission. Sans ces deux textes, il refuse le
+         micro et la reconnaissance vocale : Capri vérifie leur présence avant de rien demander. -->
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Capri ouvre le micro seulement pendant que tu maintiens son raccourci, pour entendre ce que tu lui dis. Rien n'est enregistré.</string>
+    <key>NSSpeechRecognitionUsageDescription</key>
+    <string>Capri transcrit ce que tu lui dis sur cet ordinateur, pour pouvoir te répondre. Le son ne quitte pas ta machine.</string>
+</dict>
+</plist>

@@ -10,6 +10,8 @@ use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
 pub enum Action {
     /// Ouvrir le champ de saisie pour lui parler.
     Talk,
+    /// Lui parler au micro : commencer à écouter, ou arrêter.
+    Listen,
     /// La faire taire : elle arrête de répondre, et sa bulle s'efface.
     Hush,
     /// Repartir de zéro : elle oublie la conversation.
@@ -123,6 +125,8 @@ fn build_menu() -> Built {
     let title = MenuItem::new("Capri — prototype", false, None);
     let talk_shortcut = Accelerator::new(Modifiers::CONTROL | Modifiers::ALT, Code::KeyP);
     let talk = MenuItem::new("Parler à Capri", true, Some(talk_shortcut));
+    let listen_shortcut = Accelerator::new(Modifiers::CONTROL | Modifiers::ALT, Code::KeyM);
+    let listen = MenuItem::new("Lui parler au micro (maintenir)", true, Some(listen_shortcut));
     let hush = MenuItem::new("La faire taire", true, None);
     let forget = MenuItem::new("Nouvelle conversation", true, None);
     let voice = MenuItem::new("Activer sa voix", true, None);
@@ -134,12 +138,13 @@ fn build_menu() -> Built {
     let separator = PredefinedMenuItem::separator;
     let (first, second, third) = (separator(), separator(), separator());
     if let Err(err) = menu.append_items(&[
-        &title, &first, &talk, &hush, &forget, &voice, &second, &toggle, &hook, &third, &quit,
+        &title, &first, &talk, &listen, &hush, &forget, &voice, &second, &toggle, &hook, &third, &quit,
     ]) {
         log::warn!("menu incomplet : {err}");
     }
     let items = vec![
         (Action::Talk, talk),
+        (Action::Listen, listen),
         (Action::Hush, hush),
         (Action::Forget, forget),
         (Action::ToggleVoice, voice),
