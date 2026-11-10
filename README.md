@@ -461,14 +461,16 @@ vérifié avant le passage à la fenêtre « Overlay » ; il n'a pas été revé
     d'envoi apparaît pour un fournisseur distant ; la liste de modèles se filtre ; « Essayer » et
     « Utiliser ce cerveau » fonctionnent ; le clavier revient à l'app d'avant à la fermeture.
 
-16. avec de vraies clés rangées depuis la fenêtre, les listes de modèles d'Ollama en ligne et
-    d'OpenRouter arrivent en https, et un refus d'OpenRouter à l'essai (401) s'affiche en rouge.
-    Ces listes sont publiques : les recevoir ne prouve pas que la clé est acceptée.
+16. avec une vraie clé d'OpenRouter rangée depuis la fenêtre : une clé refusée s'affiche en rouge
+    (401), un modèle gratuit saturé aussi (429), et « Essayer » avec un autre modèle gratuit
+    obtient une vraie réponse, en français, en moins de trois secondes. C'est la première
+    conversation aboutie avec un fournisseur à clé. Avec une clé d'Ollama en ligne, seule la
+    liste des modèles a été reçue : elle est publique, ce qui ne prouve pas que la clé est
+    acceptée.
 
-**Pas encore vérifié** : une vraie conversation avec un fournisseur à clé (OpenRouter, DeepSeek,
-ProxyAPI, Ollama en ligne), aucune n'ayant encore abouti ; un vrai LM Studio ; la bulle avec un
-fournisseur distant ; la demande d'accès au trousseau quand `Capri.app` lit une clé rangée depuis
-le terminal.
+**Pas encore vérifié** : une vraie conversation avec DeepSeek, ProxyAPI ou Ollama en ligne ; un
+vrai LM Studio ; la bulle (et la voix) avec un fournisseur distant ; la demande d'accès au
+trousseau quand `Capri.app` lit une clé rangée depuis le terminal.
 
 **À vérifier à la main : ⌘Q et ⌘H** (le choix du raccourci est testé, pas la fenêtre) :
 
