@@ -12,10 +12,6 @@ raw-window-handle = "0.6.2"
 thiserror = "2"
 winit = "0.30.13"
 
-# Lire une clé d'API au terminal sans l'afficher (termios).
-[target.'cfg(unix)'.dependencies]
-libc = "0.2.191"
-
 [target.'cfg(target_os = "macos")'.dependencies]
 # Le trousseau de session (SecItem…). Déjà tiré par le TLS du système (native-tls) : aucun
 # crate de plus.

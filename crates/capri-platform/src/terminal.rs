@@ -1,8 +1,13 @@
 //! Lire une ligne tapée au clavier sans l'afficher : pour donner une clé d'API dans un terminal.
 //!
-//! L'écho du terminal est coupé le temps de la saisie, puis remis exactement comme il était, même
-//! si la lecture échoue. Unix (macOS, Linux) : `termios` ; Windows : le mode de la console.
-//! Ailleurs, ou si l'entrée n'est pas un terminal : une erreur, sans rien lire.
+//! - macOS : `readpassphrase(3)`, de la bibliothèque C du système. Elle lit sur `/dev/tty` (le
+//!   terminal de la commande), écho coupé, et le remet tel qu'il était, y compris quand un signal
+//!   l'interrompt (Ctrl+C, Ctrl+Z, terminal fermé…) : elle rend l'écho, puis laisse le signal
+//!   suivre son cours. Un Ctrl+C arrête donc la commande sans laisser le terminal muet ;
+//! - Windows : l'écho de la console est coupé le temps de la saisie, puis remis comme il était,
+//!   même si la lecture échoue. Ce qu'un Ctrl+C laisse derrière lui n'a pas été vérifié : le
+//!   système termine alors le processus sans passer par ce module ;
+//! - ailleurs (Linux, sans trousseau où ranger une clé) : une erreur, sans rien lire.
 
 use std::io;
 
@@ -12,43 +17,54 @@ pub fn read_hidden_line() -> io::Result<String> {
     imp::read_hidden_line().map(|line| line.trim_end_matches(['\r', '\n']).to_owned())
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "macos")]
 mod imp {
-    use std::io::{self, BufRead};
-    use std::mem::MaybeUninit;
+    use std::ffi::{CStr, c_char, c_int};
+    use std::io;
 
-    /// Rend au terminal ses réglages d'avant la saisie.
-    struct Restore(libc::termios);
+    /// `RPP_REQUIRE_TTY`, de `<readpassphrase.h>` : échouer s'il n'y a pas de terminal, plutôt que
+    /// de lire l'entrée standard en clair. Sans `RPP_ECHO_ON` (0x01), l'écho est coupé.
+    const RPP_REQUIRE_TTY: c_int = 0x02;
+    /// Bien plus qu'une clé (`capri_chat::key::MAX_CHARS` caractères) avec des blancs autour.
+    /// `readpassphrase` jette ce qui dépasse : une clé aussi longue serait refusée de toute façon.
+    const CAPACITY: usize = 4096;
 
-    impl Drop for Restore {
-        fn drop(&mut self) {
-            // SAFETY: `self.0` est une structure entière, lue par `tcgetattr` sur ce même
-            // descripteur, qui vit le temps de l'appel.
-            unsafe { libc::tcsetattr(libc::STDIN_FILENO, libc::TCSANOW, &self.0) };
-        }
+    unsafe extern "C" {
+        /// `<readpassphrase.h>` du SDK de macOS :
+        /// `char *readpassphrase(const char *prompt, char *buf, size_t bufsiz, int flags);`
+        fn readpassphrase(
+            prompt: *const c_char,
+            buf: *mut c_char,
+            bufsiz: usize,
+            flags: c_int,
+        ) -> *mut c_char;
     }
 
     pub fn read_hidden_line() -> io::Result<String> {
-        let mut original = MaybeUninit::<libc::termios>::uninit();
-        // SAFETY: `tcgetattr` remplit la structure qu'on lui donne, ou échoue sans qu'on la lise.
-        if unsafe { libc::tcgetattr(libc::STDIN_FILENO, original.as_mut_ptr()) } != 0 {
-            return Err(io::Error::last_os_error());
+        let mut buffer = vec![0u8; CAPACITY];
+        // SAFETY: l'invite est une chaîne C vide et statique (l'app écrit la sienne avant) ;
+        // `buffer` nous appartient, vit le temps de l'appel et fait `CAPACITY` octets : la fonction
+        // y écrit au plus `CAPACITY - 1` caractères et un zéro final, et ne garde aucun pointeur
+        // après son retour.
+        let read = unsafe {
+            readpassphrase(c"".as_ptr(), buffer.as_mut_ptr().cast(), buffer.len(), RPP_REQUIRE_TTY)
+        };
+        let line = if read.is_null() {
+            Err(io::Error::last_os_error())
+        } else {
+            CStr::from_bytes_until_nul(&buffer)
+                .ok()
+                .and_then(|line| line.to_str().ok())
+                .map(str::to_owned)
+                .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "la saisie n'est pas du texte"))
+        };
+        // la page de manuel demande d'effacer le tampon dès que possible
+        for byte in &mut buffer {
+            // SAFETY: `byte` désigne un octet de `buffer`, valide et aligné ; l'écriture volatile
+            // empêche le compilateur de supprimer cet effacement.
+            unsafe { std::ptr::write_volatile(byte, 0) };
         }
-        // SAFETY: `tcgetattr` a réussi : la structure est entièrement remplie.
-        let original = unsafe { original.assume_init() };
-        let mut hidden = original;
-        // plus d'écho, sauf celui du retour à la ligne
-        hidden.c_lflag &= !libc::ECHO;
-        hidden.c_lflag |= libc::ECHONL;
-        // SAFETY: `hidden` est une structure entière, copie de celle du terminal ; TCSAFLUSH jette
-        // ce qui aurait été tapé avant la question.
-        if unsafe { libc::tcsetattr(libc::STDIN_FILENO, libc::TCSAFLUSH, &hidden) } != 0 {
-            return Err(io::Error::last_os_error());
-        }
-        let _restore = Restore(original);
-        let mut line = String::new();
-        io::stdin().lock().read_line(&mut line)?;
-        Ok(line)
+        line
     }
 }
 
@@ -101,7 +117,7 @@ mod imp {
     }
 }
 
-#[cfg(not(any(unix, windows)))]
+#[cfg(not(any(target_os = "macos", windows)))]
 mod imp {
     use std::io;
 
