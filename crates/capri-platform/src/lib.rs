@@ -15,7 +15,9 @@
 //!
 //! C'est aussi ici que vivent sa voix ([`Voice`], la synthèse vocale du système), son oreille
 //! ([`Ear`], le micro et la reconnaissance vocale sur l'appareil), le trousseau où sont rangées
-//! les clés d'API ([`keychain`]) et la saisie d'une clé sans l'afficher ([`terminal`]).
+//! les clés d'API ([`keychain`]), la saisie d'une clé sans l'afficher ([`terminal`]) et la
+//! fenêtre de réglages ([`SettingsWindow`]), qui affiche un formulaire décrit par
+//! `capri_core::form` sans rien savoir de ce qu'il règle.
 
 use raw_window_handle::{HandleError, HasDisplayHandle, HasWindowHandle, WindowHandle};
 use winit::event::{MouseButton, WindowEvent};
@@ -23,9 +25,11 @@ use winit::event_loop::{ActiveEventLoop, EventLoopBuilder};
 
 mod ear;
 pub mod keychain;
+pub mod settings_window;
 pub mod terminal;
 mod voice;
 pub use ear::{Access, Ear, EarError, EarEvent, EarStatus, Permission};
+pub use settings_window::{SettingsWindow, SettingsWindowError};
 pub use voice::{SystemVoice, Voice};
 
 #[cfg(target_os = "macos")]

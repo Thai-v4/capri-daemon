@@ -426,6 +426,7 @@ name = "capri-platform"
 version = "0.1.0"
 dependencies = [
  "block2 0.6.2",
+ "capri-core",
  "dispatch2",
  "log",
  "objc2 0.6.5",

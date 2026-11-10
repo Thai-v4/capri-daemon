@@ -1,12 +1,14 @@
 [package]
 name = "capri-platform"
-description = "Ce qui touche au système : fenêtre overlay, curseur, clics, voix, micro, trousseau (macOS, Windows)."
+description = "Ce qui touche au système : fenêtre overlay, curseur, clics, voix, micro, trousseau, fenêtre de réglages (macOS, Windows)."
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+# La description du formulaire de réglages que la fenêtre affiche (logique pure, sans dépendance).
+capri-core = { path = "../capri-core" }
 log = "0.4"
 raw-window-handle = "0.6.2"
 thiserror = "2"
@@ -60,15 +62,29 @@ objc2-foundation = { version = "0.3.2", default-features = false, features = [
 objc2-app-kit = { version = "0.3.2", default-features = false, features = [
     "std",
     "NSApplication", # NSApplicationDidChangeScreenParametersNotification
+    "NSButton", # la fenêtre de réglages : boutons et cases à cocher
+    "NSButtonCell",
     "NSCell",
     "NSColor",
     "NSControl",
     "NSEvent",
     "NSFont",
     "NSGraphics",
+    "NSMenu", # les options d'une liste déroulante
+    "NSMenuItem",
     "NSPanel",
+    "NSPopUpButton",
+    "NSPopUpButtonCell",
     "NSResponder",
     "NSScreen",
+    "NSScrollView",
+    "NSClipView",
+    "NSSearchField",
+    "NSSearchFieldCell",
+    "NSSecureTextField",
+    "NSTabView",
+    "NSTabViewItem",
+    "NSText", # l'éditeur d'un champ en cours de saisie
     "NSTextField",
     "NSTextFieldCell",
     "NSView",

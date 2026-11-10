@@ -5,7 +5,7 @@
 //! en cours. winit ne sait créer que des `NSWindow` qui deviennent fenêtre clé au clic ; ici il
 //! ne fournit donc que la boucle d'événements.
 
-mod edit_keys;
+pub(crate) mod edit_keys;
 mod input;
 
 use std::cell::{Cell, RefCell};
