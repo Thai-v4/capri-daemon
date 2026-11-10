@@ -680,7 +680,6 @@ impl Rubric for BrainRubric {
                 match result {
                     Ok(legacy) => {
                         let mut text = key_stored(provider, &keychain, account.address());
-                        let kept = matches!(legacy, LegacyKey::Kept(_));
                         match legacy {
                             LegacyKey::None => {}
                             LegacyKey::Removed => {
@@ -694,9 +693,10 @@ impl Rubric for BrainRubric {
                             )),
                         }
                         self.key_note = Some((Tone::Good, text));
-                        self.key = KeyState::Present { legacy: kept };
                         self.models = Models::NotAsked;
-                        self.list_if_local().into_iter().collect()
+                        // ce qui est affiché vient du trousseau, pas de ce qu'on croit y avoir mis
+                        self.key = KeyState::Checking;
+                        vec![Effect::CheckKey(account)]
                     }
                     Err(problem) => {
                         self.key_note = Some((Tone::Bad, problem));
@@ -715,7 +715,8 @@ impl Rubric for BrainRubric {
                             text.push_str(&legacy_key_removed(provider, true));
                         }
                         self.key_note = Some((Tone::Good, text));
-                        self.key = KeyState::Absent { legacy: false };
+                        self.key = KeyState::Checking;
+                        return vec![Effect::CheckKey(account)];
                     }
                     Err(problem) => self.key_note = Some((Tone::Bad, problem)),
                 }
@@ -970,7 +971,12 @@ mod tests {
         assert!(!format!("{effects:?}").contains("fenetre"), "{effects:?}");
 
         let account = account.clone();
-        rubric.done(Outcome::KeyStored { account, result: Ok(LegacyKey::Removed) });
+        let effects =
+            rubric.done(Outcome::KeyStored { account: account.clone(), result: Ok(LegacyKey::Removed) });
+        assert!(
+            matches!(effects.as_slice(), [Effect::CheckKey(checked)] if *checked == account),
+            "l'état affiché est relu dans le trousseau : {effects:?}"
+        );
         let (tone, text) = note(&rubric, KEY_NOTE).expect("une note");
         assert_eq!(tone, Tone::Good);
         assert_eq!(
@@ -1215,7 +1221,11 @@ mod tests {
         let effects = press(&mut rubric, KEY_FORGET, None);
         let [Effect::ForgetKey(account)] = effects.as_slice() else { panic!("{effects:?}") };
         let account = account.clone();
-        rubric.done(Outcome::KeyForgotten { account, result: Ok(Forgotten { key: true, legacy: false }) });
+        let effects = rubric.done(Outcome::KeyForgotten {
+            account: account.clone(),
+            result: Ok(Forgotten { key: true, legacy: false }),
+        });
+        assert!(matches!(effects.as_slice(), [Effect::CheckKey(checked)] if *checked == account));
         assert_eq!(
             note(&rubric, KEY_NOTE),
             Some((
