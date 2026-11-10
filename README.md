@@ -99,6 +99,11 @@ pbpaste | ./target/release/capri chat key openrouter      # ou depuis le presse-
 ./target/release/capri chat key openrouter --forget       # retirer la clé du trousseau
 ```
 
+Une clé est donnée **pour une adresse** : celle de `--url` (`capri chat key custom --url
+https://…`), sinon celle du cerveau choisi s'il est de ce fournisseur, sinon son adresse habituelle.
+La commande dit toujours pour laquelle elle la range, et un serveur personnalisé sans adresse
+choisie demande `--url`.
+
 | fournisseur  | adresse par défaut             | clé                                         |
 | ------------ | ------------------------------ | ------------------------------------------- |
 | `ollama`     | `http://localhost:11434/v1`    | aucune                                      |
@@ -109,7 +114,8 @@ pbpaste | ./target/release/capri chat key openrouter      # ou depuis le presse-
 | `custom`     | à donner avec `--url`          | facultative                                 |
 
 `--url` remplace l'adresse de n'importe lequel, par exemple `--url http://192.168.1.20:11434/v1`
-pour un Ollama qui tourne ailleurs chez toi. Les adresses viennent de la documentation de chaque
+pour un Ollama qui tourne ailleurs chez toi. La clé ne suit pas : celle de l'adresse habituelle
+n'est jamais envoyée à une autre. Les adresses viennent de la documentation de chaque
 fournisseur, relue le 10 novembre 2026.
 
 Le choix vaut dès ta phrase suivante, sans relancer Capri. Dans son menu, « La faire taire » coupe
@@ -125,7 +131,8 @@ Ce que Capri garantit :
 - **seules sa personnalité et la conversation partent vers le modèle** : jamais ce que fait
   Claude Code, ni rien d'autre de ta machine ;
 - **elle ne parle qu'à l'adresse choisie** : aucun proxy, même si l'environnement en déclare un,
-  aucune redirection suivie, et aucun en-tête qui la présente au fournisseur ;
+  aucune redirection suivie, et aucun en-tête qui la présente au fournisseur (seul part celui de
+  la bibliothèque HTTP, `User-Agent: ureq/<version>`, qui ne nomme pas Capri) ;
 - **en clair (`http://`), seulement vers cette machine ou un réseau privé** donné par son adresse
   IP. Toute autre adresse en `http://` est refusée ;
 - **en `https://`, le TLS du système** (Security.framework sur macOS, SChannel sur Windows) et les
@@ -134,6 +141,11 @@ Ce que Capri garantit :
   Gestionnaire d'identification sur Windows) : jamais dans `chat.json` ni ailleurs sur le disque,
   jamais dans le journal, jamais à l'écran, jamais en argument d'une commande.
   `capri chat status` dit si elle est là, sans la montrer ;
+- **une clé est liée à l'adresse pour laquelle elle a été donnée** : son nom dans le trousseau
+  dit le fournisseur et l'adresse, hôte et port (`openrouter@openrouter.ai:443`), elle n'est lue
+  que pour cette adresse, et `capri-net` refuse de la mettre dans une requête vers une autre.
+  Choisir une autre adresse (`--url`, un autre port, `localhost` au lieu de `127.0.0.1`) ne
+  l'emporte jamais : il faut en donner une pour celle-là ;
 - **une clé ne part jamais en clair** : seulement en `https://`, ou vers cette machine même,
   jamais en `http://` sur le réseau, même privé. Un fournisseur qui n'en prend pas (Ollama) n'en
   reçoit jamais ;
@@ -148,7 +160,14 @@ Ce qu'il faut savoir :
   en demander l'accès, et macOS te pose la question : c'est ce qui devrait arriver quand
   `Capri.app` lit une clé rangée depuis le terminal, ou après une reconstruction. Réponds
   « Toujours autoriser ». Cette demande n'a pas encore été vue à la main ;
-- une seule clé par fournisseur : `custom` n'en a qu'une, quel que soit le serveur ;
+- une clé par fournisseur et par adresse : deux serveurs personnalisés, ou deux ports de la même
+  machine, ont chacun la leur ;
+- une clé rangée par une version précédente de Capri (sous le nom du fournisseur seul, sans
+  adresse) n'est **jamais envoyée** : `capri chat status` la signale. Redonne-la
+  (`capri chat key <fournisseur>`), ce qui retire l'ancienne ; `--forget` la retire aussi ;
+- taper la clé au terminal passe, sur macOS, par `readpassphrase(3)` du système : un Ctrl+C rend
+  l'écho du terminal avant d'arrêter la commande. Sur Windows, ce que laisse un Ctrl+C n'a pas
+  été vérifié ;
 - « La faire taire » ferme la connexion, mais un fournisseur peut compter la réponse entière quand
   même : OpenRouter le précise pour une partie des fournisseurs qu'il sert ;
 - sous Linux, ni `https://` ni trousseau (il y faudrait OpenSSL et un autre trousseau) : seulement
@@ -278,7 +297,7 @@ Règle : tout ce qui peut être testé sans écran va dans `capri-core`, `capri-
 
 Vérifié automatiquement :
 
-- formatage, `clippy -D warnings` et 250 tests sur **macOS Apple Silicon** (plus 3 qui ne
+- formatage, `clippy -D warnings` et 262 tests sur **macOS Apple Silicon** (plus 3 qui ne
   tournent qu'à la main : ils écrivent des images, lisent un vrai `settings.json` ou touchent au
   vrai trousseau) : animation, lancer et rebonds, hit-test, clics, bandeau, parole en pages, bulle
   sur plusieurs lignes, conversation, **validation du shader** par le compilateur de wgpu, lecture
@@ -297,6 +316,11 @@ Vérifié automatiquement :
   retombe jamais en clair face à un serveur qui répond en clair ; les commandes `capri chat` avec
   un trousseau en mémoire (la clé n'apparaît ni dans une sortie, ni dans une erreur, ni dans un
   fichier) ;
+- la clé liée à son adresse : le nom de son compte (casse de l'hôte, port par défaut, IPv6, deux
+  ports d'un même hôte), et, face à deux faux serveurs locaux qui ne diffèrent que par le port,
+  une clé donnée pour l'un n'apparaît dans aucune requête vers l'autre (`use`, `models`, `test`,
+  `status`, la conversation de l'app) ; `--url` sur un fournisseur nommé n'emporte pas la clé de
+  son adresse habituelle ; une clé d'une version précédente, sans adresse, n'est jamais envoyée ;
 - la voix, pour ce qui se teste sans haut-parleur : le découpage en phrases quel que soit le
   rythme d'arrivée du texte, ce qui se prononce ou non, et le choix de la voix ;
 - l'écoute, pour ce qui se teste sans micro : le déroulé d'une prise de parole (texte provisoire,
@@ -310,9 +334,14 @@ fournisseur) :
 - `https://` par le TLS du système : la liste publique des modèles d'OpenRouter est lue ; des
   certificats expiré, auto-signé, à un autre nom et de racine inconnue (badssl.com) sont
   refusés ;
-- une clé factice rangée dans le vrai trousseau (sous un service d'essai), tapée dans un vrai
-  terminal sans s'afficher (l'écho revient ensuite) ou lue sur l'entrée standard, puis envoyée à
-  un faux serveur local dans `Authorization: Bearer`, et retirée ;
+- une clé factice rangée dans le vrai trousseau (sous un service d'essai), tapée dans un
+  pseudo-terminal sans s'afficher ou lue sur l'entrée standard, puis envoyée à un faux serveur
+  local dans `Authorization: Bearer`, et retirée. Après la saisie, comme après un Ctrl+C pendant
+  la saisie, l'écho du terminal est revenu ;
+- la même clé, rangée pour un port : elle part vers ce port, et vers aucun autre (`use`,
+  `models`, `test`, `status`) ; son compte s'appelle bien `custom@127.0.0.1:<port>` ; une clé
+  rangée à l'ancienne, sans adresse, est signalée, jamais envoyée, et retirée par `--forget` ;
+  une clé d'OpenRouter ne suit pas `--url` vers un autre serveur (refus, personne contacté) ;
 - le test qui touche au vrai trousseau, lancé une fois à la main.
 
 Le rendu réel sous Linux avec un GPU logiciel (le sprite s'affiche, flotte et « bout ») avait été

@@ -16,8 +16,8 @@ personnalisé), voix et écoute au micro en place ; API d'Anthropic et mot d'év
   texte à texte. Avec des tests.
 - `capri-chat` : la conversation, **sans dépendance système ni réseau** : historique borné,
   format des fournisseurs (ce qu'on envoie, comment lire le flux), fournisseurs et besoin d'une
-  clé (`brain`), règles d'adresse et règle de la clé (`endpoint`, `key` : jamais en clair),
-  réglages du cerveau, personnalité, nettoyage du Markdown. Avec des tests.
+  clé (`brain`), règles d'adresse et règles de la clé (`endpoint`, `key` : jamais en clair, et
+  liée à son adresse), réglages du cerveau, personnalité, nettoyage du Markdown. Avec des tests.
 - `capri-net` : **le seul crate qui parle au réseau** (ureq). Il se connecte et rien d'autre :
   quoi envoyer et comment lire la réponse est décidé par `capri-chat`. En `https://`, le TLS du
   système (fonction `native-tls-no-default` de ureq, `RootCerts::PlatformVerifier`), sur macOS et
@@ -49,7 +49,8 @@ personnalisé), voix et écoute au micro en place ; API d'Anthropic et mot d'év
   Le trousseau aussi (`keychain.rs` ; `macos/keychain.rs` : les `SecItem` de
   `security-framework`, déjà tiré par native-tls ; `windows/keychain.rs` : `CredWriteW`,
   `CredReadW`, `CredDeleteW` ; ailleurs : refus) et la saisie d'une clé sans écho
-  (`terminal.rs` : termios sous Unix, mode de la console sous Windows).
+  (`terminal.rs` : `readpassphrase(3)` sur macOS, qui rend l'écho même sur un signal ; mode de la
+  console sous Windows ; ailleurs : refus).
 - `capri-app` : assemble le tout. Pas d'appel système direct ici (sauf menus via `tray-icon`).
   La fenêtre passe toujours par `capri_platform::Overlay`, jamais par `winit::window::Window`.
   Les clés passent par `keys` (le trait `KeyStore` : le trousseau du système, ou un trousseau en
@@ -67,8 +68,11 @@ cargo test --workspace
 ```
 
 Le code Windows ne se teste pas depuis un Mac : la CI GitHub Actions le compile et le teste.
-Les deux clippy croisés tiennent parce qu'aucune dépendance ne compile de C : pas de rustls
-(ring, aws-lc), pas d'OpenSSL. Ne pas en ajouter sans revérifier les trois.
+Les deux clippy croisés tiennent parce qu'aucune dépendance ne compile de C (sous Linux,
+wayland-backend tire `cc`, mais ne s'en sert qu'avec sa fonction `log`, qui n'est pas active) :
+pas de rustls (son fournisseur par défaut dans ureq, ring, compile du C, et son script de
+construction échoue vers Windows depuis un Mac), pas d'OpenSSL. Ne pas en ajouter sans revérifier
+les trois.
 Tout comportement visible (transparence, clics, animation) se vérifie à la main : dire
 précisément quoi vérifier plutôt que de l'affirmer.
 
@@ -76,8 +80,9 @@ précisément quoi vérifier plutôt que de l'affirmer.
 
 - **API des crates** : wgpu 30, winit 0.30, objc2 0.6 / objc2-app-kit 0.3 / objc2-avf-audio 0.3 /
   objc2-speech 0.3 / block2 0.6, windows-sys 0.61, tray-icon 0.26, cosmic-text 0.19, ureq 3.5
-  (avec `native-tls-no-default` sur macOS et Windows seulement), security-framework 3.7,
-  libc 0.2. Ces API changent souvent : vérifier dans les sources
+  (avec `native-tls-no-default` sur macOS et Windows seulement), security-framework 3.7. Une
+  fonction C du système déclarée à la main (`readpassphrase`) se vérifie dans l'en-tête du SDK.
+  Ces API changent souvent : vérifier dans les sources
   (`~/.cargo/registry/src`) ou docs.rs, pas de mémoire. Même règle pour Claude Code : le format
   des hooks se vérifie dans sa documentation (<https://code.claude.com/docs/en/hooks>).
 - Chaque bloc `unsafe` a un commentaire `// SAFETY:` qui justifie pourquoi il est sûr.
@@ -110,11 +115,20 @@ précisément quoi vérifier plutôt que de l'affirmer.
   documentation, pas de mémoire (les sources de chaque adresse sont citées dans
   `capri_chat::brain`). Aucun en-tête qui présente l'app à un fournisseur (`HTTP-Referer`,
   `X-OpenRouter-Title`…).
+- **Une clé est liée à l'adresse pour laquelle elle a été donnée.** Son compte dans le trousseau
+  nomme le fournisseur et l'adresse, hôte et port (`openrouter@openrouter.ai:443` :
+  `capri_chat::KeyAccount`, à ne jamais changer sans perdre les clés rangées). Elle n'est lue que
+  par `keys::key_for(trousseau, fournisseur, adresse jointe)`, revient liée à son compte
+  (`BoundKey`), et `capri_chat::key::authorization` refuse d'en faire un en-tête pour une autre
+  adresse : `capri-net` la traite alors comme absente. Une clé rangée sans adresse par une version
+  précédente (`key::legacy_account`) n'est jamais lue pour être envoyée : on la signale, on la
+  retire ; pas de migration.
 - **Les clés d'API** : uniquement dans le trousseau du système (service `Capri`, un compte par
-  fournisseur), par `capri_platform::keychain` et `keys`. Jamais dans `chat.json` ni aucun
-  fichier, jamais dans le journal, jamais dans un message d'erreur ou une sortie de commande,
-  jamais en argument de ligne de commande. `capri_chat::ApiKey` n'a pas de `Display` et son
-  `Debug` la masque ; son texte ne sort que pour le trousseau et pour l'en-tête `Authorization`.
+  fournisseur et par adresse), par `capri_platform::keychain` et `keys`. Jamais dans `chat.json`
+  ni aucun fichier, jamais dans le journal, jamais dans un message d'erreur ou une sortie de
+  commande, jamais en argument de ligne de commande. `capri_chat::ApiKey` n'a pas de `Display`
+  et son `Debug` la masque ; son texte ne sort que pour le trousseau et pour l'en-tête
+  `Authorization`.
   Une clé ne part qu'en `https://`, ou en `http://` vers cette machine même
   (`Endpoint::may_carry_secret`, vérifié par `capri-net` avant toute connexion) ; jamais vers un
   fournisseur qui n'en prend pas. Un message de fournisseur est masqué (`ApiKey::redact`) avant
