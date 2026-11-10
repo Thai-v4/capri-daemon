@@ -14,6 +14,11 @@
 //!
 //! Si sa voix est activée (`voice_setup`), chaque phrase terminée est aussi dite à voix haute par
 //! le système, pendant que le modèle écrit la suite.
+//!
+//! Elle dit aussi, comme une réponse, la ligne que Claude Code a écrite pour elle quand le miroir
+//! est activé ([`Chat::relay`]) : dans sa bulle, à voix haute si sa voix est activée, et « La
+//! faire taire » la coupe. Cette ligne n'entre pas dans la conversation : son cerveau ne la voit
+//! jamais.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -21,7 +26,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, Sender, TryRecvError, channel};
 use std::time::{Duration, Instant};
 
-use capri_chat::plain::PlainStream;
+use capri_chat::plain::{PlainStream, plain_text};
 use capri_chat::voice::{Sentences, speakable};
 use capri_chat::{Conversation, Place, ReplyEvent, Role, Turn, echo, reply};
 use capri_core::Speech;
@@ -60,6 +65,16 @@ pub struct Chat {
 struct Reply {
     events: Receiver<Thought>,
     cancelled: Arc<AtomicBool>,
+    origin: Origin,
+}
+
+/// D'où vient ce qu'elle dit.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Origin {
+    /// Sa réponse à l'utilisateur : elle entre dans la conversation.
+    Conversation,
+    /// La ligne que Claude Code a écrite pour elle : elle la dit, et l'oublie.
+    ClaudeCode,
 }
 
 /// Ce que le thread du cerveau envoie.
@@ -144,10 +159,41 @@ impl Chat {
         self.clock.resume();
         self.speech = Some(Speech::new(self.clock.now_ms()));
         match std::thread::Builder::new().name("capri-cerveau".to_owned()).spawn(brain) {
-            Ok(_) => self.reply = Some(Reply { events, cancelled }),
+            Ok(_) => self.reply = Some(Reply { events, cancelled, origin: Origin::Conversation }),
             Err(err) => {
                 log::warn!("impossible de lancer la réponse : {err}");
                 self.end_reply(Some("Je n'arrive pas à répondre."));
+            }
+        }
+    }
+
+    /// Elle dit la ligne que Claude Code a écrite pour elle (le miroir) : dans sa bulle, et à
+    /// voix haute si sa voix est activée, comme une réponse. Ce qu'elle disait s'arrête. La ligne
+    /// n'entre pas dans la conversation, et n'est jamais écrite dans le journal.
+    pub fn relay(&mut self, line: &str) {
+        // nettoyée comme ses réponses : du Markdown n'a de sens ni dans une bulle ni à l'oral
+        let text = plain_text(line, true);
+        if text.trim().is_empty() {
+            return;
+        }
+        self.hush();
+        let (sender, events) = channel();
+        let settings = self.settings.clone();
+        let job = move || {
+            announce_voice(settings.as_deref(), &sender);
+            let _ = sender.send(Thought::Reply(ReplyEvent::Delta(text)));
+            let _ = sender.send(Thought::Reply(ReplyEvent::Done));
+        };
+        self.clock.resume();
+        self.speech = Some(Speech::new(self.clock.now_ms()));
+        match std::thread::Builder::new().name("capri-claude-dit".to_owned()).spawn(job) {
+            Ok(_) => {
+                let cancelled = Arc::new(AtomicBool::new(false));
+                self.reply = Some(Reply { events, cancelled, origin: Origin::ClaudeCode });
+            }
+            Err(err) => {
+                log::warn!("impossible de dire la phrase de Claude Code : {err}");
+                self.speech = None;
             }
         }
     }
@@ -181,6 +227,12 @@ impl Chat {
     /// Y a-t-il une prise de parole à montrer ou à venir ?
     pub fn is_speaking(&self) -> bool {
         self.speech.is_some()
+    }
+
+    /// Parle-t-elle, de quelque façon que ce soit : une réponse attendue, sa bulle, ou sa voix
+    /// qui n'a pas fini ? Ce qui doit attendre son tour attend que ce soit fini.
+    pub fn is_busy(&self) -> bool {
+        self.reply.is_some() || self.speech.is_some() || self.voice.as_ref().is_some_and(Voice::is_speaking)
     }
 
     /// Prend en compte ce que le cerveau a envoyé depuis le dernier appel.
@@ -235,19 +287,23 @@ impl Chat {
         }
     }
 
-    /// La réponse est complète, ou s'arrête sur un problème à dire à l'utilisateur.
+    /// La réponse est complète, ou s'arrête sur un problème à dire à l'utilisateur. Seule une
+    /// réponse à l'utilisateur entre dans la conversation.
     fn end_reply(&mut self, problem: Option<&str>) {
-        self.reply = None;
+        let origin = self.reply.take().map_or(Origin::Conversation, |reply| reply.origin);
         let now_ms = self.clock.now_ms();
         let Some(speech) = &mut self.speech else { return };
+        let in_conversation = origin == Origin::Conversation;
         if let Some(problem) = problem {
             if !speech.text().trim().is_empty() {
                 speech.push(" — ");
             }
             speech.push(problem);
             // la question n'a pas eu sa réponse : reposée, elle ne doit pas arriver en double
-            self.conversation.retract_unanswered();
-        } else {
+            if in_conversation {
+                self.conversation.retract_unanswered();
+            }
+        } else if in_conversation {
             self.conversation.push(Role::Capri, speech.text());
         }
         speech.finish(now_ms);
@@ -304,14 +360,7 @@ fn think(
     let mut emit = |event: ReplyEvent| {
         let _ = sender.send(Thought::Reply(event));
     };
-    // sa voix d'abord : elle doit être connue avant le premier mot
-    match settings.map(voice_setup::load) {
-        Some(Ok(voice)) if voice.enabled => {
-            let _ = sender.send(Thought::Aloud(voice_setup::chosen_voice(&voice)));
-        }
-        Some(Err(err)) => log::warn!("pas de voix : {err:#}"),
-        _ => {}
-    }
+    announce_voice(settings, sender);
     let setup = match settings.map(brain_setup::load).transpose() {
         Ok(setup) => setup.flatten(),
         Err(err) => {
@@ -345,6 +394,18 @@ fn think(
     let ask =
         Ask { place: Place::Bubble, brain: &setup.brain, key: key.as_ref(), persona: &setup.persona, turns };
     client.answer(&ask, cancelled, &mut |event| plain.filter(event, &mut emit));
+}
+
+/// Si sa voix est activée, l'annonce avec la voix choisie : elle doit être connue avant le premier
+/// mot. Lit les réglages et les voix installées : hors du thread principal.
+fn announce_voice(settings: Option<&Path>, sender: &Sender<Thought>) {
+    match settings.map(voice_setup::load) {
+        Some(Ok(voice)) if voice.enabled => {
+            let _ = sender.send(Thought::Aloud(voice_setup::chosen_voice(&voice)));
+        }
+        Some(Err(err)) => log::warn!("pas de voix : {err:#}"),
+        _ => {}
+    }
 }
 
 /// Le cerveau de secours : il répète le dernier message, mot à mot.
@@ -595,6 +656,47 @@ mod tests {
         chat.say("encore");
         chat.hush();
         assert!(!chat.is_speaking() && chat.page().is_none());
+    }
+
+    #[test]
+    fn she_says_the_line_from_claude_code_without_keeping_it_in_the_conversation() {
+        let mut chat = Chat::new(None);
+        chat.relay("**C'est réparé**, et `tout` passe.");
+        assert!(chat.is_speaking() && chat.is_busy());
+        assert_eq!(listen(&mut chat), "C'est réparé, et tout passe.", "sans Markdown, comme ses réponses");
+        assert_eq!(chat.turns(), 0, "ce n'est pas une prise de parole de la conversation");
+        let (page, _) = chat.page().expect("la bulle reste le temps d'être lue");
+        assert!(page.starts_with("C'est réparé"));
+
+        // « La faire taire » la coupe
+        chat.relay("Encore une.");
+        chat.hush();
+        assert!(!chat.is_speaking() && !chat.is_busy() && chat.page().is_none());
+        // une ligne vide ne dit rien
+        chat.relay("  ** ` ");
+        assert!(!chat.is_busy());
+    }
+
+    #[test]
+    fn what_she_said_for_claude_code_never_reaches_her_brain() {
+        let (address, requests) = fake_provider(1);
+        let directory = settings_with_a_brain_at("ligne-de-claude", address);
+        let mut chat = Chat::new(Some(directory.clone()));
+        chat.relay("Tous les tests passent.");
+        assert_eq!(listen(&mut chat), "Tous les tests passent.");
+        assert!(requests.recv_timeout(Duration::from_millis(100)).is_err(), "son cerveau n'est pas contacté");
+
+        // l'utilisateur lui parle : ce qu'elle disait s'arrête, et sa phrase ne part pas avec
+        chat.relay("Une autre phrase de Claude.");
+        chat.say("Bonjour");
+        assert_eq!(listen(&mut chat), "Réponse 1");
+        let request = body_of(requests.recv_timeout(Duration::from_secs(5)).expect("une requête"));
+        let messages = request["messages"].as_array().expect("des messages");
+        assert_eq!(messages.len(), 2, "{messages:?}");
+        assert_eq!(messages[1], serde_json::json!({ "role": "user", "content": "Bonjour" }));
+        assert!(!request.to_string().contains("tests passent") && !request.to_string().contains("Claude"));
+        assert_eq!(chat.turns(), 2);
+        let _ = std::fs::remove_dir_all(directory);
     }
 
     #[test]

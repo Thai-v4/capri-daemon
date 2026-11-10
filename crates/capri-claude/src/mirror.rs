@@ -130,11 +130,20 @@ fn bounded(mut text: String) -> String {
     text
 }
 
-/// La phrase de Claude qui attend que Capri ait fini de parler : la plus récente seulement, et
-/// pas plus de [`WAIT_FOR_MS`]. L'horloge est celle de l'appelant, en millisecondes.
+/// La phrase de Claude qui attend que Capri ait fini de parler : la plus récente seulement, pas
+/// plus de [`WAIT_FOR_MS`], et pas au-delà du moment où sa session passe à autre chose (un
+/// nouveau prompt, sa fin) : elle parlerait alors d'un travail d'avant. L'horloge est celle de
+/// l'appelant, en millisecondes.
 #[derive(Debug, Default)]
 pub struct Waiting {
-    line: Option<(Said, u64)>,
+    line: Option<Line>,
+}
+
+#[derive(Debug)]
+struct Line {
+    said: Said,
+    session: String,
+    since_ms: u64,
 }
 
 impl Waiting {
@@ -142,16 +151,23 @@ impl Waiting {
         Self::default()
     }
 
-    /// Une phrase arrive : elle remplace celle qui attendait.
-    pub fn offer(&mut self, said: Said, now_ms: u64) {
-        self.line = Some((said, now_ms));
+    /// Une phrase arrive de cette session : elle remplace celle qui attendait.
+    pub fn offer(&mut self, said: Said, session: &str, now_ms: u64) {
+        self.line = Some(Line { said, session: session.to_owned(), since_ms: now_ms });
+    }
+
+    /// Cette session passe à autre chose : sa phrase, si c'est elle qui attend, est périmée.
+    pub fn moved_on(&mut self, session: &str) {
+        if self.line.as_ref().is_some_and(|line| line.session == session) {
+            self.line = None;
+        }
     }
 
     /// La phrase à dire maintenant, s'il y en a une et qu'elle n'est pas périmée. Elle ne sera
     /// rendue qu'une fois.
     pub fn take(&mut self, now_ms: u64) -> Option<Said> {
-        let (said, since) = self.line.take()?;
-        (now_ms.saturating_sub(since) < WAIT_FOR_MS).then_some(said)
+        let line = self.line.take()?;
+        (now_ms.saturating_sub(line.since_ms) < WAIT_FOR_MS).then_some(line.said)
     }
 
     /// Oublie la phrase qui attendait (on a fait taire Capri).
@@ -284,16 +300,29 @@ mod tests {
         let line = |text: &str| Said::new(text.to_owned());
         let mut waiting = Waiting::new();
         assert_eq!(waiting.take(0), None);
-        waiting.offer(line("première"), 0);
-        waiting.offer(line("seconde"), 1_000);
+        waiting.offer(line("première"), "a", 0);
+        waiting.offer(line("seconde"), "b", 1_000);
         assert_eq!(waiting.take(5_000), Some(line("seconde")), "seule la plus récente");
         assert_eq!(waiting.take(5_000), None, "une seule fois");
 
-        waiting.offer(line("périmée"), 10_000);
+        waiting.offer(line("périmée"), "a", 10_000);
+        assert!(waiting.take(10_000 + WAIT_FOR_MS - 1).is_some());
+        waiting.offer(line("périmée"), "a", 10_000);
         assert_eq!(waiting.take(10_000 + WAIT_FOR_MS), None);
-        waiting.offer(line("tue"), 20_000);
+        waiting.offer(line("tue"), "a", 20_000);
         waiting.clear();
         assert_eq!(waiting.take(20_001), None);
+    }
+
+    #[test]
+    fn a_waiting_line_is_dropped_when_its_session_moves_on() {
+        let mut waiting = Waiting::new();
+        waiting.offer(Said::new("à propos du tour d'avant".into()), "a", 0);
+        waiting.moved_on("b");
+        assert!(waiting.take(1).is_some(), "une autre session ne la périme pas");
+        waiting.offer(Said::new("à propos du tour d'avant".into()), "a", 0);
+        waiting.moved_on("a");
+        assert_eq!(waiting.take(1), None, "un nouveau prompt dans sa session, si");
     }
 
     #[test]

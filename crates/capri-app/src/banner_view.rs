@@ -9,8 +9,14 @@
 //! 3. un message de l'app elle-même, pendant quelques secondes ;
 //! 4. l'activité de Claude Code (`claude::Feed`), qui reprend la place dès qu'elle se tait.
 //!
+//! Avec le miroir, la ligne que Claude a écrite pour elle devient une prise de parole (2), mais
+//! seulement quand elle est libre : personne ne lui parle au micro, elle ne répond pas à
+//! l'utilisateur, et elle a fini ce qu'elle disait. Sinon la ligne attend (la plus récente
+//! seulement, pas trop longtemps : `capri_claude::mirror::Waiting`). Cachée, elle ne la dit pas.
+//!
 //! L'animation et le placement sont dans `capri-core`, le tracé du texte dans `capri-render`.
 
+use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, TryRecvError, channel};
 use std::time::{Duration, Instant};
 
@@ -23,7 +29,7 @@ use capri_render::{Renderer, SpriteDraw, SpriteImage};
 
 use crate::chat::Chat;
 use crate::claude::Feed;
-use crate::{brain_setup, ear_setup};
+use crate::{brain_setup, ear_setup, hook_setup};
 
 /// Le suivi de Claude Code est relu à cette cadence (en pas de 60 Hz) même sans nouveau message :
 /// c'est ce qui fait expirer un texte.
@@ -58,6 +64,8 @@ enum Shown {
 pub struct BannerView {
     feed: Option<Feed>,
     chat: Chat,
+    /// Le dossier de ses réglages, où relire si le miroir est encore activé.
+    settings: Option<PathBuf>,
     /// Son oreille, créée la première fois qu'on lui parle au micro.
     ear: Option<Ear>,
     /// La prise de parole en cours, s'il y en a une.
@@ -110,7 +118,8 @@ impl BannerView {
             .ok();
         Self {
             feed: Feed::start(),
-            chat: Chat::new(settings),
+            chat: Chat::new(settings.clone()),
+            settings,
             ear: None,
             dictation: Dictation::new(),
             started: Instant::now(),
@@ -231,10 +240,37 @@ impl BannerView {
         self.refresh = true;
     }
 
-    /// La fait taire : elle arrête de répondre, et sa bulle s'efface.
+    /// La fait taire : elle arrête de répondre, sa bulle s'efface, et la ligne de Claude Code qui
+    /// attendait son tour est oubliée.
     #[cfg(any(target_os = "macos", windows))]
     pub fn hush(&mut self) {
         self.chat.hush();
+        if let Some(feed) = &mut self.feed {
+            feed.drop_said();
+        }
+        self.refresh = true;
+    }
+
+    /// Si elle est libre, elle dit la ligne que Claude Code a écrite pour elle : personne ne lui
+    /// parle au micro, elle ne répond pas à l'utilisateur et ne parle pas déjà. Sinon la ligne
+    /// attend son tour.
+    fn relay_claude(&mut self) {
+        if self.dictation.is_active() || self.chat.is_busy() {
+            return;
+        }
+        let Some(said) = self.feed.as_mut().and_then(Feed::take_said) else { return };
+        // le miroir a pu être désactivé depuis que le hook l'a lu : dans le doute, elle se tait
+        let enabled = self
+            .settings
+            .as_deref()
+            .is_some_and(|directory| hook_setup::load_mirror(directory).is_ok_and(|mirror| mirror.enabled));
+        if !enabled {
+            log::debug!("phrase de Claude Code ignorée : le miroir est désactivé");
+            return;
+        }
+        // la longueur seulement : ce que Claude a écrit n'est jamais écrit dans le journal
+        log::debug!("Claude Code lui fait dire {} caractères", said.text().chars().count());
+        self.chat.relay(said.text());
         self.refresh = true;
     }
 
@@ -248,6 +284,9 @@ impl BannerView {
     #[cfg(any(target_os = "macos", windows))]
     pub fn forget(&mut self) {
         self.chat.forget();
+        if let Some(feed) = &mut self.feed {
+            feed.drop_said();
+        }
         self.notify("C'est oublié, on repart de zéro", Tone::Done);
     }
 
@@ -261,6 +300,7 @@ impl BannerView {
         let fresh = self.feed.as_mut().is_some_and(Feed::pump);
         self.chat.pump();
         self.pump_ear();
+        self.relay_claude();
         self.ticks = self.ticks.wrapping_add(1);
         // sa parole avance « en deux », comme le reste de l'animation
         let speaking = self.chat.is_speaking() && frame / 2 != self.spoken_drawing;
