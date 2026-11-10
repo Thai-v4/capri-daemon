@@ -5,7 +5,8 @@
 //! ferme (Entrée, Échap, ou un clic ailleurs), le clavier revient à la fenêtre d'avant.
 //!
 //! Le champ est un vrai `NSTextField` : accents, émojis, méthodes de saisie, copier-coller et
-//! dictée sont ceux du système.
+//! dictée sont ceux du système. Les raccourcis d'édition (⌘V…), qu'une app sans menu Édition ne
+//! transmet pas d'elle-même, passent par la vue qui le porte (`edit_keys`).
 
 use std::cell::{Cell, OnceCell};
 use std::rc::Rc;
@@ -20,6 +21,7 @@ use objc2_app_kit::{
 use objc2_foundation::{NSPoint, NSRect, NSSize, NSString};
 
 use super::Shared;
+use super::edit_keys::EditKeysView;
 use crate::OverlayEvent;
 
 /// Taille du champ, en points.
@@ -132,7 +134,10 @@ impl InputPanel {
             field.setTarget(Some(&panel));
             field.setAction(Some(sel!(capriSubmit:)));
         }
-        panel.setContentView(Some(&field));
+        // la vue qui le porte fait marcher ⌘X, ⌘C, ⌘V, ⌘A et ⌘Z dans le champ
+        let content = EditKeysView::create(mtm, frame, false);
+        content.addSubview(&field);
+        panel.setContentView(Some(&content));
         let _ = panel.ivars().field.set(field);
         panel
     }
