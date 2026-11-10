@@ -10,10 +10,11 @@
 //!   qui renvoie ailleurs est un refus) ;
 //! - il ne part que ce qu'on lui confie (la personnalité et la conversation, et la clé d'API du
 //!   fournisseur s'il en faut une), et rien n'est écrit dans le journal de ce qui a été dit ;
-//! - une clé ne part qu'en `https://`, ou en `http://` vers cette machine même : la règle de
-//!   `capri_chat::key`, vérifiée avant toute connexion. Elle ne va jamais à un fournisseur qui
-//!   n'en prend pas, et n'apparaît dans aucun message : si un fournisseur la répète dans une
-//!   erreur, elle y est masquée ;
+//! - une clé ne part que vers l'adresse pour laquelle elle a été donnée, et seulement en
+//!   `https://`, ou en `http://` vers cette machine même : les règles de `capri_chat::key`,
+//!   vérifiées avant toute connexion. Une clé donnée pour une autre adresse compte pour absente.
+//!   Elle ne va jamais à un fournisseur qui n'en prend pas, et n'apparaît dans aucun message : si
+//!   un fournisseur la répète dans une erreur, elle y est masquée ;
 //! - une réponse s'arrête dès qu'on le demande, et le serveur l'apprend : la connexion est fermée ;
 //! - tout est borné : le temps de connexion, le silence du serveur, la taille d'un événement, la
 //!   longueur d'une réponse ;
@@ -30,7 +31,7 @@ use std::time::Duration;
 
 use capri_chat::openai::{self, End};
 use capri_chat::sse::SseDecoder;
-use capri_chat::{ApiKey, Brain, Endpoint, KeyNeed, Provider, Reach, ReplyEvent, Turn, key};
+use capri_chat::{BoundKey, Brain, Endpoint, KeyError, KeyNeed, Provider, Reach, ReplyEvent, Turn, key};
 
 /// Ce système sait-il parler `https://` ?
 pub const TLS: bool = cfg!(any(target_os = "macos", windows));
@@ -74,7 +75,8 @@ pub enum Problem {
     Insecure,
     /// Le serveur est resté silencieux trop longtemps.
     TimedOut,
-    /// Le fournisseur demande une clé, et Capri n'en a pas : rien n'a été envoyé.
+    /// Le fournisseur demande une clé, et Capri n'en a pas pour cette adresse : rien n'a été
+    /// envoyé.
     NoKey,
     /// La clé partirait en clair (`http://` vers une autre machine) : rien n'a été envoyé.
     KeyInClear,
@@ -98,14 +100,17 @@ impl Problem {
     /// La phrase que Capri dit dans sa bulle, ou qu'affiche la ligne de commande. Elle ne cite
     /// jamais une clé : le message d'un fournisseur y arrive déjà masqué, et celui d'un refus de
     /// clé (401) n'est pas cité du tout.
-    pub fn explain(&self, provider: Provider, endpoint: &Endpoint) -> String {
+    ///
+    /// `chosen` : le cerveau des réglages, s'il y en a un. La commande proposée pour donner une clé
+    /// à `endpoint` n'a besoin de `--url` que si, sans lui, elle viserait une autre adresse.
+    pub fn explain(&self, provider: Provider, endpoint: &Endpoint, chosen: Option<&Brain>) -> String {
         let host = endpoint.display_host();
         // qui parle : le fournisseur, ou, pour un serveur personnalisé, son adresse
         let (who, whom) = match provider {
             Provider::Custom => (host.clone(), host.clone()),
             _ => (provider.name().to_owned(), format!("{} ({host})", provider.name())),
         };
-        let set_key = format!("capri chat key {}", provider.id());
+        let set_key = key::set_key_command(provider, endpoint, chosen);
         match self {
             Self::NoTls => "Je ne sais pas me connecter en https sur ce système.".to_owned(),
             Self::Unreachable if endpoint.reach() == Reach::Internet => {
@@ -116,7 +121,9 @@ impl Problem {
                 format!("Je n'ai pas pu établir de connexion sûre avec {whom} : je ne lui ai rien envoyé.")
             }
             Self::TimedOut => format!("{who} met trop de temps à répondre."),
-            Self::NoKey => format!("{who} demande une clé, et je n'en ai pas. Pour me la donner : {set_key}"),
+            Self::NoKey => {
+                format!("{who} demande une clé, et je n'en ai pas pour {host}. Pour me la donner : {set_key}")
+            }
             Self::KeyInClear => {
                 format!("Je n'envoie pas ma clé en clair à {host} : seulement en https, ou à cette machine.")
             }
@@ -209,15 +216,19 @@ impl Client {
     /// `Delta`, puis `Done` ou `Failed`. Bloque jusqu'à la fin : à appeler hors du thread
     /// principal.
     ///
+    /// `brain` est le cerveau des réglages : c'est pour lui que sont écrits les conseils d'un
+    /// message de panne (« Pour me la donner : capri chat key … »).
+    ///
     /// `key` : la clé du fournisseur, s'il en a une. Elle part dans l'en-tête `Authorization`,
-    /// seulement si le fournisseur en prend une et si l'adresse a le droit de la recevoir.
+    /// seulement si le fournisseur en prend une, si elle a été donnée pour l'adresse du cerveau, et
+    /// si cette adresse a le droit de la recevoir.
     ///
     /// Dès que `cancelled` passe à vrai, la lecture s'arrête, la connexion est fermée (le serveur
     /// cesse alors d'écrire) et plus rien n'est émis, pas même `Done`.
     pub fn answer(
         &self,
         brain: &Brain,
-        key: Option<&ApiKey>,
+        key: Option<&BoundKey>,
         persona: &str,
         turns: &[Turn],
         cancelled: &AtomicBool,
@@ -230,18 +241,18 @@ impl Client {
             Ok(Outcome::Complete) => emit(ReplyEvent::Done),
             Err(problem) => {
                 log::warn!("pas de réponse du cerveau : {problem:?}");
-                emit(ReplyEvent::Failed(problem.explain(brain.provider(), brain.endpoint())));
+                emit(ReplyEvent::Failed(problem.explain(brain.provider(), brain.endpoint(), Some(brain))));
             }
         }
     }
 
     /// Les modèles que le serveur de `provider` propose (`GET /models`), avec sa clé s'il en
-    /// faut une.
+    /// faut une : la même règle que pour [`Client::answer`].
     pub fn models(
         &self,
         provider: Provider,
         endpoint: &Endpoint,
-        key: Option<&ApiKey>,
+        key: Option<&BoundKey>,
     ) -> Result<Vec<String>, Problem> {
         let authorization = authorize(provider, endpoint, key)?;
         let mut request = self.agent.get(endpoint.url("/models")).header("Accept", "application/json");
@@ -260,7 +271,7 @@ impl Client {
     fn stream(
         &self,
         brain: &Brain,
-        key: Option<&ApiKey>,
+        key: Option<&BoundKey>,
         persona: &str,
         turns: &[Turn],
         cancelled: &AtomicBool,
@@ -342,28 +353,43 @@ impl Client {
 }
 
 /// L'en-tête `Authorization` à envoyer, s'il en faut un, une fois vérifié tout ce qui doit
-/// l'être avant de se connecter : le https possible sur ce système, la clé présente si le
-/// fournisseur l'exige, et jamais en clair sur le réseau. Un fournisseur qui ne prend pas de clé
-/// n'en reçoit jamais, même si on lui en confie une.
+/// l'être avant de se connecter : le https possible sur ce système, la clé donnée pour cette
+/// adresse, présente si le fournisseur l'exige, et jamais en clair sur le réseau. Une clé donnée
+/// pour une autre adresse compte pour absente. Un fournisseur qui ne prend pas de clé n'en reçoit
+/// jamais, même si on lui en confie une.
 fn authorize(
     provider: Provider,
     endpoint: &Endpoint,
-    key: Option<&ApiKey>,
+    key: Option<&BoundKey>,
 ) -> Result<Option<String>, Problem> {
     if endpoint.secure && !TLS {
         return Err(Problem::NoTls);
     }
-    match (key, provider.key_need()) {
-        (_, KeyNeed::None) => Ok(None),
+    if provider.key_need() == KeyNeed::None {
+        return Ok(None);
+    }
+    let authorization = match key.map(|key| (key, key::authorization(key, provider, endpoint))) {
+        None => None,
+        Some((_, Ok(authorization))) => Some(authorization),
+        Some((_, Err(KeyError::InClear))) => return Err(Problem::KeyInClear),
+        Some((key, Err(_))) => {
+            log::warn!(
+                "clé donnée pour {}, pas pour {} : elle n'est pas envoyée",
+                key.account().address(),
+                endpoint.display_host()
+            );
+            None
+        }
+    };
+    match (authorization, provider.key_need()) {
         (None, KeyNeed::Required) => Err(Problem::NoKey),
-        (None, KeyNeed::Optional) => Ok(None),
-        (Some(key), _) => key::authorization(key, endpoint).map(Some).map_err(|_| Problem::KeyInClear),
+        (authorization, _) => Ok(authorization),
     }
 }
 
 /// Le refus d'un serveur (`status` hors de 2xx), avec son explication masquée. `sent` : la clé
 /// envoyée avec la requête, s'il y en avait une.
-fn refusal(status: u16, body: &str, provider: Provider, sent: Option<&ApiKey>) -> Problem {
+fn refusal(status: u16, body: &str, provider: Provider, sent: Option<&BoundKey>) -> Problem {
     let reason = openai::error_message(body).map(|reason| masked(&reason, sent));
     match status {
         401 | 403 if sent.is_some() => Problem::KeyRefused { status, reason },
@@ -373,7 +399,7 @@ fn refusal(status: u16, body: &str, provider: Provider, sent: Option<&ApiKey>) -
 }
 
 /// Le message d'un fournisseur, court, et sans rien de la clé envoyée.
-fn masked(reason: &str, sent: Option<&ApiKey>) -> String {
+fn masked(reason: &str, sent: Option<&BoundKey>) -> String {
     let short = brief(reason);
     match sent {
         Some(key) => key.redact(&short),
@@ -452,10 +478,16 @@ mod tests {
         assert!(tls.use_sni());
     }
 
+    /// Une clé de test, donnée pour cette adresse de ce fournisseur.
+    fn bound(provider: Provider, url: &str) -> BoundKey {
+        let account = capri_chat::KeyAccount::new(provider, &Endpoint::parse(url).expect("valide"));
+        BoundKey::new(account, capri_chat::ApiKey::parse("sk-test-0123456789").expect("une clé"))
+    }
+
     #[test]
     fn each_problem_is_said_in_one_plain_sentence() {
         let endpoint = Endpoint::parse("http://localhost:11434/v1").expect("valide");
-        let say = |problem: Problem| problem.explain(Provider::Ollama, &endpoint);
+        let say = |problem: Problem| problem.explain(Provider::Ollama, &endpoint, None);
         assert_eq!(
             say(Problem::Unreachable),
             "Je n'arrive pas à joindre Ollama (localhost:11434). Il est lancé ?"
@@ -484,10 +516,10 @@ mod tests {
     #[test]
     fn a_key_problem_says_how_to_fix_it_without_quoting_the_key() {
         let openrouter = Endpoint::parse("https://openrouter.ai/api/v1").expect("valide");
-        let say = |problem: Problem| problem.explain(Provider::OpenRouter, &openrouter);
+        let say = |problem: Problem| problem.explain(Provider::OpenRouter, &openrouter, None);
         assert_eq!(
             say(Problem::NoKey),
-            "OpenRouter demande une clé, et je n'en ai pas. Pour me la donner : capri chat key openrouter"
+            "OpenRouter demande une clé, et je n'en ai pas pour openrouter.ai:443. Pour me la donner : capri chat key openrouter"
         );
         assert_eq!(
             say(Problem::KeyRefused { status: 401, reason: Some("Key ****cdef is not valid".to_owned()) }),
@@ -509,46 +541,70 @@ mod tests {
 
         let lan = Endpoint::parse("http://192.168.1.20:1234/v1").expect("valide");
         assert_eq!(
-            Problem::KeyInClear.explain(Provider::Custom, &lan),
+            Problem::KeyInClear.explain(Provider::Custom, &lan, None),
             "Je n'envoie pas ma clé en clair à 192.168.1.20:1234 : seulement en https, ou à cette machine."
         );
-        // un serveur personnalisé est désigné par son adresse
+        // un serveur personnalisé est désigné par son adresse, et sa clé se donne avec elle
         assert_eq!(
-            Problem::KeyNeeded { status: 401, reason: None }.explain(Provider::Custom, &lan),
+            Problem::KeyNeeded { status: 401, reason: None }.explain(Provider::Custom, &lan, None),
+            "192.168.1.20:1234 demande une clé (401). Pour me la donner : capri chat key custom --url http://192.168.1.20:1234/v1"
+        );
+        // … sauf si c'est le cerveau choisi : `capri chat key custom` vise alors son adresse
+        let chosen = Brain::new(Provider::Custom, Some("http://192.168.1.20:1234/v1"), "m").expect("valide");
+        assert_eq!(
+            Problem::KeyNeeded { status: 401, reason: None }.explain(Provider::Custom, &lan, Some(&chosen)),
             "192.168.1.20:1234 demande une clé (401). Pour me la donner : capri chat key custom"
         );
         assert_eq!(
-            Problem::TimedOut.explain(Provider::Custom, &lan),
+            Problem::TimedOut.explain(Provider::Custom, &lan, None),
             "192.168.1.20:1234 met trop de temps à répondre."
         );
         assert_eq!(
-            Problem::Unreachable.explain(Provider::Custom, &lan),
+            Problem::Unreachable.explain(Provider::Custom, &lan, None),
             "Je n'arrive pas à joindre 192.168.1.20:1234. Il est lancé ?"
+        );
+        // OpenRouter joint ailleurs que chez lui : sa commande dit où
+        let proxy = Endpoint::parse("https://proxy.example/api/v1").expect("valide");
+        assert_eq!(
+            Problem::NoKey.explain(Provider::OpenRouter, &proxy, None),
+            "OpenRouter demande une clé, et je n'en ai pas pour proxy.example:443. Pour me la donner : capri chat key openrouter --url https://proxy.example/api/v1"
         );
     }
 
     #[test]
     fn a_key_is_only_sent_where_it_belongs() {
-        let key = ApiKey::parse("sk-test-0123456789").expect("une clé");
         let at = |url: &str| Endpoint::parse(url).expect("valide");
-        let authorize = |provider, url: &str, key| authorize(provider, &at(url), key);
+        let authorize = |provider, url: &str, key: Option<&BoundKey>| authorize(provider, &at(url), key);
+        let bearer = Ok(Some("Bearer sk-test-0123456789".to_owned()));
 
+        let openrouter = bound(Provider::OpenRouter, "https://openrouter.ai/api/v1");
         assert_eq!(
-            authorize(Provider::OpenRouter, "https://openrouter.ai/api/v1", Some(&key)),
-            Ok(Some("Bearer sk-test-0123456789".to_owned()))
+            authorize(Provider::OpenRouter, "https://openrouter.ai/api/v1", Some(&openrouter)),
+            bearer
         );
+        let lmstudio = bound(Provider::LmStudio, "http://localhost:1234/v1");
         assert_eq!(
-            authorize(Provider::LmStudio, "http://localhost:1234/v1", Some(&key)),
-            Ok(Some("Bearer sk-test-0123456789".to_owned())),
+            authorize(Provider::LmStudio, "http://localhost:1234/v1", Some(&lmstudio)),
+            bearer,
             "en clair, mais sans quitter cette machine"
         );
         // jamais en clair sur le réseau, même privé : refusé avant toute connexion
         for url in ["http://192.168.1.20:1234/v1", "http://10.0.0.5:8080", "http://[fd00::1]:1234"] {
+            let key = bound(Provider::Custom, url);
             assert_eq!(authorize(Provider::Custom, url, Some(&key)), Err(Problem::KeyInClear), "{url}");
         }
+        // une clé donnée pour une autre adresse compte pour absente : rien n'est envoyé
+        assert_eq!(
+            authorize(Provider::OpenRouter, "https://proxy.example/api/v1", Some(&openrouter)),
+            Err(Problem::NoKey)
+        );
+        assert_eq!(authorize(Provider::LmStudio, "http://localhost:1235/v1", Some(&lmstudio)), Ok(None));
+        assert_eq!(authorize(Provider::Custom, "http://localhost:1234/v1", Some(&lmstudio)), Ok(None));
         // un fournisseur qui ne prend pas de clé n'en reçoit jamais
-        assert_eq!(authorize(Provider::Ollama, "http://localhost:11434/v1", Some(&key)), Ok(None));
-        assert_eq!(authorize(Provider::Ollama, "http://192.168.1.20:11434/v1", Some(&key)), Ok(None));
+        let ollama = bound(Provider::Ollama, "http://localhost:11434/v1");
+        assert_eq!(authorize(Provider::Ollama, "http://localhost:11434/v1", Some(&ollama)), Ok(None));
+        let ollama = bound(Provider::Ollama, "http://192.168.1.20:11434/v1");
+        assert_eq!(authorize(Provider::Ollama, "http://192.168.1.20:11434/v1", Some(&ollama)), Ok(None));
         // sans clé : rien à envoyer, sauf si le fournisseur l'exige
         assert_eq!(authorize(Provider::Custom, "http://192.168.1.20:1234/v1", None), Ok(None));
         assert_eq!(authorize(Provider::DeepSeek, "https://api.deepseek.com", None), Err(Problem::NoKey));
@@ -556,7 +612,7 @@ mod tests {
 
     #[test]
     fn a_refusal_knows_whether_a_key_was_involved() {
-        let key = ApiKey::parse("sk-test-0123456789").expect("une clé");
+        let key = bound(Provider::OpenRouter, "https://openrouter.ai/api/v1");
         let body = r#"{"error":{"message":"bad key sk-test-0123456789"}}"#;
         let masked = Some("bad key [clé masquée]".to_owned());
         assert_eq!(

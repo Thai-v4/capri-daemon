@@ -8,9 +8,9 @@
 //! `capri_chat::echo`, qui répète ce qu'on lui dit et n'envoie rien nulle part.
 //!
 //! Seules la personnalité de Capri et la conversation partent vers le modèle : jamais ce que
-//! fait Claude Code, que cette partie de l'app ne connaît même pas. S'il faut une clé, elle est
-//! lue dans le trousseau (`keys`) à chaque message, et confiée à `capri-net` pour l'en-tête de la
-//! requête : elle ne passe par rien d'autre.
+//! fait Claude Code, que cette partie de l'app ne connaît même pas. S'il faut une clé, celle
+//! rangée pour l'adresse du cerveau est lue dans le trousseau (`keys`) à chaque message, et confiée
+//! à `capri-net` pour l'en-tête de la requête : elle ne passe par rien d'autre.
 //!
 //! Si sa voix est activée (`voice_setup`), chaque phrase terminée est aussi dite à voix haute par
 //! le système, pendant que le modèle écrit la suite.
@@ -322,7 +322,7 @@ fn think(
     };
     let Some(setup) = setup else { return repeat(turns, cancelled, &mut emit) };
     let provider = setup.brain.provider();
-    let key = match keys::key_for(keys, provider) {
+    let key = match keys::key_for(keys, provider, setup.brain.endpoint()) {
         Ok(key) => key,
         Err(err) => {
             log::error!("clé de {} : {err:#}", provider.name());
@@ -469,7 +469,8 @@ mod tests {
             fake_server::response("401 Unauthorized", "application/json", &refusal),
         ]);
         let directory = settings_with("cle-envoyee", capri_chat::Provider::Custom, address);
-        let keys = Arc::new(keys::memory::MemoryKeys::with(capri_chat::Provider::Custom, KEY));
+        let url = format!("http://{address}/v1");
+        let keys = Arc::new(keys::memory::MemoryKeys::with(capri_chat::Provider::Custom, &url, KEY));
         let mut chat = Chat::with_keys(Some(directory.clone()), keys);
 
         chat.say("Tu m'entends ?");
@@ -498,7 +499,9 @@ mod tests {
         chat.say("Coucou");
         assert_eq!(
             listen(&mut chat),
-            "OpenRouter demande une clé, et je n'en ai pas. Pour me la donner : capri chat key openrouter"
+            format!(
+                "OpenRouter demande une clé, et je n'en ai pas pour {address}. Pour me la donner : capri chat key openrouter"
+            )
         );
 
         // un trousseau qui refuse l'accès
@@ -511,6 +514,46 @@ mod tests {
         );
         assert!(requests.recv_timeout(Duration::from_millis(100)).is_err(), "personne n'a été contacté");
         let _ = std::fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn a_key_given_for_another_address_or_without_one_never_leaves() {
+        use capri_chat::Provider;
+        // la clé est donnée pour un autre port de cette machine, et une ancienne clé, sans
+        // adresse, traîne encore dans le trousseau
+        let (given_for, given_requests) = fake_provider(1);
+        let (address, requests) = fake_provider(2);
+        let keys = keys::memory::MemoryKeys::with(Provider::Custom, &format!("http://{given_for}/v1"), KEY);
+        keys.add_legacy(Provider::Custom, KEY);
+        keys.add(Provider::OpenRouter, "https://openrouter.ai/api/v1", KEY);
+        keys.add_legacy(Provider::OpenRouter, KEY);
+        let keys = Arc::new(keys);
+
+        let directory = settings_with("cle-autre-adresse", Provider::Custom, address);
+        let mut chat = Chat::with_keys(Some(directory.clone()), keys.clone());
+        chat.say("Tu m'entends ?");
+        assert_eq!(listen(&mut chat), "Réponse 1");
+        let (head, body) = requests.recv_timeout(Duration::from_secs(5)).expect("une requête");
+        assert_eq!(header(&head, "authorization"), None, "{head}");
+        assert!(!head.contains(KEY) && !body.contains(KEY));
+
+        // OpenRouter joint ailleurs que chez lui n'emporte pas la clé de son adresse habituelle
+        let directory_openrouter = settings_with("cle-adresse-habituelle", Provider::OpenRouter, address);
+        let mut chat = Chat::with_keys(Some(directory_openrouter.clone()), keys);
+        chat.say("Et là ?");
+        assert_eq!(
+            listen(&mut chat),
+            format!(
+                "OpenRouter demande une clé, et je n'en ai pas pour {address}. Pour me la donner : capri chat key openrouter"
+            )
+        );
+        assert!(requests.recv_timeout(Duration::from_millis(100)).is_err(), "personne n'a été contacté");
+        assert!(
+            given_requests.recv_timeout(Duration::from_millis(100)).is_err(),
+            "ni là où la clé a été donnée"
+        );
+        let _ = std::fs::remove_dir_all(directory);
+        let _ = std::fs::remove_dir_all(directory_openrouter);
     }
 
     #[test]

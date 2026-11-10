@@ -3,11 +3,18 @@
 //!
 //! La clé vit dans le trousseau du système (c'est le travail de `capri-platform`) ; ici, on ne
 //! touche ni au trousseau ni au réseau. Une [`ApiKey`] ne s'affiche pas : elle n'a pas de
-//! `Display`, son `Debug` la masque, et le seul moyen d'en lire le texte est d'en faire un en-tête
-//! `Authorization` pour une adresse qui a le droit de la recevoir ([`authorization`]).
+//! `Display`, son `Debug` la masque, et le seul moyen d'en lire le texte, hors du trousseau, est
+//! d'en faire un en-tête `Authorization` ([`authorization`]).
+//!
+//! Une clé est liée à l'adresse pour laquelle elle a été donnée. Elle est rangée sous un compte
+//! qui nomme le fournisseur et l'adresse ([`KeyAccount`] : `openrouter@openrouter.ai:443`), relue
+//! avec ce compte ([`BoundKey`]), et [`authorization`] refuse de la mettre dans une requête vers
+//! une autre adresse. Choisir une autre adresse (`--url`) n'emporte donc jamais la clé : il faut en
+//! donner une pour cette adresse-là.
 
 use std::fmt;
 
+use crate::brain::{Brain, Provider};
 use crate::endpoint::Endpoint;
 
 /// Longueur maximale d'une clé. Celles des fournisseurs font quelques dizaines de caractères : au-delà,
@@ -31,6 +38,85 @@ pub enum KeyError {
     NotPlain,
     #[error("une clé ne part qu'en https, ou vers cette machine : jamais en clair sur le réseau")]
     InClear,
+    #[error("cette clé a été donnée pour une autre adresse : elle n'est envoyée qu'à celle-là")]
+    OtherAddress,
+}
+
+/// Le compte du trousseau sous lequel est rangée la clé d'un fournisseur pour une adresse :
+/// `openrouter@openrouter.ai:443`.
+///
+/// L'adresse, c'est l'hôte et le port : l'hôte tel que [`Endpoint`] l'a lu (en minuscules, une
+/// adresse IPv6 sous sa forme courte, entre crochets ici), et le port, celui du schéma s'il n'est
+/// pas écrit. Deux ports du même hôte font deux comptes. Le chemin ne compte pas (`/api/v1` ou
+/// `/v1`, c'est le même serveur), ni le schéma : `http://` et `https://` vers le même hôte et le
+/// même port, c'est le même serveur, et une clé ne part de toute façon en clair que vers cette
+/// machine ([`Endpoint::may_carry_secret`]).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct KeyAccount {
+    provider: Provider,
+    /// `openrouter.ai:443`, `[::1]:1234`.
+    address: String,
+}
+
+impl KeyAccount {
+    pub fn new(provider: Provider, endpoint: &Endpoint) -> Self {
+        // écrit ici, et pas emprunté à un texte fait pour l'affichage : changer ce nom ferait
+        // perdre les clés déjà rangées
+        let host =
+            if endpoint.host.contains(':') { format!("[{}]", endpoint.host) } else { endpoint.host.clone() };
+        Self { provider, address: format!("{host}:{}", endpoint.port) }
+    }
+
+    /// Le nom du compte dans le trousseau.
+    pub fn name(&self) -> String {
+        format!("{}@{}", self.provider.id(), self.address)
+    }
+
+    pub fn provider(&self) -> Provider {
+        self.provider
+    }
+
+    /// L'adresse pour laquelle est la clé, pour les messages : `openrouter.ai:443`.
+    pub fn address(&self) -> &str {
+        &self.address
+    }
+}
+
+/// Le nom de compte d'une version précédente de Capri : l'identifiant du fournisseur seul, sans
+/// adresse. Une clé rangée sous ce nom n'est jamais lue pour être envoyée : aucun [`KeyAccount`]
+/// ne porte ce nom (le sien contient toujours `@`). On peut seulement savoir si elle est là, et la
+/// retirer.
+pub fn legacy_account(provider: Provider) -> &'static str {
+    provider.id()
+}
+
+/// L'adresse pour laquelle `capri chat key <fournisseur>` range ou retire une clé : celle qu'on lui
+/// donne (`--url`), sinon celle du cerveau choisi s'il est de ce fournisseur, sinon l'adresse
+/// habituelle du fournisseur. `None` : il n'y en a aucune (un serveur personnalisé, sans `--url`,
+/// quand Capri ne pense pas avec lui).
+pub fn key_endpoint(
+    provider: Provider,
+    given: Option<&Endpoint>,
+    chosen: Option<&Brain>,
+) -> Option<Endpoint> {
+    if let Some(given) = given {
+        return Some(given.clone());
+    }
+    if let Some(brain) = chosen.filter(|brain| brain.provider() == provider) {
+        return Some(brain.endpoint().clone());
+    }
+    provider.default_url().and_then(|url| Endpoint::parse(url).ok())
+}
+
+/// La commande qui range la clé de `provider` pour `endpoint`, `chosen` étant le cerveau choisi.
+/// `--url` n'y figure que si, sans lui, elle viserait une autre adresse ([`key_endpoint`]).
+pub fn set_key_command(provider: Provider, endpoint: &Endpoint, chosen: Option<&Brain>) -> String {
+    let implied = key_endpoint(provider, None, chosen).map(|implied| KeyAccount::new(provider, &implied));
+    if implied == Some(KeyAccount::new(provider, endpoint)) {
+        format!("capri chat key {}", provider.id())
+    } else {
+        format!("capri chat key {} --url {}", provider.id(), endpoint.url(""))
+    }
 }
 
 /// Une clé d'API, vérifiée. Jamais affichée.
@@ -95,13 +181,41 @@ impl fmt::Debug for ApiKey {
     }
 }
 
-/// La valeur de l'en-tête `Authorization` qui porte `key` vers `endpoint`, si elle a le droit d'y
-/// aller : en `https://`, ou en `http://` vers cette machine. Jamais en clair sur le réseau.
-pub fn authorization(key: &ApiKey, endpoint: &Endpoint) -> Result<String, KeyError> {
+/// Une clé, avec le compte sous lequel elle était rangée : l'adresse pour laquelle elle a été
+/// donnée. C'est sous cette forme seulement qu'une clé peut partir ([`authorization`]).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BoundKey {
+    account: KeyAccount,
+    key: ApiKey,
+}
+
+impl BoundKey {
+    /// `key`, lue sous `account`.
+    pub fn new(account: KeyAccount, key: ApiKey) -> Self {
+        Self { account, key }
+    }
+
+    pub fn account(&self) -> &KeyAccount {
+        &self.account
+    }
+
+    /// Voir [`ApiKey::redact`].
+    pub fn redact(&self, text: &str) -> String {
+        self.key.redact(text)
+    }
+}
+
+/// La valeur de l'en-tête `Authorization` qui porte `key` vers `endpoint` pour `provider`, si elle
+/// a le droit d'y aller : seulement vers l'adresse pour laquelle elle a été donnée, et seulement
+/// en `https://`, ou en `http://` vers cette machine. Jamais en clair sur le réseau.
+pub fn authorization(key: &BoundKey, provider: Provider, endpoint: &Endpoint) -> Result<String, KeyError> {
+    if key.account != KeyAccount::new(provider, endpoint) {
+        return Err(KeyError::OtherAddress);
+    }
     if !endpoint.may_carry_secret() {
         return Err(KeyError::InClear);
     }
-    Ok(format!("Bearer {}", key.0))
+    Ok(format!("Bearer {}", key.key.0))
 }
 
 #[cfg(test)]
@@ -141,9 +255,17 @@ mod tests {
         assert_eq!(format!("{:?}", Some(&secret)), "Some(ApiKey(…))");
     }
 
+    /// `text`, donnée pour l'adresse `url` de ce fournisseur.
+    fn bound(provider: Provider, url: &str, text: &str) -> BoundKey {
+        BoundKey::new(KeyAccount::new(provider, &endpoint(url)), key(text))
+    }
+
+    fn account(provider: Provider, url: &str) -> String {
+        KeyAccount::new(provider, &endpoint(url)).name()
+    }
+
     #[test]
     fn a_key_only_leaves_over_https_or_to_this_machine() {
-        let secret = key("sk-test");
         for url in [
             "https://openrouter.ai/api/v1",
             "https://api.deepseek.com",
@@ -152,7 +274,12 @@ mod tests {
             "http://127.0.0.1:8080",
             "http://[::1]:1234",
         ] {
-            assert_eq!(authorization(&secret, &endpoint(url)).as_deref(), Ok("Bearer sk-test"), "{url}");
+            let secret = bound(Provider::Custom, url, "sk-test");
+            assert_eq!(
+                authorization(&secret, Provider::Custom, &endpoint(url)).as_deref(),
+                Ok("Bearer sk-test"),
+                "{url}"
+            );
         }
         for url in [
             "http://192.168.1.20:11434/v1",
@@ -162,8 +289,184 @@ mod tests {
             "http://[fd00::1]:8080",
             "http://[::ffff:10.0.0.1]",
         ] {
-            assert_eq!(authorization(&secret, &endpoint(url)), Err(KeyError::InClear), "{url}");
+            let secret = bound(Provider::Custom, url, "sk-test");
+            assert_eq!(
+                authorization(&secret, Provider::Custom, &endpoint(url)),
+                Err(KeyError::InClear),
+                "{url}"
+            );
         }
+        // donnée en https pour un serveur du réseau privé : pas en clair vers le même hôte et port
+        let secret = bound(Provider::Custom, "https://192.168.1.20:8443/v1", "sk-test");
+        assert_eq!(
+            authorization(&secret, Provider::Custom, &endpoint("http://192.168.1.20:8443/v1")),
+            Err(KeyError::InClear)
+        );
+    }
+
+    #[test]
+    fn a_key_account_names_the_provider_and_the_address() {
+        assert_eq!(
+            account(Provider::OpenRouter, "https://openrouter.ai/api/v1"),
+            "openrouter@openrouter.ai:443"
+        );
+        assert_eq!(account(Provider::DeepSeek, "https://api.deepseek.com"), "deepseek@api.deepseek.com:443");
+        assert_eq!(account(Provider::LmStudio, "http://localhost:1234/v1"), "lmstudio@localhost:1234");
+        // la casse de l'hôte ne compte pas
+        assert_eq!(
+            account(Provider::OpenRouter, "HTTPS://OpenRouter.AI/api/v1"),
+            "openrouter@openrouter.ai:443"
+        );
+        // le port par défaut du schéma, écrit ou non
+        assert_eq!(account(Provider::Custom, "https://llm.example.com"), "custom@llm.example.com:443");
+        assert_eq!(account(Provider::Custom, "https://llm.example.com:443/v1"), "custom@llm.example.com:443");
+        assert_eq!(account(Provider::Custom, "http://localhost/v1"), "custom@localhost:80");
+        // IPv6 : entre crochets, sous sa forme courte et en minuscules, quelle que soit l'écriture
+        assert_eq!(account(Provider::LmStudio, "http://[::1]:1234/v1"), "lmstudio@[::1]:1234");
+        assert_eq!(account(Provider::Custom, "https://[FD00:0:0:0:0:0:0:1]:8443"), "custom@[fd00::1]:8443");
+        assert_eq!(account(Provider::Custom, "https://[fd00::1]:8443/v1"), "custom@[fd00::1]:8443");
+        // le chemin ne compte pas, ni le schéma : c'est le même serveur
+        assert_eq!(
+            account(Provider::Custom, "https://h.example/v1"),
+            account(Provider::Custom, "https://h.example/api")
+        );
+        assert_eq!(
+            account(Provider::Custom, "http://localhost:8443"),
+            account(Provider::Custom, "https://localhost:8443")
+        );
+
+        let account = KeyAccount::new(Provider::Custom, &endpoint("http://[::1]:1234"));
+        assert_eq!((account.provider(), account.address()), (Provider::Custom, "[::1]:1234"));
+    }
+
+    #[test]
+    fn another_port_another_host_or_another_provider_is_another_account() {
+        let different = [
+            (
+                account(Provider::Custom, "http://localhost:1234"),
+                account(Provider::Custom, "http://localhost:1235"),
+            ),
+            (
+                account(Provider::Custom, "https://h.example"),
+                account(Provider::Custom, "https://h.example:8443"),
+            ),
+            (
+                account(Provider::Custom, "http://localhost:1234"),
+                account(Provider::Custom, "http://127.0.0.1:1234"),
+            ),
+            (
+                account(Provider::Custom, "http://127.0.0.1:1234"),
+                account(Provider::Custom, "http://[::1]:1234"),
+            ),
+            (account(Provider::Custom, "https://a.example"), account(Provider::Custom, "https://b.example")),
+            (
+                account(Provider::Custom, "https://api.example"),
+                account(Provider::Custom, "https://api.example.com"),
+            ),
+            (
+                account(Provider::Custom, "http://localhost:1234"),
+                account(Provider::LmStudio, "http://localhost:1234"),
+            ),
+        ];
+        for (one, other) in different {
+            assert_ne!(one, other);
+        }
+        // une clé d'une version précédente, sans adresse, ne porte jamais le nom d'un compte
+        for provider in Provider::ALL {
+            assert_eq!(legacy_account(provider), provider.id());
+            assert!(!legacy_account(provider).contains('@'));
+            assert!(account(provider, "https://h.example").contains('@'));
+        }
+    }
+
+    #[test]
+    fn a_key_never_goes_to_another_address_than_its_own() {
+        let secret = bound(Provider::Custom, "http://127.0.0.1:1234/v1", "sk-test");
+        assert_eq!(
+            authorization(&secret, Provider::Custom, &endpoint("http://127.0.0.1:1234/autre")).as_deref(),
+            Ok("Bearer sk-test"),
+            "même hôte, même port"
+        );
+        for url in [
+            "http://127.0.0.1:1235/v1",
+            "http://localhost:1234/v1",
+            "http://[::1]:1234/v1",
+            "https://h.example",
+        ] {
+            assert_eq!(
+                authorization(&secret, Provider::Custom, &endpoint(url)),
+                Err(KeyError::OtherAddress),
+                "{url}"
+            );
+        }
+        // ni à un autre fournisseur, même à la même adresse
+        assert_eq!(
+            authorization(&secret, Provider::LmStudio, &endpoint("http://127.0.0.1:1234/v1")),
+            Err(KeyError::OtherAddress)
+        );
+        // la clé de l'adresse habituelle d'OpenRouter ne suit pas un --url vers un autre serveur
+        let openrouter = bound(Provider::OpenRouter, "https://openrouter.ai/api/v1", "sk-test");
+        assert_eq!(
+            authorization(&openrouter, Provider::OpenRouter, &endpoint("https://proxy.example/api/v1")),
+            Err(KeyError::OtherAddress)
+        );
+        assert_eq!(format!("{openrouter:?}").matches("sk-test").count(), 0, "{openrouter:?}");
+    }
+
+    #[test]
+    fn the_key_command_aims_at_the_given_then_the_chosen_then_the_usual_address() {
+        let chosen = |provider, url: &str| Brain::new(provider, Some(url), "m").expect("valide");
+        let at = |provider, given: Option<&str>, chosen: Option<&Brain>| {
+            key_endpoint(provider, given.map(endpoint).as_ref(), chosen).map(|found| found.url(""))
+        };
+        let proxy = chosen(Provider::OpenRouter, "https://proxy.example/api/v1");
+        let custom = chosen(Provider::Custom, "https://llm.example/v1");
+
+        assert_eq!(at(Provider::OpenRouter, None, None).as_deref(), Some("https://openrouter.ai/api/v1"));
+        assert_eq!(
+            at(Provider::OpenRouter, None, Some(&proxy)).as_deref(),
+            Some("https://proxy.example/api/v1")
+        );
+        assert_eq!(
+            at(Provider::OpenRouter, None, Some(&custom)).as_deref(),
+            Some("https://openrouter.ai/api/v1"),
+            "le cerveau choisi est d'un autre fournisseur"
+        );
+        assert_eq!(
+            at(Provider::OpenRouter, Some("https://autre.example/v1"), Some(&proxy)).as_deref(),
+            Some("https://autre.example/v1")
+        );
+        assert_eq!(at(Provider::Custom, None, Some(&custom)).as_deref(), Some("https://llm.example/v1"));
+        assert_eq!(at(Provider::Custom, None, Some(&proxy)), None, "un serveur personnalisé sans adresse");
+        assert_eq!(at(Provider::Custom, None, None), None);
+
+        // la commande à proposer n'a besoin de --url que s'il change l'adresse visée
+        let command = |provider, url: &str, chosen| set_key_command(provider, &endpoint(url), chosen);
+        assert_eq!(
+            command(Provider::OpenRouter, "https://openrouter.ai/api/v1", None),
+            "capri chat key openrouter"
+        );
+        assert_eq!(
+            command(Provider::OpenRouter, "https://proxy.example/api/v1", Some(&proxy)),
+            "capri chat key openrouter"
+        );
+        assert_eq!(
+            command(Provider::OpenRouter, "https://openrouter.ai/api/v1", Some(&proxy)),
+            "capri chat key openrouter --url https://openrouter.ai/api/v1",
+            "sans --url, elle viserait le cerveau choisi"
+        );
+        assert_eq!(
+            command(Provider::OpenRouter, "https://proxy.example/api/v1", None),
+            "capri chat key openrouter --url https://proxy.example/api/v1"
+        );
+        assert_eq!(
+            command(Provider::Custom, "https://llm.example/v1", Some(&custom)),
+            "capri chat key custom"
+        );
+        assert_eq!(
+            command(Provider::Custom, "http://localhost:8080/v1", None),
+            "capri chat key custom --url http://localhost:8080/v1"
+        );
     }
 
     #[test]

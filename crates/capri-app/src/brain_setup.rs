@@ -5,7 +5,9 @@
 //! personnalité. Sans `chat.json`, Capri n'envoie rien nulle part : elle répète ce qu'on lui dit.
 //!
 //! La clé d'un fournisseur n'est jamais dans ces fichiers : elle vit dans le trousseau du système
-//! (`keys`), et aucune commande ne l'affiche, ne la prend en argument ni ne l'écrit ailleurs.
+//! (`keys`), et aucune commande ne l'affiche, ne la prend en argument ni ne l'écrit ailleurs. Elle
+//! y est rangée pour une adresse (`capri chat key <fournisseur> [--url <adresse>]`), et chaque
+//! commande ne lit que celle de l'adresse qu'elle joint.
 //!
 //! Rien n'est gardé en mémoire : les fichiers sont relus à chaque message, si bien qu'un
 //! changement fait en ligne de commande vaut dès la phrase suivante, sans relancer Capri.
@@ -18,7 +20,8 @@ use std::time::Instant;
 use anyhow::{Context, Result, anyhow, bail};
 use capri_chat::plain::PlainStream;
 use capri_chat::{
-    ApiKey, Brain, Endpoint, KeyError, KeyNeed, Provider, Reach, ReplyEvent, Role, Turn, persona,
+    ApiKey, BoundKey, Brain, Endpoint, KeyAccount, KeyError, KeyNeed, Provider, Reach, ReplyEvent, Role,
+    Turn, key, persona,
 };
 use capri_net::{Client, Problem};
 
@@ -36,9 +39,12 @@ const USAGE: &str = "\
 usage : capri chat status                  quel cerveau Capri utilise, et où part ce qu'on lui dit
         capri chat use <fournisseur> [--model <nom>] [--url <adresse>]
                                            lui choisir un cerveau
-        capri chat key <fournisseur>       lui donner la clé d'API d'un fournisseur (tapée sans
-                                           s'afficher, ou lue sur l'entrée standard)
-        capri chat key <fournisseur> --forget
+        capri chat key <fournisseur> [--url <adresse>]
+                                           lui donner la clé d'API d'un fournisseur (tapée sans
+                                           s'afficher, ou lue sur l'entrée standard), pour cette
+                                           adresse seulement : par défaut, celle du cerveau choisi
+                                           s'il est de ce fournisseur, sinon son adresse habituelle
+        capri chat key <fournisseur> [--url <adresse>] --forget
                                            retirer cette clé du trousseau
         capri chat models <fournisseur> [<mot>] [--url <adresse>]
                                            chercher un modèle chez un fournisseur
@@ -226,6 +232,22 @@ fn parse_models<'a>(
     Some((provider, word, url))
 }
 
+/// Lit `<fournisseur> [--url <adresse>] [--forget]`, dans n'importe quel ordre. Rend le
+/// fournisseur, l'adresse donnée, et s'il faut retirer la clé.
+fn parse_key<'a>(provider: &str, options: &[&'a str]) -> Option<(Provider, Option<&'a str>, bool)> {
+    let provider = Provider::from_id(provider)?;
+    let (mut url, mut forget) = (None, false);
+    let mut options = options.iter();
+    while let Some(option) = options.next() {
+        match *option {
+            "--url" if url.is_none() => url = Some(*options.next().filter(|value| !value.starts_with("--"))?),
+            "--forget" if !forget => forget = true,
+            _ => return None,
+        }
+    }
+    Some((provider, url, forget))
+}
+
 /// Ce dont les commandes ont besoin : où sont les réglages et les clés, d'où vient une clé que
 /// l'on tape, où écrire. Les tests y mettent un dossier temporaire, un trousseau en mémoire et
 /// une saisie simulée.
@@ -247,8 +269,10 @@ impl Cli<'_> {
                 let (provider, model, url) = parse_use(provider, options)?;
                 self.choose(provider, model, url)
             }
-            ["key", provider] => self.key(Provider::from_id(provider)?, false),
-            ["key", provider, "--forget"] => self.key(Provider::from_id(provider)?, true),
+            ["key", provider, options @ ..] => {
+                let (provider, url, forget) = parse_key(provider, options)?;
+                self.key(provider, url, forget)
+            }
             ["models", provider, options @ ..] => {
                 let (provider, word, url) = parse_models(provider, options)?;
                 self.models(provider, word, url)
@@ -270,10 +294,25 @@ impl Cli<'_> {
                 self.out,
                 "Pour lui en donner un : capri chat use ollama (ou un autre fournisseur : capri chat)"
             )?;
-            let stored: Vec<&str> = Provider::ALL
+            // les clés des adresses habituelles : une clé donnée pour une autre adresse se voit
+            // une fois le cerveau choisi
+            let takes_key =
+                |provider: &Provider| provider.key_need() != KeyNeed::None && self.keys.available();
+            let stored: Vec<String> = Provider::ALL
                 .into_iter()
-                .filter(|&provider| provider.key_need() != KeyNeed::None && self.keys.available())
-                .filter(|&provider| self.keys.contains(provider).unwrap_or(false))
+                .filter(takes_key)
+                .filter_map(|provider| {
+                    let usual = Endpoint::parse(provider.default_url()?).ok()?;
+                    let account = KeyAccount::new(provider, &usual);
+                    self.keys
+                        .contains(&account.name())
+                        .unwrap_or(false)
+                        .then(|| format!("{} ({})", provider.id(), account.address()))
+                })
+                .collect();
+            let legacy: Vec<&str> = Provider::ALL
+                .into_iter()
+                .filter(|&provider| keys::has_legacy_key(self.keys, provider))
                 .map(Provider::id)
                 .collect();
             if !stored.is_empty() {
@@ -284,6 +323,15 @@ impl Cli<'_> {
                     stored.join(", ")
                 )?;
             }
+            if !legacy.is_empty() {
+                writeln!(
+                    self.out,
+                    "{}rangées sans adresse par une version précédente de Capri, jamais envoyées : {}. \
+                     Pour en redonner une : capri chat key <fournisseur> [--url <adresse>]",
+                    if stored.is_empty() { "clés     : " } else { "           " },
+                    legacy.join(", ")
+                )?;
+            }
             return Ok(());
         };
         let (brain, endpoint) = (&setup.brain, setup.brain.endpoint());
@@ -291,7 +339,16 @@ impl Cli<'_> {
         writeln!(self.out, "cerveau  : {}, modèle {}", provider.name(), brain.model())?;
         writeln!(self.out, "adresse  : {}", endpoint.url(""))?;
         writeln!(self.out, "envoi    : {}", destination(provider, endpoint))?;
-        writeln!(self.out, "clé      : {}", self.key_status(provider, endpoint))?;
+        writeln!(self.out, "clé      : {}", self.key_status(brain))?;
+        if keys::has_legacy_key(self.keys, provider) {
+            writeln!(
+                self.out,
+                "           une ancienne clé {}, rangée sans adresse par une version précédente de Capri, \
+                 n'est jamais envoyée. Pour la redonner : {}",
+                of_provider(provider),
+                key::set_key_command(provider, endpoint, Some(brain))
+            )?;
+        }
         let persona_file = self.directory.join(PERSONA_FILE);
         match custom_persona(&self.directory) {
             Ok(Some(_)) => writeln!(self.out, "persona  : {}", persona_file.display())?,
@@ -302,7 +359,7 @@ impl Cli<'_> {
             )?,
             Err(err) => writeln!(self.out, "persona  : par défaut, car {err:#}")?,
         }
-        let key = match keys::key_for(self.keys, provider) {
+        let key = match keys::key_for(self.keys, provider, endpoint) {
             Ok(key) => key,
             Err(err) => {
                 writeln!(self.out, "serveur  : pas interrogé, faute de pouvoir lire sa clé ({err:#})")?;
@@ -320,7 +377,7 @@ impl Cli<'_> {
                 }
             }
             Err(problem) => {
-                writeln!(self.out, "serveur  : {}", problem.explain(provider, endpoint))?;
+                writeln!(self.out, "serveur  : {}", problem.explain(provider, endpoint, Some(brain)))?;
                 if let Some(hint) = how_to_fix(provider, &problem) {
                     writeln!(self.out, "           {hint}")?;
                 }
@@ -329,37 +386,47 @@ impl Cli<'_> {
         Ok(())
     }
 
-    /// Ce que `status` dit de la clé, sans jamais la montrer ni la lire.
-    fn key_status(&self, provider: Provider, endpoint: &Endpoint) -> String {
-        let (name, id) = (provider.name(), provider.id());
+    /// Ce que `status` dit de la clé du cerveau choisi, celle de son adresse, sans jamais la
+    /// montrer ni la lire.
+    fn key_status(&self, brain: &Brain) -> String {
+        let (provider, endpoint) = (brain.provider(), brain.endpoint());
+        let name = provider.name();
         if provider.key_need() == KeyNeed::None {
             return format!("aucune, {name} n'en prend pas");
         }
         if !self.keys.available() {
             return "pas de trousseau sur ce système, donc aucune".to_owned();
         }
-        match (self.keys.contains(provider), provider.key_need()) {
-            (Ok(true), _) if !endpoint.may_carry_secret() => format!(
-                "rangée dans {}, MAIS elle ne partira pas en clair vers {}",
-                self.keys.name(),
-                endpoint.display_host()
-            ),
-            (Ok(true), _) => format!("rangée dans {} (elle ne s'affiche jamais)", self.keys.name()),
-            (Ok(false), KeyNeed::Required) => {
-                format!("AUCUNE : {name} en demande une. Pour la donner : capri chat key {id}")
+        let account = KeyAccount::new(provider, endpoint);
+        let (keychain, address) = (self.keys.name(), account.address());
+        let set_key = key::set_key_command(provider, endpoint, Some(brain));
+        match (self.keys.contains(&account.name()), provider.key_need()) {
+            (Ok(true), _) if !endpoint.may_carry_secret() => {
+                format!("rangée dans {keychain} pour {address}, MAIS elle ne partira pas en clair")
             }
-            (Ok(false), _) => format!("aucune (s'il en demande une : capri chat key {id})"),
+            (Ok(true), _) => format!("rangée dans {keychain} pour {address} (elle ne s'affiche jamais)"),
+            (Ok(false), KeyNeed::Required) => {
+                format!("AUCUNE pour {address} : {name} en demande une. Pour la donner : {set_key}")
+            }
+            (Ok(false), _) => format!("aucune pour {address} (s'il en demande une : {set_key})"),
             (Err(err), _) => format!("{err:#}"),
         }
+    }
+
+    /// Le cerveau choisi, pour les conseils d'une commande qui en joint peut-être un autre. Des
+    /// réglages illisibles n'empêchent pas d'en choisir un nouveau : ils comptent pour aucun.
+    fn chosen(&self) -> Option<Brain> {
+        load(&self.directory).ok().flatten().map(|setup| setup.brain)
     }
 
     /// Choisit un cerveau, après avoir vérifié auprès du serveur que le modèle existe.
     fn choose(&mut self, provider: Provider, model: Option<&str>, url: Option<&str>) -> Result<()> {
         let endpoint = endpoint_for(provider, url)?;
-        let key = key_for_server(self.keys, provider, &endpoint)?;
+        let chosen = self.chosen();
+        let key = key_for_server(self.keys, provider, &endpoint, chosen.as_ref())?;
         let models = self.client.models(provider, &endpoint, key.as_ref()).map_err(|problem| {
             let hint = how_to_fix(provider, &problem).map(|hint| format!("\n{hint}")).unwrap_or_default();
-            anyhow!("{}{hint}", problem.explain(provider, &endpoint))
+            anyhow!("{}{hint}", problem.explain(provider, &endpoint, chosen.as_ref()))
         })?;
         let model = pick_model(provider, &endpoint, &models, model)?;
         let brain = Brain::new(provider, Some(&endpoint.url("")), &model)?;
@@ -372,10 +439,11 @@ impl Cli<'_> {
             endpoint.display_host()
         )?;
         writeln!(self.out, "{}", destination(provider, &endpoint))?;
-        if key.is_some() {
+        if let Some(key) = &key {
             writeln!(
                 self.out,
-                "Sa clé est lue dans {} à chaque message, et n'est écrite nulle part ailleurs.",
+                "Sa clé, rangée pour {}, est lue dans {} à chaque message, et n'est écrite nulle part ailleurs.",
+                key.account().address(),
                 self.keys.name()
             )?;
         }
@@ -387,9 +455,11 @@ impl Cli<'_> {
         Ok(())
     }
 
-    /// Range la clé d'un fournisseur dans le trousseau, ou l'en retire.
-    fn key(&mut self, provider: Provider, forget: bool) -> Result<()> {
-        let of = of_provider(provider);
+    /// Range la clé d'un fournisseur dans le trousseau, ou l'en retire, pour une adresse : celle
+    /// de `url`, sinon celle du cerveau choisi s'il est de ce fournisseur, sinon son adresse
+    /// habituelle (`capri_chat::key::key_endpoint`).
+    fn key(&mut self, provider: Provider, url: Option<&str>, forget: bool) -> Result<()> {
+        let (of, id) = (of_provider(provider), provider.id());
         if provider.key_need() == KeyNeed::None {
             bail!("{} ne prend pas de clé : il n'y a rien à ranger.", provider.name());
         }
@@ -398,29 +468,82 @@ impl Cli<'_> {
                 "pas de trousseau sur ce système : Capri ne sait pas y ranger de clé, et n'en écrit jamais ailleurs"
             );
         }
+        let given = url.map(|url| Endpoint::parse(url.trim()).context("adresse refusée")).transpose()?;
+        // sans --url, l'adresse dépend du cerveau choisi : il faut pouvoir le lire
+        let chosen = match load(&self.directory) {
+            Ok(setup) => setup.map(|setup| setup.brain),
+            Err(err) if given.is_none() => {
+                return Err(err.context(format!(
+                    "impossible de savoir pour quelle adresse est cette clé : donne-la avec capri chat key {id} --url <adresse>"
+                )));
+            }
+            Err(_) => None,
+        };
+        let Some(endpoint) = key::key_endpoint(provider, given.as_ref(), chosen.as_ref()) else {
+            match provider {
+                Provider::Custom => bail!(
+                    "pour quel serveur est cette clé ? Un serveur personnalisé n'a pas d'adresse habituelle, \
+                     et Capri n'en utilise aucun : donne la sienne, avec capri chat key {id} --url <adresse>"
+                ),
+                _ => bail!(
+                    "{} n'a pas d'adresse habituelle : donne-la avec capri chat key {id} --url <adresse>",
+                    provider.name()
+                ),
+            }
+        };
+        let account = KeyAccount::new(provider, &endpoint);
+        let (keychain, address) = (self.keys.name().to_owned(), account.address());
+        let legacy = key::legacy_account(provider);
+
         if forget {
-            if self.keys.forget(provider)? {
-                writeln!(self.out, "Clé {of} retirée : elle n'est plus dans {}.", self.keys.name())?;
+            if self.keys.forget(&account.name())? {
+                writeln!(self.out, "Clé {of} pour {address} retirée : elle n'est plus dans {keychain}.")?;
             } else {
-                writeln!(self.out, "Il n'y avait pas de clé {of} dans {}.", self.keys.name())?;
+                writeln!(self.out, "Il n'y avait pas de clé {of} pour {address} dans {keychain}.")?;
+            }
+            if self.keys.forget(legacy)? {
+                writeln!(
+                    self.out,
+                    "L'ancienne clé {of}, rangée sans adresse par une version précédente de Capri, est retirée aussi."
+                )?;
             }
             return Ok(());
         }
-        let prompt = format!("Clé d'API {of} (elle ne s'affiche pas pendant la frappe) : ");
+        // inutile de demander une clé qui ne pourrait jamais partir
+        if !endpoint.may_carry_secret() {
+            bail!(
+                "une clé ne part jamais en clair sur le réseau, et {address} n'est joint qu'en http : Capri ne la \
+                 range pas. Il faut une adresse en https (capri chat key {id} --url https://…)."
+            );
+        }
+        let prompt = format!("Clé d'API {of} pour {address} (elle ne s'affiche pas pendant la frappe) : ");
         let key = match ApiKey::parse(&(self.read_key)(&prompt)?) {
             Ok(key) => key,
             Err(KeyError::Empty) => bail!("aucune clé lue : rien n'est changé"),
             Err(err) => bail!("ce n'est pas une clé ({err}) : rien n'est changé"),
         };
-        self.keys.save(provider, &key)?;
+        self.keys.save(&account, &key)?;
         writeln!(
             self.out,
-            "Clé {of} rangée dans {}. Elle n'est écrite nulle part ailleurs.",
-            self.keys.name()
+            "Clé {of} rangée dans {keychain}, pour {address} seulement : elle ne partira vers aucune autre \
+             adresse, et n'est écrite nulle part ailleurs."
         )?;
-        match load(&self.directory) {
-            Ok(Some(setup)) if setup.brain.provider() == provider => {
-                if setup.brain.endpoint().may_carry_secret() {
+        // l'ancienne clé sans adresse est remplacée par celle-ci : elle n'aurait plus jamais servi
+        match self.keys.forget(legacy) {
+            Ok(true) => writeln!(
+                self.out,
+                "L'ancienne clé {of}, rangée sans adresse par une version précédente de Capri, est retirée."
+            )?,
+            Ok(false) => {}
+            Err(err) => writeln!(
+                self.out,
+                "L'ancienne clé {of}, rangée sans adresse, n'a pas pu être retirée ({err:#}) : elle n'est \
+                 jamais envoyée."
+            )?,
+        }
+        match chosen.as_ref().filter(|brain| brain.provider() == provider) {
+            Some(brain) if KeyAccount::new(provider, brain.endpoint()) == account => {
+                if brain.endpoint().may_carry_secret() {
                     writeln!(
                         self.out,
                         "Capri s'en sert dès ta prochaine phrase. Pour essayer : capri chat test"
@@ -428,19 +551,24 @@ impl Cli<'_> {
                 } else {
                     writeln!(
                         self.out,
-                        "MAIS elle ne partira pas en clair vers {} : il faut une adresse en https.",
-                        setup.brain.endpoint().display_host()
+                        "MAIS Capri joint {address} en http : elle ne la lui enverra pas en clair. Pour qu'elle \
+                         s'en serve : capri chat use {id} --url https://… --model {}",
+                        brain.model()
                     )?;
                 }
             }
-            _ => {
-                let url = if provider.default_url().is_none() { " --url <adresse>" } else { "" };
-                writeln!(
-                    self.out,
-                    "Pour qu'elle s'en serve : capri chat use {}{url} --model <nom>",
-                    provider.id()
-                )?;
-            }
+            Some(brain) => writeln!(
+                self.out,
+                "Capri pense avec {} : cette clé n'y est pas envoyée. Pour qu'elle s'en serve : capri chat use \
+                 {id} --url {} --model <nom>",
+                server(provider, brain.endpoint()),
+                endpoint.url("")
+            )?,
+            None => writeln!(
+                self.out,
+                "Pour qu'elle s'en serve : capri chat use {id}{} --model <nom>",
+                url_option(provider, &endpoint)
+            )?,
         }
         Ok(())
     }
@@ -448,11 +576,12 @@ impl Cli<'_> {
     /// Cherche, parmi les modèles d'un fournisseur, ceux dont le nom contient `word`.
     fn models(&mut self, provider: Provider, word: Option<&str>, url: Option<&str>) -> Result<()> {
         let endpoint = endpoint_for(provider, url)?;
-        let key = key_for_server(self.keys, provider, &endpoint)?;
+        let chosen = self.chosen();
+        let key = key_for_server(self.keys, provider, &endpoint, chosen.as_ref())?;
         let models = self
             .client
             .models(provider, &endpoint, key.as_ref())
-            .map_err(|problem| anyhow!("{}", problem.explain(provider, &endpoint)))?;
+            .map_err(|problem| anyhow!("{}", problem.explain(provider, &endpoint, chosen.as_ref())))?;
         let word = word.map(str::to_lowercase);
         let mut found: Vec<&String> = printable(&models)
             .filter(|model| word.as_deref().is_none_or(|word| model.to_lowercase().contains(word)))
@@ -490,7 +619,7 @@ impl Cli<'_> {
         let setup = load(&self.directory)?
             .context("Capri n'a pas de cerveau. Pour lui en donner un : capri chat use ollama")?;
         let provider = setup.brain.provider();
-        let key = keys::key_for(self.keys, provider)
+        let key = keys::key_for(self.keys, provider, setup.brain.endpoint())
             .with_context(|| format!("pas de réponse : la clé {} est illisible", of_provider(provider)))?;
         let message = if message.trim().is_empty() { TEST_QUESTION } else { message.trim() };
         let turns = [Turn { role: Role::User, text: message.to_owned() }];
@@ -564,20 +693,39 @@ fn endpoint_for(provider: Provider, url: Option<&str>) -> Result<Endpoint> {
     Endpoint::parse(url.trim()).context("adresse refusée")
 }
 
-/// La clé à envoyer à ce serveur, après avoir vérifié qu'il en faut une et qu'elle a le droit d'y
-/// aller : jamais en clair sur le réseau. Rien n'est contacté ici.
-fn key_for_server(keys: &dyn KeyStore, provider: Provider, endpoint: &Endpoint) -> Result<Option<ApiKey>> {
-    let key = keys::key_for(keys, provider)
-        .with_context(|| format!("la clé {} est illisible", of_provider(provider)))?;
-    match (provider.key_need(), &key) {
-        (KeyNeed::Required, None) => {
-            bail!("{} demande une clé. Range-la d'abord : capri chat key {}", provider.name(), provider.id())
+/// « --url <adresse> » à ajouter à une commande pour viser `endpoint`, sauf si c'est l'adresse
+/// habituelle du fournisseur.
+fn url_option(provider: Provider, endpoint: &Endpoint) -> String {
+    let usual = provider.default_url().and_then(|url| Endpoint::parse(url).ok());
+    match usual {
+        Some(usual) if KeyAccount::new(provider, &usual) == KeyAccount::new(provider, endpoint) => {
+            String::new()
         }
+        _ => format!(" --url {}", endpoint.url("")),
+    }
+}
+
+/// La clé à envoyer à ce serveur, celle rangée pour son adresse, après avoir vérifié qu'il en faut
+/// une et qu'elle a le droit d'y aller : jamais en clair sur le réseau. Rien n'est contacté ici.
+/// `chosen` : le cerveau choisi, pour la commande à proposer.
+fn key_for_server(
+    keys: &dyn KeyStore,
+    provider: Provider,
+    endpoint: &Endpoint,
+    chosen: Option<&Brain>,
+) -> Result<Option<BoundKey>> {
+    let address = KeyAccount::new(provider, endpoint).address().to_owned();
+    let key = keys::key_for(keys, provider, endpoint)
+        .with_context(|| format!("la clé {} pour {address} est illisible", of_provider(provider)))?;
+    let set_key = key::set_key_command(provider, endpoint, chosen);
+    match (provider.key_need(), &key) {
+        (KeyNeed::Required, None) => bail!(
+            "{} demande une clé, et il n'y en a pas pour {address}. Range-la d'abord : {set_key}",
+            provider.name()
+        ),
         (_, Some(_)) if !endpoint.may_carry_secret() => bail!(
-            "la clé {} ne partirait pas en clair vers {} : donne une adresse en https, ou retire la clé (capri chat key {} --forget)",
+            "la clé {} rangée pour {address} ne partirait pas en clair : donne une adresse en https, ou retire la clé ({set_key} --forget)",
             of_provider(provider),
-            endpoint.display_host(),
-            provider.id()
         ),
         _ => Ok(key),
     }
@@ -629,6 +777,15 @@ fn search_command(provider: Provider, endpoint: &Endpoint) -> String {
     format!("capri chat models {} <mot>{url}", provider.id())
 }
 
+/// Le serveur, pour une phrase : « OpenRouter (openrouter.ai:443) », ou l'adresse seule d'un
+/// serveur personnalisé.
+fn server(provider: Provider, endpoint: &Endpoint) -> String {
+    match provider {
+        Provider::Custom => endpoint.display_host(),
+        _ => format!("{} ({})", provider.name(), endpoint.display_host()),
+    }
+}
+
 /// Où part ce qu'on dit à Capri avec ce cerveau, en une phrase.
 fn destination(provider: Provider, endpoint: &Endpoint) -> String {
     let host = endpoint.display_host();
@@ -637,10 +794,7 @@ fn destination(provider: Provider, endpoint: &Endpoint) -> String {
         Reach::ThisMachine => "Ce que tu lui dis reste sur cette machine.".to_owned(),
         Reach::PrivateNetwork => format!("Ce que tu lui dis part vers {host}, sur ton réseau privé, {how}."),
         Reach::Internet => {
-            let whom = match provider {
-                Provider::Custom => host,
-                _ => format!("{} ({host})", provider.name()),
-            };
+            let whom = server(provider, endpoint);
             format!(
                 "Attention : ce que tu lui dis partira chez {whom}, sur Internet, à chaque message, avec sa \
                  personnalité. Rien d'autre de ta machine : ni ce que fait Claude Code, ni tes fichiers."
@@ -873,60 +1027,181 @@ mod tests {
             .unwrap_or(false)
     }
 
-    fn stored(keys: &MemoryKeys, provider: Provider) -> Option<String> {
-        keys.load(provider).expect("lisible").map(|key| key.reveal_for_keychain().to_owned())
+    /// Le compte d'une clé de ce fournisseur pour cette adresse.
+    fn account(provider: Provider, url: &str) -> String {
+        KeyAccount::new(provider, &at(url)).name()
+    }
+
+    /// La clé rangée sous ce compte, en clair : pour les vérifications des tests seulement.
+    fn stored(keys: &MemoryKeys, provider: Provider, url: &str) -> Option<String> {
+        keys.secret(&account(provider, url))
     }
 
     fn at(url: &str) -> Endpoint {
         Endpoint::parse(url).expect("adresse valable")
     }
 
+    const OPENROUTER: &str = "https://openrouter.ai/api/v1";
+
     #[test]
     fn a_key_is_typed_stored_and_forgotten_without_ever_being_shown() {
         let directory = scratch_dir("cle-rangee");
         let keys = MemoryKeys::default();
-        let ran = run(&directory, &keys, Some(&format!("  {KEY}\n")), &["key", "openrouter"]);
-        assert_eq!(ran.error, None);
-        assert!(ran.asked);
-        assert!(ran.out.contains("Clé d'OpenRouter rangée dans le trousseau de test."), "{}", ran.out);
-        assert!(
-            ran.out.contains("Pour qu'elle s'en serve : capri chat use openrouter --model <nom>"),
-            "{}",
-            ran.out
+        let mut prompts = Vec::new();
+        let ran = {
+            let mut out = Vec::new();
+            let mut read_key = |prompt: &str| -> Result<String> {
+                prompts.push(prompt.to_owned());
+                Ok(format!("  {KEY}\n"))
+            };
+            let mut cli = Cli {
+                directory: directory.clone(),
+                keys: &keys,
+                client: Client::new(),
+                read_key: &mut read_key,
+                out: &mut out,
+            };
+            let outcome = cli.run(&["key", "openrouter"]).expect("une commande connue");
+            (outcome.err().map(|err| format!("{err:#}")), String::from_utf8(out).expect("du texte"))
+        };
+        assert_eq!(ran.0, None);
+        assert_eq!(
+            prompts,
+            ["Clé d'API d'OpenRouter pour openrouter.ai:443 (elle ne s'affiche pas pendant la frappe) : "]
         );
-        assert_eq!(stored(&keys, Provider::OpenRouter).as_deref(), Some(KEY), "sans les blancs autour");
-        assert!(!ran.out.contains(KEY));
+        assert_eq!(
+            ran.1,
+            "Clé d'OpenRouter rangée dans le trousseau de test, pour openrouter.ai:443 seulement : elle ne partira \
+             vers aucune autre adresse, et n'est écrite nulle part ailleurs.\n\
+             Pour qu'elle s'en serve : capri chat use openrouter --model <nom>\n"
+        );
+        assert_eq!(keys.accounts(), ["openrouter@openrouter.ai:443"]);
+        assert_eq!(
+            stored(&keys, Provider::OpenRouter, OPENROUTER).as_deref(),
+            Some(KEY),
+            "sans les blancs autour"
+        );
+        assert!(!ran.1.contains(KEY));
         assert!(!any_file_contains(&directory, KEY), "rien n'est écrit dans le dossier des réglages");
-
-        let ran = run(&directory, &keys, Some("sk-une-cle-de-serveur"), &["key", "custom"]);
-        assert!(
-            ran.out
-                .ends_with("Pour qu'elle s'en serve : capri chat use custom --url <adresse> --model <nom>\n"),
-            "{}",
-            ran.out
-        );
 
         let ran = run(&directory, &keys, Some("sk-une-autre-cle-de-test"), &["key", "openrouter"]);
         assert_eq!(ran.error, None);
         assert_eq!(
-            stored(&keys, Provider::OpenRouter).as_deref(),
+            stored(&keys, Provider::OpenRouter, OPENROUTER).as_deref(),
             Some("sk-une-autre-cle-de-test"),
             "remplacée"
         );
 
         let ran = run(&directory, &keys, None, &["key", "openrouter", "--forget"]);
         assert_eq!((ran.error, ran.asked), (None, false));
-        assert_eq!(ran.out, "Clé d'OpenRouter retirée : elle n'est plus dans le trousseau de test.\n");
-        assert_eq!(stored(&keys, Provider::OpenRouter), None);
+        assert_eq!(
+            ran.out,
+            "Clé d'OpenRouter pour openrouter.ai:443 retirée : elle n'est plus dans le trousseau de test.\n"
+        );
+        assert!(keys.accounts().is_empty());
         let ran = run(&directory, &keys, None, &["key", "openrouter", "--forget"]);
-        assert_eq!(ran.out, "Il n'y avait pas de clé d'OpenRouter dans le trousseau de test.\n");
+        assert_eq!(
+            ran.out,
+            "Il n'y avait pas de clé d'OpenRouter pour openrouter.ai:443 dans le trousseau de test.\n"
+        );
+        let _ = std::fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn the_key_command_says_which_address_the_key_is_for() {
+        let directory = scratch_dir("cle-adresse");
+        let keys = MemoryKeys::default();
+
+        // un serveur personnalisé n'a pas d'adresse habituelle : il faut la donner
+        let ran = run(&directory, &keys, Some(KEY), &["key", "custom"]);
+        assert_eq!(
+            ran.error.as_deref(),
+            Some(
+                "pour quel serveur est cette clé ? Un serveur personnalisé n'a pas d'adresse habituelle, et Capri \
+                 n'en utilise aucun : donne la sienne, avec capri chat key custom --url <adresse>"
+            )
+        );
+        assert!(!ran.asked, "rien n'est demandé");
+        let ran = run(&directory, &keys, None, &["key", "custom", "--forget"]);
+        assert!(ran.error.expect("refusé").contains("--url <adresse>"));
+
+        // --url : cette adresse-là
+        let ran =
+            run(&directory, &keys, Some(KEY), &["key", "custom", "--url", "https://LLM.example:8443/v1"]);
+        assert_eq!(ran.error, None);
+        assert!(ran.out.contains("pour llm.example:8443 seulement"), "{}", ran.out);
+        assert!(
+            ran.out.ends_with("Pour qu'elle s'en serve : capri chat use custom --url https://llm.example:8443/v1 --model <nom>\n"),
+            "{}",
+            ran.out
+        );
+        let ran = run(
+            &directory,
+            &keys,
+            Some(KEY),
+            &["key", "openrouter", "--url", "https://proxy.example/api/v1"],
+        );
+        assert!(
+            ran.out.ends_with("Pour qu'elle s'en serve : capri chat use openrouter --url https://proxy.example/api/v1 --model <nom>\n"),
+            "{}",
+            ran.out
+        );
+        assert_eq!(keys.accounts(), ["custom@llm.example:8443", "openrouter@proxy.example:443"]);
+
+        // sans --url : l'adresse du cerveau choisi, s'il est de ce fournisseur
+        save(
+            &directory,
+            &Brain::new(Provider::Custom, Some("http://127.0.0.1:8080/v1"), "m").expect("valide"),
+        )
+        .expect("écrit");
+        let ran = run(&directory, &keys, Some(KEY), &["key", "custom"]);
+        assert_eq!(ran.error, None);
+        assert!(ran.out.contains("pour 127.0.0.1:8080 seulement"), "{}", ran.out);
+        assert!(
+            ran.out.ends_with("Capri s'en sert dès ta prochaine phrase. Pour essayer : capri chat test\n"),
+            "{}",
+            ran.out
+        );
+        // … sinon l'adresse habituelle
+        let ran = run(&directory, &keys, Some(KEY), &["key", "deepseek"]);
+        assert!(ran.out.contains("pour api.deepseek.com:443 seulement"), "{}", ran.out);
+        // une clé pour une autre adresse que celle du cerveau choisi : elle n'y part pas, et c'est dit
+        let ran = run(&directory, &keys, Some(KEY), &["key", "custom", "--url", "http://127.0.0.1:9090/v1"]);
+        assert!(
+            ran.out.ends_with(
+                "Capri pense avec 127.0.0.1:8080 : cette clé n'y est pas envoyée. Pour qu'elle s'en serve : capri \
+                 chat use custom --url http://127.0.0.1:9090/v1 --model <nom>\n"
+            ),
+            "{}",
+            ran.out
+        );
+        // une adresse en clair sur le réseau : pas de clé, puisqu'elle n'y partirait jamais
+        let ran =
+            run(&directory, &keys, Some(KEY), &["key", "custom", "--url", "http://192.168.1.20:1234/v1"]);
+        assert!(ran.error.expect("refusé").contains("192.168.1.20:1234 n'est joint qu'en http"));
+        assert!(!ran.asked);
+        // une adresse refusée l'est avant toute question
+        let ran = run(&directory, &keys, Some(KEY), &["key", "custom", "--url", "http://example.com/v1"]);
+        assert!(ran.error.expect("refusé").starts_with("adresse refusée"));
+        assert!(!ran.asked);
+
+        // des réglages illisibles : sans --url, on ne devine pas l'adresse
+        std::fs::write(directory.join("chat.json"), "{ cassé").expect("écrit");
+        let ran = run(&directory, &keys, Some(KEY), &["key", "custom"]);
+        assert!(ran.error.expect("refusé").contains("donne-la avec capri chat key custom --url <adresse>"));
+        assert!(!ran.asked);
+        let ran =
+            run(&directory, &keys, None, &["key", "custom", "--url", "http://127.0.0.1:8080/v1", "--forget"]);
+        assert_eq!(ran.error, None, "avec --url, ils ne servent à rien");
+        assert!(!ran.out.contains(KEY) && !any_file_contains(&directory, KEY));
         let _ = std::fs::remove_dir_all(directory);
     }
 
     #[test]
     fn what_is_not_a_key_changes_nothing_and_is_never_repeated() {
         let directory = scratch_dir("pas-une-cle");
-        let keys = MemoryKeys::with(Provider::DeepSeek, KEY);
+        let deepseek = "https://api.deepseek.com";
+        let keys = MemoryKeys::with(Provider::DeepSeek, deepseek, KEY);
         for typed in ["deux mots secrets", "clé-accentuée-secrète", "ligne\nsuivante-secrète"] {
             let ran = run(&directory, &keys, Some(typed), &["key", "deepseek"]);
             let error = ran.error.expect("refusé");
@@ -938,7 +1213,11 @@ mod tests {
         }
         let ran = run(&directory, &keys, Some("  \n"), &["key", "deepseek"]);
         assert_eq!(ran.error.as_deref(), Some("aucune clé lue : rien n'est changé"));
-        assert_eq!(stored(&keys, Provider::DeepSeek).as_deref(), Some(KEY), "l'ancienne clé est restée");
+        assert_eq!(
+            stored(&keys, Provider::DeepSeek, deepseek).as_deref(),
+            Some(KEY),
+            "l'ancienne clé est restée"
+        );
         let _ = std::fs::remove_dir_all(directory);
     }
 
@@ -965,8 +1244,8 @@ mod tests {
         let directory = scratch_dir("choix-avec-cle");
         let (address, requests) =
             fake_server::serve(vec![fake_server::listing(&["labo/un-modele", "labo/autre"])]);
-        let keys = MemoryKeys::with(Provider::Custom, KEY);
         let url = format!("http://{address}/v1");
+        let keys = MemoryKeys::with(Provider::Custom, &url, KEY);
         let ran =
             run(&directory, &keys, None, &["use", "custom", "--url", &url, "--model", "labo/un-modele"]);
         assert_eq!(ran.error, None);
@@ -974,7 +1253,7 @@ mod tests {
             ran.out.starts_with(&format!(
                 "Capri pense maintenant avec labo/un-modele (Serveur personnalisé, {address}).\n\
                  Ce que tu lui dis reste sur cette machine.\n\
-                 Sa clé est lue dans le trousseau de test à chaque message, et n'est écrite nulle part ailleurs.\n"
+                 Sa clé, rangée pour {address}, est lue dans le trousseau de test à chaque message, et n'est écrite nulle part ailleurs.\n"
             )),
             "{}",
             ran.out
@@ -1005,8 +1284,10 @@ mod tests {
             &["use", "openrouter", "--url", &url, "--model", "labo/un-modele"],
         );
         assert_eq!(
-            ran.error.as_deref(),
-            Some("OpenRouter demande une clé. Range-la d'abord : capri chat key openrouter")
+            ran.error,
+            Some(format!(
+                "OpenRouter demande une clé, et il n'y en a pas pour {address}. Range-la d'abord : capri chat key openrouter --url {url}"
+            ))
         );
         assert_eq!(load(&directory).expect("lisible"), None, "aucun cerveau choisi");
         assert!(
@@ -1018,44 +1299,35 @@ mod tests {
 
     #[test]
     fn a_key_never_goes_in_clear_to_another_machine() {
-        // vérifié avant tout contact : ce test n'ouvre aucune connexion
-        let keys = MemoryKeys::with(Provider::Custom, KEY);
+        // vérifié avant tout contact : ce test n'ouvre aucune connexion. Une clé donnée en https
+        // pour un serveur du réseau privé est celle du même hôte et du même port en http.
+        let keys = MemoryKeys::with(Provider::Custom, "https://192.168.1.20:1234/v1", KEY);
+        keys.add(Provider::Custom, "https://10.0.0.5:8080/v1", KEY);
+        keys.add(Provider::Custom, "http://localhost:1234/v1", KEY);
         for (url, host) in [
             ("http://192.168.1.20:1234/v1", "192.168.1.20:1234"),
             ("http://10.0.0.5:8080/v1", "10.0.0.5:8080"),
         ] {
             let error =
-                format!("{:#}", key_for_server(&keys, Provider::Custom, &at(url)).expect_err("refusé"));
+                format!("{:#}", key_for_server(&keys, Provider::Custom, &at(url), None).expect_err("refusé"));
             assert_eq!(
                 error,
                 format!(
-                    "la clé du serveur personnalisé ne partirait pas en clair vers {host} : donne une adresse en https, ou retire la clé (capri chat key custom --forget)"
+                    "la clé du serveur personnalisé rangée pour {host} ne partirait pas en clair : donne une adresse en https, ou retire la clé (capri chat key custom --url {url} --forget)"
                 )
             );
         }
-        assert!(
-            key_for_server(&keys, Provider::Custom, &at("https://192.168.1.20/v1"))
-                .expect("permis")
-                .is_some()
-        );
-        assert!(
-            key_for_server(&keys, Provider::Custom, &at("http://localhost:1234/v1"))
-                .expect("permis")
-                .is_some()
-        );
-        // sans clé, un serveur du réseau privé reste possible ; Ollama n'en reçoit jamais
-        let none = MemoryKeys::default();
-        assert!(
-            key_for_server(&none, Provider::Custom, &at("http://192.168.1.20:1234/v1"))
-                .expect("permis")
-                .is_none()
-        );
-        let ollama_keys = MemoryKeys::with(Provider::Ollama, KEY);
-        assert!(
-            key_for_server(&ollama_keys, Provider::Ollama, &at("http://192.168.1.20:11434/v1"))
-                .expect("permis")
-                .is_none()
-        );
+        let permitted = |keys: &MemoryKeys, provider, url: &str| {
+            key_for_server(keys, provider, &at(url), None).expect("permis").is_some()
+        };
+        assert!(permitted(&keys, Provider::Custom, "https://192.168.1.20:1234/v1"));
+        assert!(permitted(&keys, Provider::Custom, "http://localhost:1234/v1"));
+        // sans clé pour cette adresse, un serveur du réseau privé reste possible
+        assert!(!permitted(&keys, Provider::Custom, "http://192.168.1.20:1235/v1"));
+        assert!(!permitted(&MemoryKeys::default(), Provider::Custom, "http://192.168.1.20:1234/v1"));
+        // Ollama n'en reçoit jamais
+        let ollama_keys = MemoryKeys::with(Provider::Ollama, "http://192.168.1.20:11434/v1", KEY);
+        assert!(!permitted(&ollama_keys, Provider::Ollama, "http://192.168.1.20:11434/v1"));
     }
 
     #[test]
@@ -1124,59 +1396,97 @@ mod tests {
             fake_server::listing(&["modele-de-test"]),
             fake_server::listing(&["modele-de-test"]),
         ]);
-        let custom = Brain::new(Provider::Custom, Some(&format!("http://{address}/v1")), "modele-de-test")
-            .expect("valide");
+        let url = format!("http://{address}/v1");
+        let custom = Brain::new(Provider::Custom, Some(&url), "modele-de-test").expect("valide");
         save(&directory, &custom).expect("écrit");
 
-        let ran = run(&directory, &MemoryKeys::with(Provider::Custom, KEY), None, &["status"]);
+        let ran = run(&directory, &MemoryKeys::with(Provider::Custom, &url, KEY), None, &["status"]);
         assert_eq!(ran.error, None);
         for line in [
-            "cerveau  : Serveur personnalisé, modèle modele-de-test\n",
-            "envoi    : Ce que tu lui dis reste sur cette machine.\n",
-            "clé      : rangée dans le trousseau de test (elle ne s'affiche jamais)\n",
-            "serveur  : répond, et le modèle est là\n",
+            "cerveau  : Serveur personnalisé, modèle modele-de-test\n".to_owned(),
+            "envoi    : Ce que tu lui dis reste sur cette machine.\n".to_owned(),
+            format!(
+                "clé      : rangée dans le trousseau de test pour {address} (elle ne s'affiche jamais)\n"
+            ),
+            "serveur  : répond, et le modèle est là\n".to_owned(),
         ] {
-            assert!(ran.out.contains(line), "{line:?} manque dans :\n{}", ran.out);
+            assert!(ran.out.contains(&line), "{line:?} manque dans :\n{}", ran.out);
         }
-        assert!(!ran.out.contains(KEY));
+        assert!(!ran.out.contains(KEY) && !ran.out.contains("ancienne"));
         let (head, _) = requests.recv_timeout(std::time::Duration::from_secs(5)).expect("une requête");
         assert_eq!(header(&head, "authorization"), Some(format!("Bearer {KEY}")));
 
         let ran = run(&directory, &MemoryKeys::default(), None, &["status"]);
         assert!(
-            ran.out.contains("clé      : aucune (s'il en demande une : capri chat key custom)\n"),
+            ran.out.contains(&format!(
+                "clé      : aucune pour {address} (s'il en demande une : capri chat key custom)\n"
+            )),
             "{}",
             ran.out
         );
         let (head, _) = requests.recv_timeout(std::time::Duration::from_secs(5)).expect("une requête");
         assert_eq!(header(&head, "authorization"), None);
 
-        // un fournisseur qui exige une clé, sans clé : il le dit, et ne contacte personne
+        // un fournisseur qui exige une clé, sans clé pour cette adresse : il le dit, et ne contacte
+        // personne, même avec la clé de son adresse habituelle
         let openrouter =
             Brain::new(Provider::OpenRouter, Some(&format!("http://{address}/api/v1")), "m").expect("valide");
         save(&directory, &openrouter).expect("écrit");
-        let ran = run(&directory, &MemoryKeys::default(), None, &["status"]);
+        let ran =
+            run(&directory, &MemoryKeys::with(Provider::OpenRouter, OPENROUTER, KEY), None, &["status"]);
         assert!(
-            ran.out.contains(
-                "clé      : AUCUNE : OpenRouter en demande une. Pour la donner : capri chat key openrouter\n"
-            ),
+            ran.out.contains(&format!(
+                "clé      : AUCUNE pour {address} : OpenRouter en demande une. Pour la donner : capri chat key openrouter\n"
+            )),
             "{}",
             ran.out
         );
-        assert!(ran.out.contains("serveur  : OpenRouter demande une clé, et je n'en ai pas."), "{}", ran.out);
+        assert!(
+            ran.out.contains(&format!(
+                "serveur  : OpenRouter demande une clé, et je n'en ai pas pour {address}."
+            )),
+            "{}",
+            ran.out
+        );
+        assert!(
+            requests.recv_timeout(std::time::Duration::from_millis(100)).is_err(),
+            "personne n'a été contacté"
+        );
         let _ = std::fs::remove_dir_all(directory);
     }
 
     #[test]
-    fn without_a_brain_status_lists_the_stored_keys_by_name_only() {
+    fn without_a_brain_status_lists_the_stored_keys_by_name_and_address_only() {
         let directory = scratch_dir("statut-vide");
-        let keys = MemoryKeys::with(Provider::DeepSeek, KEY);
-        keys.save(Provider::ProxyApi, &ApiKey::parse("sk-une-autre-cle-de-test").expect("une clé"))
-            .expect("rangée");
+        let keys = MemoryKeys::with(Provider::DeepSeek, "https://api.deepseek.com", KEY);
+        keys.add(Provider::ProxyApi, "https://api.proxyapi.ru/v1", "sk-une-autre-cle-de-test");
         let ran = run(&directory, &keys, None, &["status"]);
         assert!(ran.out.contains("Capri n'a pas de cerveau"), "{}", ran.out);
         assert!(
-            ran.out.ends_with("clés     : rangées dans le trousseau de test pour deepseek, proxyapi\n"),
+            ran.out.ends_with(
+                "clés     : rangées dans le trousseau de test pour deepseek (api.deepseek.com:443), proxyapi (api.proxyapi.ru:443)\n"
+            ),
+            "{}",
+            ran.out
+        );
+        assert!(!ran.out.contains(KEY));
+
+        // et celles d'une version précédente, sans adresse
+        keys.add_legacy(Provider::OpenRouter, KEY);
+        let ran = run(&directory, &keys, None, &["status"]);
+        assert!(
+            ran.out.ends_with(
+                "           rangées sans adresse par une version précédente de Capri, jamais envoyées : openrouter. \
+                 Pour en redonner une : capri chat key <fournisseur> [--url <adresse>]\n"
+            ),
+            "{}",
+            ran.out
+        );
+        let only_old = MemoryKeys::default();
+        only_old.add_legacy(Provider::Custom, KEY);
+        let ran = run(&directory, &only_old, None, &["status"]);
+        assert!(
+            ran.out.contains("clés     : rangées sans adresse par une version précédente de Capri, jamais envoyées : custom."),
             "{}",
             ran.out
         );
@@ -1188,7 +1498,7 @@ mod tests {
     fn off_forgets_the_brain_but_not_the_keys_and_says_so() {
         let directory = scratch_dir("eteinte");
         save(&directory, &brain("m")).expect("écrit");
-        let keys = MemoryKeys::with(Provider::OpenRouter, KEY);
+        let keys = MemoryKeys::with(Provider::OpenRouter, OPENROUTER, KEY);
         let ran = run(&directory, &keys, None, &["off"]);
         assert_eq!(ran.error, None);
         assert_eq!(
@@ -1196,7 +1506,11 @@ mod tests {
             "Capri n'a plus de cerveau : elle répète ce qu'on lui dit, et rien ne sort de ta machine.\n\
              Les clés d'API restent dans le trousseau de test ; pour en retirer une : capri chat key <fournisseur> --forget\n"
         );
-        assert_eq!(stored(&keys, Provider::OpenRouter).as_deref(), Some(KEY), "la clé n'est pas touchée");
+        assert_eq!(
+            stored(&keys, Provider::OpenRouter, OPENROUTER).as_deref(),
+            Some(KEY),
+            "la clé n'est pas touchée"
+        );
         assert_eq!(load(&directory).expect("lisible"), None);
         let _ = std::fs::remove_dir_all(directory);
     }
@@ -1209,10 +1523,10 @@ mod tests {
             fake_server::reply("Salut, **toi**."),
             fake_server::response("401 Unauthorized", "application/json", &refusal),
         ]);
-        let custom = Brain::new(Provider::Custom, Some(&format!("http://{address}/v1")), "modele-de-test")
-            .expect("valide");
+        let url = format!("http://{address}/v1");
+        let custom = Brain::new(Provider::Custom, Some(&url), "modele-de-test").expect("valide");
         save(&directory, &custom).expect("écrit");
-        let keys = MemoryKeys::with(Provider::Custom, KEY);
+        let keys = MemoryKeys::with(Provider::Custom, &url, KEY);
 
         let ran = run(&directory, &keys, None, &["test", "Coucou"]);
         assert_eq!(
@@ -1289,6 +1603,11 @@ mod tests {
             &["key", "skynet"],
             &["key", "openrouter", KEY],
             &["key", "openrouter", "--forget", "encore"],
+            &["key", "openrouter", "--forget", "--forget"],
+            &["key", "openrouter", "--url"],
+            &["key", "openrouter", "--url", "--forget"],
+            &["key", "openrouter", "--url", "https://a.example", "--url", "https://b.example"],
+            &["key", "openrouter", "--model", "m"],
             &["models"],
             &["models", "custom", "un", "deux"],
             &["models", "custom", "--url"],
@@ -1304,6 +1623,198 @@ mod tests {
         assert_eq!(
             parse_models("custom", &["--url", "http://localhost:8080/v1", "mot"]),
             Some((Provider::Custom, Some("mot"), Some("http://localhost:8080/v1")))
+        );
+        assert_eq!(parse_key("deepseek", &[]), Some((Provider::DeepSeek, None, false)));
+        assert_eq!(
+            parse_key("custom", &["--forget", "--url", "http://localhost:8080/v1"]),
+            Some((Provider::Custom, Some("http://localhost:8080/v1"), true))
+        );
+        assert_eq!(
+            parse_key("custom", &["--url", "http://localhost:8080/v1"]),
+            Some((Provider::Custom, Some("http://localhost:8080/v1"), false))
+        );
+        let _ = std::fs::remove_dir_all(directory);
+    }
+
+    // --- Une clé est liée à l'adresse pour laquelle elle a été donnée ---
+
+    /// La requête suivante reçue par un faux serveur.
+    fn next(requests: &std::sync::mpsc::Receiver<fake_server::Request>) -> fake_server::Request {
+        requests.recv_timeout(std::time::Duration::from_secs(5)).expect("une requête")
+    }
+
+    /// Aucune requête n'est (encore) arrivée à ce faux serveur.
+    fn untouched(requests: &std::sync::mpsc::Receiver<fake_server::Request>) -> bool {
+        requests.recv_timeout(std::time::Duration::from_millis(100)).is_err()
+    }
+
+    /// La requête ne porte aucune clé : ni en-tête `Authorization`, ni le texte de `key` nulle part.
+    fn carries_no_key((head, body): &fake_server::Request, key: &str) -> bool {
+        header(head, "authorization").is_none() && !head.contains(key) && !body.contains(key)
+    }
+
+    #[test]
+    fn a_key_given_for_one_address_never_reaches_another_port() {
+        let directory = scratch_dir("cle-un-port");
+        let keys = MemoryKeys::default();
+        // deux serveurs sur cette machine, qui ne diffèrent que par leur port
+        let (given_for, given_requests) = fake_server::serve(vec![fake_server::listing(&["m"])]);
+        let (other, requests) = fake_server::serve(vec![
+            fake_server::listing(&["m"]),
+            fake_server::listing(&["m"]),
+            fake_server::reply("Salut."),
+            fake_server::listing(&["m"]),
+        ]);
+        let (given_url, other_url) = (format!("http://{given_for}/v1"), format!("http://{other}/v1"));
+
+        let ran = run(&directory, &keys, Some(KEY), &["key", "custom", "--url", &given_url]);
+        assert_eq!(ran.error, None);
+        assert!(ran.out.contains(&format!("pour {given_for} seulement")), "{}", ran.out);
+        assert_eq!(keys.accounts(), [format!("custom@{given_for}")]);
+
+        // chercher un modèle ailleurs
+        let ran = run(&directory, &keys, None, &["models", "custom", "--url", &other_url]);
+        assert_eq!(ran.error, None);
+        assert!(carries_no_key(&next(&requests), KEY), "models");
+        // choisir ce serveur-là
+        let ran = run(&directory, &keys, None, &["use", "custom", "--url", &other_url, "--model", "m"]);
+        assert_eq!(ran.error, None);
+        assert!(!ran.out.contains("Sa clé"), "{}", ran.out);
+        assert!(carries_no_key(&next(&requests), KEY), "use");
+        // lui parler
+        let ran = run(&directory, &keys, None, &["test", "Coucou"]);
+        assert_eq!((ran.error, ran.out.as_str()), (None, "> Coucou\nSalut.\n"));
+        assert!(carries_no_key(&next(&requests), KEY), "test");
+        // demander où on en est
+        let ran = run(&directory, &keys, None, &["status"]);
+        assert!(
+            ran.out.contains(&format!(
+                "clé      : aucune pour {other} (s'il en demande une : capri chat key custom)\n"
+            )),
+            "{}",
+            ran.out
+        );
+        assert!(carries_no_key(&next(&requests), KEY), "status");
+        assert!(untouched(&given_requests), "l'adresse de la clé n'a pas été jointe non plus");
+
+        // et là où elle a été donnée, elle part bien
+        let ran = run(&directory, &keys, None, &["use", "custom", "--url", &given_url, "--model", "m"]);
+        assert_eq!(ran.error, None);
+        assert_eq!(header(&next(&given_requests).0, "authorization"), Some(format!("Bearer {KEY}")));
+        assert!(!ran.out.contains(KEY) && !any_file_contains(&directory, KEY));
+        let _ = std::fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn another_url_for_a_named_provider_does_not_take_its_usual_key_along() {
+        let directory = scratch_dir("cle-adresse-habituelle");
+        let keys = MemoryKeys::default();
+        // les clés des adresses habituelles : rien n'est contacté pour les ranger
+        for provider in ["openrouter", "lmstudio"] {
+            let ran = run(&directory, &keys, Some(KEY), &["key", provider]);
+            assert_eq!(ran.error, None, "{provider}");
+        }
+        assert_eq!(keys.accounts(), ["lmstudio@localhost:1234", "openrouter@openrouter.ai:443"]);
+
+        let (elsewhere, requests) = fake_server::serve(vec![fake_server::listing(&["m"])]);
+        // OpenRouter exige une clé : sans clé pour cette adresse, il n'est même pas contacté
+        let url = format!("http://{elsewhere}/api/v1");
+        for args in [
+            &["use", "openrouter", "--url", &url, "--model", "m"][..],
+            &["models", "openrouter", "--url", &url],
+        ] {
+            let ran = run(&directory, &keys, None, args);
+            assert_eq!(
+                ran.error,
+                Some(format!(
+                    "OpenRouter demande une clé, et il n'y en a pas pour {elsewhere}. Range-la d'abord : capri chat key openrouter --url {url}"
+                )),
+                "{args:?}"
+            );
+        }
+        assert!(untouched(&requests), "personne n'a été contacté");
+        // LM Studio, à clé facultative, est joint, mais sans la clé de son adresse habituelle
+        let url = format!("http://{elsewhere}/v1");
+        let ran = run(&directory, &keys, None, &["use", "lmstudio", "--url", &url, "--model", "m"]);
+        assert_eq!(ran.error, None);
+        assert!(carries_no_key(&next(&requests), KEY));
+        let _ = std::fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn a_key_kept_without_an_address_is_never_sent_and_status_says_so() {
+        let directory = scratch_dir("ancienne-cle");
+        let keys = MemoryKeys::default();
+        keys.add_legacy(Provider::Custom, KEY);
+        keys.add_legacy(Provider::OpenRouter, KEY);
+        let (address, requests) = fake_server::serve(vec![
+            fake_server::listing(&["m"]),
+            fake_server::listing(&["m"]),
+            fake_server::listing(&["m"]),
+            fake_server::reply("Salut."),
+        ]);
+        let url = format!("http://{address}/v1");
+
+        let ran = run(&directory, &keys, None, &["models", "custom", "--url", &url]);
+        assert_eq!(ran.error, None);
+        assert!(carries_no_key(&next(&requests), KEY), "models");
+        let ran = run(&directory, &keys, None, &["use", "custom", "--url", &url, "--model", "m"]);
+        assert_eq!(ran.error, None);
+        assert!(carries_no_key(&next(&requests), KEY), "use");
+        let ran = run(&directory, &keys, None, &["status"]);
+        assert!(
+            ran.out.contains(
+                "           une ancienne clé du serveur personnalisé, rangée sans adresse par une version précédente \
+                 de Capri, n'est jamais envoyée. Pour la redonner : capri chat key custom\n"
+            ),
+            "{}",
+            ran.out
+        );
+        assert!(carries_no_key(&next(&requests), KEY), "status");
+        let ran = run(&directory, &keys, None, &["test"]);
+        assert_eq!(ran.error, None);
+        assert!(carries_no_key(&next(&requests), KEY), "test");
+
+        // OpenRouter, qui l'exige : pas de clé pour son adresse, donc personne n'est contacté (une
+        // adresse locale : sous Linux, une adresse en https serait refusée avant, faute de TLS)
+        let openrouter =
+            Brain::new(Provider::OpenRouter, Some(&format!("http://{address}/api/v1")), "m").expect("valide");
+        save(&directory, &openrouter).expect("écrit");
+        let ran = run(&directory, &keys, None, &["test"]);
+        assert_eq!(
+            ran.error,
+            Some(format!(
+                "OpenRouter demande une clé, et je n'en ai pas pour {address}. Pour me la donner : capri chat key openrouter"
+            ))
+        );
+        let ran = run(&directory, &keys, None, &["status"]);
+        assert!(ran.out.contains(&format!("clé      : AUCUNE pour {address}")), "{}", ran.out);
+        assert!(ran.out.contains("une ancienne clé d'OpenRouter, rangée sans adresse"), "{}", ran.out);
+        assert!(!ran.out.contains(KEY));
+        assert!(untouched(&requests), "personne n'a été contacté");
+
+        // la redonner remplace l'ancienne ; --forget retire l'ancienne aussi
+        let ran = run(&directory, &keys, Some("sk-une-autre-cle-de-test"), &["key", "openrouter"]);
+        assert!(
+            ran.out.contains(
+                "L'ancienne clé d'OpenRouter, rangée sans adresse par une version précédente de Capri, est retirée.\n"
+            ),
+            "{}",
+            ran.out
+        );
+        assert_eq!(keys.accounts(), ["custom".to_owned(), format!("openrouter@{address}")]);
+        let ran = run(&directory, &keys, None, &["key", "custom", "--url", &url, "--forget"]);
+        assert_eq!(
+            ran.out,
+            format!(
+                "Il n'y avait pas de clé du serveur personnalisé pour {address} dans le trousseau de test.\n\
+                 L'ancienne clé du serveur personnalisé, rangée sans adresse par une version précédente de Capri, est retirée aussi.\n"
+            )
+        );
+        assert_eq!(keys.accounts(), [format!("openrouter@{address}")]);
+        assert!(
+            !keys::has_legacy_key(&keys, Provider::OpenRouter)
+                && !keys::has_legacy_key(&keys, Provider::Custom)
         );
         let _ = std::fs::remove_dir_all(directory);
     }

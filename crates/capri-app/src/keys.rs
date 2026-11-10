@@ -1,9 +1,15 @@
 //! Les clés d'API côté application : où elles sont rangées, et comment on les donne à Capri.
 //!
 //! Une clé vit dans le trousseau du système (`capri_platform::keychain`), sous le service `Capri`,
-//! avec un compte par fournisseur (`openrouter`, `deepseek`…). Elle n'est écrite nulle part
-//! ailleurs : ni dans `chat.json`, ni dans un autre fichier, ni dans le journal, ni dans un
-//! message. Elle est relue dans le trousseau à chaque message, comme le reste des réglages.
+//! avec un compte par fournisseur et par adresse (`openrouter@openrouter.ai:443` : voir
+//! `capri_chat::KeyAccount`). Elle est liée à l'adresse pour laquelle elle a été donnée : elle n'est
+//! relue que pour cette adresse, et `capri-net` refuse de l'envoyer ailleurs. Elle n'est écrite
+//! nulle part ailleurs : ni dans `chat.json`, ni dans un autre fichier, ni dans le journal, ni dans
+//! un message. Elle est relue dans le trousseau à chaque message, comme le reste des réglages.
+//!
+//! Une version précédente rangeait la clé sous l'identifiant du fournisseur seul
+//! (`capri_chat::key::legacy_account`). Une telle clé n'est jamais lue pour être envoyée : on sait
+//! seulement si elle est là, pour le dire, et on peut la retirer.
 //!
 //! `CAPRI_KEYCHAIN_SERVICE` remplace le nom du service : pour des essais qui ne touchent pas aux
 //! vraies clés.
@@ -12,7 +18,7 @@ use std::io::{IsTerminal, Read, Write};
 use std::sync::Arc;
 
 use anyhow::{Context, Result, anyhow, bail};
-use capri_chat::{ApiKey, KeyNeed, Provider};
+use capri_chat::{ApiKey, BoundKey, Endpoint, KeyAccount, KeyNeed, Provider};
 use capri_platform::keychain;
 
 /// Le service sous lequel les clés sont rangées dans le trousseau.
@@ -26,12 +32,16 @@ pub trait KeyStore: Send + Sync {
     fn available(&self) -> bool;
     /// Son nom, pour les messages : « le trousseau de session ».
     fn name(&self) -> &str;
-    fn save(&self, provider: Provider, key: &ApiKey) -> Result<()>;
-    fn load(&self, provider: Provider) -> Result<Option<ApiKey>>;
-    /// Une clé est-elle rangée ? Sans la lire : sur macOS, le système ne demande rien.
-    fn contains(&self, provider: Provider) -> Result<bool>;
-    /// Retire la clé. `false` : il n'y en avait pas.
-    fn forget(&self, provider: Provider) -> Result<bool>;
+    /// Range `key` sous ce compte, à la place de ce qui y était.
+    fn save(&self, account: &KeyAccount, key: &ApiKey) -> Result<()>;
+    /// La clé rangée sous ce compte, liée à son adresse. Seul un compte qui nomme une adresse se
+    /// lit : une clé rangée sans adresse ne peut pas l'être.
+    fn load(&self, account: &KeyAccount) -> Result<Option<BoundKey>>;
+    /// Un secret est-il rangé sous ce nom de compte ? Sans le lire : sur macOS, le système ne
+    /// demande rien.
+    fn contains(&self, account: &str) -> Result<bool>;
+    /// Retire le secret rangé sous ce nom de compte. `false` : il n'y en avait pas.
+    fn forget(&self, account: &str) -> Result<bool>;
 }
 
 /// Le trousseau du système.
@@ -63,44 +73,53 @@ impl KeyStore for SystemKeychain {
         keychain::NAME
     }
 
-    fn save(&self, provider: Provider, key: &ApiKey) -> Result<()> {
-        keychain::save(&self.service, provider.id(), key.reveal_for_keychain())
+    fn save(&self, account: &KeyAccount, key: &ApiKey) -> Result<()> {
+        keychain::save(&self.service, &account.name(), key.reveal_for_keychain())
             .with_context(|| format!("rangement de la clé dans {}", self.name()))
     }
 
-    fn load(&self, provider: Provider) -> Result<Option<ApiKey>> {
-        let Some(text) = keychain::load(&self.service, provider.id())
+    fn load(&self, account: &KeyAccount) -> Result<Option<BoundKey>> {
+        let Some(text) = keychain::load(&self.service, &account.name())
             .with_context(|| format!("lecture de la clé dans {}", self.name()))?
         else {
             return Ok(None);
         };
-        ApiKey::parse(&text).map(Some).map_err(|err| {
+        let key = ApiKey::parse(&text).map_err(|err| {
             anyhow!(
-                "la clé rangée n'est pas valable ({err}) : pour la remettre, capri chat key {}",
-                provider.id()
+                "la clé rangée pour {} n'est pas valable ({err}) : il faut la redonner",
+                account.address()
             )
-        })
+        })?;
+        Ok(Some(BoundKey::new(account.clone(), key)))
     }
 
-    fn contains(&self, provider: Provider) -> Result<bool> {
-        keychain::contains(&self.service, provider.id())
-            .with_context(|| format!("consultation de {}", self.name()))
+    fn contains(&self, account: &str) -> Result<bool> {
+        keychain::contains(&self.service, account).with_context(|| format!("consultation de {}", self.name()))
     }
 
-    fn forget(&self, provider: Provider) -> Result<bool> {
-        keychain::delete(&self.service, provider.id())
+    fn forget(&self, account: &str) -> Result<bool> {
+        keychain::delete(&self.service, account)
             .with_context(|| format!("retrait de la clé de {}", self.name()))
     }
 }
 
-/// La clé à envoyer à `provider` : aucune s'il n'en prend pas (le trousseau n'est alors même pas
-/// consulté) ou si le système n'a pas de trousseau, sinon celle du trousseau s'il y en a une.
-pub fn key_for(keys: &dyn KeyStore, provider: Provider) -> Result<Option<ApiKey>> {
+/// La clé à envoyer à `provider` joint à `endpoint` : aucune s'il n'en prend pas (le trousseau
+/// n'est alors même pas consulté) ou si le système n'a pas de trousseau, sinon celle rangée pour
+/// cette adresse, s'il y en a une. Jamais celle d'une autre adresse.
+pub fn key_for(keys: &dyn KeyStore, provider: Provider, endpoint: &Endpoint) -> Result<Option<BoundKey>> {
     match provider.key_need() {
         KeyNeed::None => Ok(None),
         _ if !keys.available() => Ok(None),
-        KeyNeed::Optional | KeyNeed::Required => keys.load(provider),
+        KeyNeed::Optional | KeyNeed::Required => keys.load(&KeyAccount::new(provider, endpoint)),
     }
+}
+
+/// Une clé rangée sans adresse par une version précédente est-elle encore là ? Elle n'est jamais
+/// lue : seulement signalée.
+pub fn has_legacy_key(keys: &dyn KeyStore, provider: Provider) -> bool {
+    provider.key_need() != KeyNeed::None
+        && keys.available()
+        && keys.contains(capri_chat::key::legacy_account(provider)).unwrap_or(false)
 }
 
 /// Lit la clé que donne l'utilisateur : tapée sans s'afficher si l'entrée est un terminal, sinon
@@ -132,7 +151,8 @@ pub mod memory {
 
     #[derive(Default)]
     pub struct MemoryKeys {
-        keys: Mutex<HashMap<&'static str, ApiKey>>,
+        /// Les secrets, par nom de compte.
+        keys: Mutex<HashMap<String, ApiKey>>,
         /// Pour simuler un système sans trousseau.
         unavailable: bool,
         /// Pour simuler un accès refusé par le système.
@@ -150,10 +170,35 @@ pub mod memory {
             Self { denied: true, ..Self::default() }
         }
 
-        pub fn with(provider: Provider, key: &str) -> Self {
+        /// Un trousseau où `key` est rangée pour l'adresse `url` de ce fournisseur.
+        pub fn with(provider: Provider, url: &str, key: &str) -> Self {
             let keys = Self::default();
-            keys.save(provider, &ApiKey::parse(key).expect("une clé")).expect("rangée");
+            keys.add(provider, url, key);
             keys
+        }
+
+        /// Range aussi `key` pour l'adresse `url` de ce fournisseur.
+        pub fn add(&self, provider: Provider, url: &str, key: &str) {
+            let account = KeyAccount::new(provider, &Endpoint::parse(url).expect("adresse valable"));
+            self.save(&account, &ApiKey::parse(key).expect("une clé")).expect("rangée");
+        }
+
+        /// Range aussi `key` comme le faisait une version précédente : sous l'identifiant seul.
+        pub fn add_legacy(&self, provider: Provider, key: &str) {
+            let account = capri_chat::key::legacy_account(provider).to_owned();
+            self.lock().insert(account, ApiKey::parse(key).expect("une clé"));
+        }
+
+        /// Les noms des comptes rangés, dans l'ordre alphabétique.
+        pub fn accounts(&self) -> Vec<String> {
+            let mut accounts: Vec<String> = self.lock().keys().cloned().collect();
+            accounts.sort();
+            accounts
+        }
+
+        /// Le texte de la clé rangée sous ce nom de compte.
+        pub fn secret(&self, account: &str) -> Option<String> {
+            self.lock().get(account).map(|key| key.reveal_for_keychain().to_owned())
         }
 
         fn check(&self) -> Result<()> {
@@ -166,7 +211,7 @@ pub mod memory {
             Ok(())
         }
 
-        fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<&'static str, ApiKey>> {
+        fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<String, ApiKey>> {
             self.keys.lock().expect("verrou")
         }
     }
@@ -180,25 +225,25 @@ pub mod memory {
             "le trousseau de test"
         }
 
-        fn save(&self, provider: Provider, key: &ApiKey) -> Result<()> {
+        fn save(&self, account: &KeyAccount, key: &ApiKey) -> Result<()> {
             self.check()?;
-            self.lock().insert(provider.id(), key.clone());
+            self.lock().insert(account.name(), key.clone());
             Ok(())
         }
 
-        fn load(&self, provider: Provider) -> Result<Option<ApiKey>> {
+        fn load(&self, account: &KeyAccount) -> Result<Option<BoundKey>> {
             self.check()?;
-            Ok(self.lock().get(provider.id()).cloned())
+            Ok(self.lock().get(&account.name()).map(|key| BoundKey::new(account.clone(), key.clone())))
         }
 
-        fn contains(&self, provider: Provider) -> Result<bool> {
+        fn contains(&self, account: &str) -> Result<bool> {
             self.check()?;
-            Ok(self.lock().contains_key(provider.id()))
+            Ok(self.lock().contains_key(account))
         }
 
-        fn forget(&self, provider: Provider) -> Result<bool> {
+        fn forget(&self, account: &str) -> Result<bool> {
             self.check()?;
-            Ok(self.lock().remove(provider.id()).is_some())
+            Ok(self.lock().remove(account).is_some())
         }
     }
 }
@@ -208,18 +253,67 @@ mod tests {
     use super::memory::MemoryKeys;
     use super::*;
 
+    fn at(url: &str) -> Endpoint {
+        Endpoint::parse(url).expect("adresse valable")
+    }
+
     #[test]
     fn a_provider_that_takes_no_key_never_opens_the_keychain() {
         // un trousseau qui refuserait tout accès : Ollama n'y touche même pas
         let keys = MemoryKeys::denied();
-        assert!(key_for(&keys, Provider::Ollama).expect("rien à lire").is_none());
-        assert!(key_for(&keys, Provider::OpenRouter).is_err(), "les autres le consultent");
+        assert!(
+            key_for(&keys, Provider::Ollama, &at("http://localhost:11434/v1"))
+                .expect("rien à lire")
+                .is_none()
+        );
+        assert!(!has_legacy_key(&keys, Provider::Ollama));
+        let openrouter = at("https://openrouter.ai/api/v1");
+        assert!(key_for(&keys, Provider::OpenRouter, &openrouter).is_err(), "les autres le consultent");
 
         // sans trousseau, pas de clé, et pas d'erreur : un serveur à clé facultative reste utilisable
-        assert!(key_for(&MemoryKeys::unavailable(), Provider::LmStudio).expect("rien à lire").is_none());
+        let lmstudio = at("http://localhost:1234/v1");
+        assert!(
+            key_for(&MemoryKeys::unavailable(), Provider::LmStudio, &lmstudio)
+                .expect("rien à lire")
+                .is_none()
+        );
 
-        let keys = MemoryKeys::with(Provider::DeepSeek, "sk-test-0123456789");
-        assert!(key_for(&keys, Provider::DeepSeek).expect("lisible").is_some());
-        assert!(key_for(&keys, Provider::OpenRouter).expect("lisible").is_none(), "une clé par fournisseur");
+        let deepseek = at("https://api.deepseek.com");
+        let keys = MemoryKeys::with(Provider::DeepSeek, "https://api.deepseek.com", "sk-test-0123456789");
+        let key = key_for(&keys, Provider::DeepSeek, &deepseek).expect("lisible").expect("rangée");
+        assert_eq!(key.account().name(), "deepseek@api.deepseek.com:443", "liée à son adresse");
+        assert!(
+            key_for(&keys, Provider::OpenRouter, &openrouter).expect("lisible").is_none(),
+            "une clé par fournisseur"
+        );
+    }
+
+    #[test]
+    fn a_key_is_read_only_for_the_address_it_was_given_for() {
+        let keys = MemoryKeys::with(Provider::Custom, "http://127.0.0.1:1234/v1", "sk-test-0123456789");
+        assert!(
+            key_for(&keys, Provider::Custom, &at("http://127.0.0.1:1234/autre")).expect("lisible").is_some()
+        );
+        for url in ["http://127.0.0.1:1235/v1", "http://localhost:1234/v1", "https://llm.example/v1"] {
+            assert!(key_for(&keys, Provider::Custom, &at(url)).expect("lisible").is_none(), "{url}");
+        }
+        assert!(
+            key_for(&keys, Provider::LmStudio, &at("http://127.0.0.1:1234/v1")).expect("lisible").is_none()
+        );
+    }
+
+    #[test]
+    fn a_key_kept_without_an_address_is_noticed_but_never_read() {
+        let keys = MemoryKeys::default();
+        keys.add_legacy(Provider::OpenRouter, "sk-test-0123456789");
+        assert!(has_legacy_key(&keys, Provider::OpenRouter));
+        assert!(!has_legacy_key(&keys, Provider::DeepSeek));
+        assert!(
+            key_for(&keys, Provider::OpenRouter, &at("https://openrouter.ai/api/v1"))
+                .expect("lisible")
+                .is_none()
+        );
+        // sans trousseau, rien à signaler
+        assert!(!has_legacy_key(&MemoryKeys::unavailable(), Provider::OpenRouter));
     }
 }

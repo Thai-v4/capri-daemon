@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, channel};
 use std::time::{Duration, Instant};
 
-use capri_chat::{ApiKey, Brain, Provider, ReplyEvent, Role, Turn};
+use capri_chat::{ApiKey, BoundKey, Brain, KeyAccount, Provider, ReplyEvent, Role, Turn};
 use capri_net::{Client, Limits, Problem};
 use serde_json::{Value, json};
 
@@ -531,8 +531,9 @@ fn lists_the_models_the_server_offers() {
 /// Une clé qui n'existe nulle part ailleurs que dans ces tests.
 const KEY: &str = "sk-test-capri-0123456789abcdef";
 
-fn key() -> ApiKey {
-    ApiKey::parse(KEY).expect("une clé")
+/// La clé de test, donnée pour l'adresse de ce cerveau.
+fn key_for(brain: &Brain) -> BoundKey {
+    BoundKey::new(KeyAccount::new(brain.provider(), brain.endpoint()), ApiKey::parse(KEY).expect("une clé"))
 }
 
 /// Un cerveau du fournisseur `provider`, joint sur le faux serveur.
@@ -541,7 +542,7 @@ fn provider_at(provider: Provider, address: SocketAddr) -> Brain {
 }
 
 /// Pose la question avec cette clé, et rend ce qui a été émis.
-fn ask_with(brain: &Brain, key: Option<&ApiKey>) -> Vec<ReplyEvent> {
+fn ask_with(brain: &Brain, key: Option<&BoundKey>) -> Vec<ReplyEvent> {
     let mut events = Vec::new();
     Client::new().answer(
         brain,
@@ -567,7 +568,7 @@ fn a_short_reply() -> Vec<Step> {
 fn the_key_travels_as_a_bearer_token_in_its_header_and_nowhere_else() {
     let server = serve(a_short_reply());
     let brain = provider_at(Provider::OpenRouter, server.address);
-    assert_eq!(ask_with(&brain, Some(&key())), [said("Salut."), ReplyEvent::Done]);
+    assert_eq!(ask_with(&brain, Some(&key_for(&brain))), [said("Salut."), ReplyEvent::Done]);
 
     let (head, body) = server.request();
     assert_eq!(header(&head, "authorization"), Some(format!("Bearer {KEY}")));
@@ -593,10 +594,8 @@ fn without_a_key_no_authorization_header_is_sent() {
 
     // Ollama ne prend pas de clé : il n'en reçoit jamais, même si on lui en confie une
     let server = serve(a_short_reply());
-    assert_eq!(
-        ask_with(&provider_at(Provider::Ollama, server.address), Some(&key())),
-        [said("Salut."), ReplyEvent::Done]
-    );
+    let ollama = provider_at(Provider::Ollama, server.address);
+    assert_eq!(ask_with(&ollama, Some(&key_for(&ollama))), [said("Salut."), ReplyEvent::Done]);
     let (head, body) = server.request();
     assert_eq!(header(&head, "authorization"), None, "{head}");
     assert!(!head.contains(KEY) && !body.contains(KEY));
@@ -612,7 +611,7 @@ fn a_provider_that_needs_a_key_is_not_contacted_without_one() {
         assert_eq!(
             ask_with(&brain, None),
             [failed(&format!(
-                "{} demande une clé, et je n'en ai pas. Pour me la donner : capri chat key {}",
+                "{} demande une clé, et je n'en ai pas pour {address}. Pour me la donner : capri chat key {}",
                 provider.name(),
                 provider.id()
             ))]
@@ -632,7 +631,8 @@ fn a_refused_key_says_how_to_put_it_back_and_never_quotes_it() {
     // le fournisseur répète la clé dans son refus
     let error = format!(r#"{{"error":{{"message":"Incorrect API key provided: {KEY}","code":401}}}}"#);
     let server = serve(vec![Step::Send(plain("401 Unauthorized", "application/json", &error))]);
-    let events = ask_with(&provider_at(Provider::OpenRouter, server.address), Some(&key()));
+    let brain = provider_at(Provider::OpenRouter, server.address);
+    let events = ask_with(&brain, Some(&key_for(&brain)));
     assert_eq!(
         events,
         [failed("OpenRouter refuse ma clé (401). Pour la remettre : capri chat key openrouter")]
@@ -641,7 +641,8 @@ fn a_refused_key_says_how_to_put_it_back_and_never_quotes_it() {
     // un 403 est cité, puisqu'il peut dire autre chose qu'une mauvaise clé, mais masqué
     let error = format!(r#"{{"error":{{"message":"Key {KEY} may not use this model.","code":403}}}}"#);
     let server = serve(vec![Step::Send(plain("403 Forbidden", "application/json", &error))]);
-    let events = ask_with(&provider_at(Provider::ProxyApi, server.address), Some(&key()));
+    let brain = provider_at(Provider::ProxyApi, server.address);
+    let events = ask_with(&brain, Some(&key_for(&brain)));
     assert_eq!(
         events,
         [failed(
@@ -652,7 +653,8 @@ fn a_refused_key_says_how_to_put_it_back_and_never_quotes_it() {
     // même un morceau de la clé ne passe pas, ni dans un refus ordinaire
     let error = format!(r#"{{"detail":"trop de requêtes pour {}…","code":429}}"#, &KEY[..20]);
     let server = serve(vec![Step::Send(plain("429 Too Many Requests", "application/json", &error))]);
-    let events = ask_with(&provider_at(Provider::ProxyApi, server.address), Some(&key()));
+    let brain = provider_at(Provider::ProxyApi, server.address);
+    let events = ask_with(&brain, Some(&key_for(&brain)));
     assert_eq!(events, [failed("ProxyAPI refuse (429) : trop de requêtes pour [clé masquée]…")]);
 }
 
@@ -681,7 +683,8 @@ fn a_key_repeated_in_the_middle_of_the_stream_is_masked() {
         Step::Send(chunk(error.as_bytes())),
         Step::Send(LAST_CHUNK.to_vec()),
     ]);
-    let events = ask_with(&provider_at(Provider::DeepSeek, server.address), Some(&key()));
+    let brain = provider_at(Provider::DeepSeek, server.address);
+    let events = ask_with(&brain, Some(&key_for(&brain)));
     assert_eq!(events, [said("Je"), failed("DeepSeek a abandonné : session [clé masquée] closed")]);
 }
 
@@ -691,7 +694,7 @@ fn the_models_are_listed_with_the_key_and_a_refusal_is_explained() {
     let server = serve(vec![Step::Send(plain("200 OK", "application/json", listing))]);
     let brain = provider_at(Provider::DeepSeek, server.address);
     assert_eq!(
-        Client::new().models(Provider::DeepSeek, brain.endpoint(), Some(&key())),
+        Client::new().models(Provider::DeepSeek, brain.endpoint(), Some(&key_for(&brain))),
         Ok(vec!["fournisseur/un-modele".to_owned()])
     );
     let (head, _) = server.request();
@@ -701,10 +704,73 @@ fn the_models_are_listed_with_the_key_and_a_refusal_is_explained() {
     // la réponse de DeepSeek à une clé refusée : du texte brut, rien à citer
     let server =
         serve(vec![Step::Send(plain("401 Unauthorized", "text/plain", "Authentication Fails (governor)"))]);
+    let brain = provider_at(Provider::DeepSeek, server.address);
     assert_eq!(
-        Client::new().models(Provider::DeepSeek, brain_at(server.address).endpoint(), Some(&key())),
+        Client::new().models(Provider::DeepSeek, brain.endpoint(), Some(&key_for(&brain))),
         Err(Problem::KeyRefused { status: 401, reason: None })
     );
+}
+
+/// Une clé donnée pour une adresse (ici, un port de cette machine) ne part jamais vers une autre :
+/// elle y compte pour absente, que ce soit pour parler ou pour lister les modèles.
+#[test]
+fn a_key_given_for_another_address_is_never_sent() {
+    let given_for = TcpListener::bind("127.0.0.1:0").expect("un port libre");
+    given_for.set_nonblocking(true).expect("écoute sans attente");
+    let elsewhere = given_for.local_addr().expect("adresse");
+
+    // un fournisseur à clé facultative : la requête part, sans clé
+    let server = serve(a_short_reply());
+    let brain = provider_at(Provider::LmStudio, server.address);
+    let other_port = key_for(&provider_at(Provider::LmStudio, elsewhere));
+    assert_eq!(ask_with(&brain, Some(&other_port)), [said("Salut."), ReplyEvent::Done]);
+    let (head, body) = server.request();
+    assert_eq!(header(&head, "authorization"), None, "{head}");
+    assert!(!head.contains(KEY) && !body.contains(KEY));
+
+    let server = serve(vec![Step::Send(plain("200 OK", "application/json", r#"{"data":[{"id":"m"}]}"#))]);
+    let brain = provider_at(Provider::Custom, server.address);
+    let other_port = key_for(&provider_at(Provider::Custom, elsewhere));
+    assert_eq!(
+        Client::new().models(Provider::Custom, brain.endpoint(), Some(&other_port)),
+        Ok(vec!["m".to_owned()])
+    );
+    let (head, _) = server.request();
+    assert_eq!(header(&head, "authorization"), None, "{head}");
+    assert!(!head.contains(KEY));
+
+    // la même adresse, mais un autre fournisseur : pas sa clé non plus
+    let server = serve(a_short_reply());
+    let brain = provider_at(Provider::Custom, server.address);
+    let lmstudio_here = key_for(&provider_at(Provider::LmStudio, server.address));
+    assert_eq!(ask_with(&brain, Some(&lmstudio_here)), [said("Salut."), ReplyEvent::Done]);
+    let (head, _) = server.request();
+    assert_eq!(header(&head, "authorization"), None, "{head}");
+
+    // un fournisseur qui l'exige : personne n'est contacté, ni ici ni là où la clé a été donnée
+    let unused = TcpListener::bind("127.0.0.1:0").expect("un port libre");
+    unused.set_nonblocking(true).expect("écoute sans attente");
+    let address = unused.local_addr().expect("adresse");
+    let brain = provider_at(Provider::OpenRouter, address);
+    let other_port = key_for(&provider_at(Provider::OpenRouter, elsewhere));
+    assert_eq!(
+        ask_with(&brain, Some(&other_port)),
+        [failed(&format!(
+            "OpenRouter demande une clé, et je n'en ai pas pour {address}. Pour me la donner : capri chat key openrouter"
+        ))]
+    );
+    assert_eq!(
+        Client::new().models(Provider::OpenRouter, brain.endpoint(), Some(&other_port)),
+        Err(Problem::NoKey)
+    );
+    std::thread::sleep(Duration::from_millis(50));
+    for listener in [&unused, &given_for] {
+        let knocked = listener.accept();
+        assert!(
+            matches!(&knocked, Err(err) if err.kind() == std::io::ErrorKind::WouldBlock),
+            "personne n'a été contacté : {knocked:?}"
+        );
+    }
 }
 
 #[test]
@@ -716,7 +782,8 @@ fn a_redirect_never_takes_the_key_elsewhere() {
         "HTTP/1.1 308 Permanent Redirect\r\nLocation: http://{target}/v1/chat/completions\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
     );
     let server = serve(vec![Step::Send(redirect.into_bytes())]);
-    let events = ask_with(&provider_at(Provider::OpenRouter, server.address), Some(&key()));
+    let brain = provider_at(Provider::OpenRouter, server.address);
+    let events = ask_with(&brain, Some(&key_for(&brain)));
     assert_eq!(events, [failed("OpenRouter refuse (308).")]);
     std::thread::sleep(Duration::from_millis(100));
     let knocked = elsewhere.accept();
