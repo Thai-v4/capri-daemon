@@ -1,6 +1,6 @@
 [package]
 name = "capri-core"
-description = "Logique de Capri indépendante de la plateforme : animation, mouvement, hit-test."
+description = "Logique de Capri indépendante de la plateforme : animation, mouvement, hit-test, formulaire de réglages."
 version.workspace = true
 edition.workspace = true
 publish.workspace = true

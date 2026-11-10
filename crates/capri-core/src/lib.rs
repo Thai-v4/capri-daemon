@@ -3,10 +3,14 @@
 //! Unités : pixels physiques de la fenêtre overlay, origine en haut à gauche, y vers le bas.
 //! Temps : la base est l'image d'animation à 24 i/s ; les dessins sont tenus « en deux »
 //! (12 dessins par seconde), comme en anime.
+//!
+//! [`form`] décrit un formulaire de réglages (rubriques, lignes, événements) sans rien savoir de
+//! l'écran : le modèle des réglages le produit, la fenêtre de `capri-platform` l'affiche.
 
 pub mod anim;
 pub mod banner;
 pub mod body;
+pub mod form;
 pub mod geom;
 pub mod input;
 pub mod mask;
