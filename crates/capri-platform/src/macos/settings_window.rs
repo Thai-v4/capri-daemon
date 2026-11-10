@@ -208,6 +208,17 @@ define_class!(
             }
         }
 
+        /// Un champ de recherche envoie son action à chaque frappe, et quand on le vide par sa
+        /// croix, ce que son délégué ne voit pas.
+        #[unsafe(method(capriSearched:))]
+        fn searched(&self, sender: Option<&AnyObject>) {
+            let Some(field) = sender.and_then(|sender| sender.downcast_ref::<NSTextField>()) else { return };
+            if let Some(Binding { id, role: Role::Field }) = self.ivars().binding(field) {
+                let value = field.stringValue().to_string();
+                self.ivars().push(FormEvent::Edited { id, value });
+            }
+        }
+
         #[unsafe(method(capriChose:))]
         fn chose(&self, sender: Option<&AnyObject>) {
             let Some(popup) = sender.and_then(|sender| sender.downcast_ref::<NSPopUpButton>()) else { return };
@@ -549,8 +560,13 @@ impl SettingsWindow {
                 let field: Retained<NSTextField> = if *search {
                     let search = NSSearchField::new(mtm);
                     // SAFETY: la cible survit au champ (la fenêtre la retient), et AppKit ne garde
-                    // qu'une référence faible sur son délégué.
-                    unsafe { search.setDelegate(Some(ProtocolObject::from_ref(&*self.target))) };
+                    // qu'une référence faible sur son délégué et sa cible ; le sélecteur désigne
+                    // `capriSearched:`, définie plus haut, qui prend l'expéditeur en argument.
+                    unsafe {
+                        search.setDelegate(Some(ProtocolObject::from_ref(&*self.target)));
+                        search.setTarget(Some(self.target()));
+                        search.setAction(Some(sel!(capriSearched:)));
+                    }
                     Retained::into_super(search)
                 } else {
                     let field = NSTextField::textFieldWithString(&NSString::from_str(""), mtm);
