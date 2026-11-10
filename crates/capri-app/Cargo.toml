@@ -1,0 +1,30 @@
+[package]
+name = "capri-app"
+description = "Capri, compagne de bureau : l'application."
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "capri"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+capri-core = { path = "../capri-core" }
+capri-platform = { path = "../capri-platform" }
+capri-render = { path = "../capri-render" }
+env_logger = "0.11"
+global-hotkey = "0.10.0"
+image = { version = "0.25.10", default-features = false, features = ["png"] }
+log = "0.4"
+raw-window-handle = "0.6.2"
+winit = "0.30.13"
+
+# L'icône de la barre des menus (macOS) / de la zone de notification (Windows).
+[target.'cfg(any(target_os = "macos", windows))'.dependencies]
+tray-icon = "0.26.1"
+
+[lints]
+workspace = true

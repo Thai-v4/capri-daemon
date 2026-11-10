@@ -1,0 +1,12 @@
+[package]
+name = "capri-core"
+description = "Logique de Capri indépendante de la plateforme : animation, mouvement, hit-test."
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+
+[lints]
+workspace = true
