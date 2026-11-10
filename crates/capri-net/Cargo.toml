@@ -1,0 +1,20 @@
+[package]
+name = "capri-net"
+description = "Le seul crate de Capri qui parle au réseau : envoyer une conversation au fournisseur choisi, lire sa réponse au fil de l'eau."
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+capri-chat = { path = "../capri-chat" }
+log = "0.4"
+# Sans les fonctions par défaut : ni TLS, ni compression. Les fournisseurs en https arriveront
+# avec leur propre lot ; d'ici là, Capri ne parle qu'à cette machine et au réseau privé.
+ureq = { version = "3.5.1", default-features = false }
+
+[dev-dependencies]
+serde_json = "1.0.154"
+
+[lints]
+workspace = true

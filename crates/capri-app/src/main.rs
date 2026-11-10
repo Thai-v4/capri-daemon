@@ -1,6 +1,6 @@
 //! Capri : elle flotte sur ton bureau, on peut l'attraper, la poser et la lancer (jalon 1), un
 //! bandeau au-dessus d'elle dit ce que fait Claude Code (jalon 2), et on peut lui parler : elle
-//! répond dans une bulle (jalon 4, pour l'instant sans vrai cerveau).
+//! répond dans une bulle, avec le modèle local qu'on lui a donné (jalon 4).
 //!
 //! Une seule fenêtre transparente, l'overlay de `capri-platform`, couvre l'écran principal. Elle
 //! laisse passer la souris partout, sauf sur Capri elle-même. Le curseur est lu auprès du système
@@ -8,10 +8,12 @@
 //! mais on ne redessine que quand sa pose ou son bandeau change : environ 12 fois par seconde au
 //! repos.
 //!
-//! `capri hook install | uninstall | status` branche Claude Code sur Capri, sans lancer la fenêtre.
+//! `capri hook install | uninstall | status` branche Claude Code sur Capri, et
+//! `capri chat use | status | test | off` lui choisit un cerveau, sans lancer la fenêtre.
 
 mod assets;
 mod banner_view;
+mod brain_setup;
 mod chat;
 mod claude;
 mod hook_setup;
@@ -46,9 +48,12 @@ fn main() -> Result<()> {
     match args.first().map(String::as_str) {
         None => {}
         Some("hook") => std::process::exit(hook_setup::run_cli(&args[1..])),
+        Some("chat") => std::process::exit(brain_setup::run_cli(&args[1..])),
         Some(_) => {
             eprintln!(
-                "usage : capri                  lancer Capri\n        capri hook <action>    brancher Claude Code (voir capri hook)"
+                "usage : capri                  lancer Capri\n\
+                 \x20       capri hook <action>    brancher Claude Code (voir capri hook)\n\
+                 \x20       capri chat <action>    lui choisir un cerveau (voir capri chat)"
             );
             std::process::exit(2);
         }
@@ -281,6 +286,8 @@ impl App {
             for action in actions {
                 match action {
                     menu::Action::Talk => self.talk(),
+                    menu::Action::Hush => self.with_banner(BannerView::hush),
+                    menu::Action::Forget => self.with_banner(BannerView::forget),
                     menu::Action::ToggleVisible => self.toggle_hidden(),
                     menu::Action::ToggleClaudeHook => self.toggle_claude_hook(),
                     menu::Action::Quit => event_loop.exit(),
@@ -289,6 +296,14 @@ impl App {
         }
         #[cfg(not(any(target_os = "macos", windows)))]
         let _ = event_loop;
+    }
+
+    /// Agit sur ce qui s'affiche au-dessus d'elle, si elle est lancée.
+    #[cfg(any(target_os = "macos", windows))]
+    fn with_banner(&mut self, act: impl FnOnce(&mut BannerView)) {
+        if let Some(r) = self.running.as_mut() {
+            act(&mut r.banner);
+        }
     }
 
     /// Branche Claude Code sur Capri, ou le débranche s'il l'est déjà.

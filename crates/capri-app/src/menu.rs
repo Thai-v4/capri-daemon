@@ -10,6 +10,10 @@ use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
 pub enum Action {
     /// Ouvrir le champ de saisie pour lui parler.
     Talk,
+    /// La faire taire : elle arrête de répondre, et sa bulle s'efface.
+    Hush,
+    /// Repartir de zéro : elle oublie la conversation.
+    Forget,
     ToggleVisible,
     /// Brancher ou débrancher le hook de Claude Code.
     ToggleClaudeHook,
@@ -19,21 +23,17 @@ pub enum Action {
 pub struct Menus {
     _tray: Option<TrayIcon>,
     context: Menu,
-    talk_ids: Vec<MenuId>,
+    /// Ce que déclenche chaque élément, dans les deux menus.
+    actions: Vec<(MenuId, Action)>,
+    /// Les éléments dont le texte change.
     toggles: Vec<MenuItem>,
-    toggle_ids: Vec<MenuId>,
     hooks: Vec<MenuItem>,
-    hook_ids: Vec<MenuId>,
-    quit_ids: Vec<MenuId>,
 }
 
-/// Les éléments d'un menu dont on a besoin après sa création.
+/// Un menu et ses éléments, avec ce que chacun déclenche.
 struct Built {
     menu: Menu,
-    talk: MenuItem,
-    toggle: MenuItem,
-    hook: MenuItem,
-    quit: MenuItem,
+    items: Vec<(Action, MenuItem)>,
 }
 
 impl Menus {
@@ -48,15 +48,16 @@ impl Menus {
         let builder = builder.with_icon(tray_icon());
         let tray =
             builder.build().inspect_err(|err| log::warn!("pas d'icône de barre des menus : {err}")).ok();
+        let items: Vec<(Action, MenuItem)> = a.items.into_iter().chain(b.items).collect();
+        let items_for = |wanted: Action| -> Vec<MenuItem> {
+            items.iter().filter(|(action, _)| *action == wanted).map(|(_, item)| item.clone()).collect()
+        };
         Self {
             _tray: tray,
             context: b.menu,
-            talk_ids: vec![a.talk.id().clone(), b.talk.id().clone()],
-            toggle_ids: vec![a.toggle.id().clone(), b.toggle.id().clone()],
-            hook_ids: vec![a.hook.id().clone(), b.hook.id().clone()],
-            quit_ids: vec![a.quit.id().clone(), b.quit.id().clone()],
-            toggles: vec![a.toggle, b.toggle],
-            hooks: vec![a.hook, b.hook],
+            actions: items.iter().map(|(action, item)| (item.id().clone(), *action)).collect(),
+            toggles: items_for(Action::ToggleVisible),
+            hooks: items_for(Action::ToggleClaudeHook),
         }
     }
 
@@ -64,15 +65,7 @@ impl Menus {
     pub fn pending_actions(&self) -> Vec<Action> {
         let mut actions = Vec::new();
         while let Ok(event) = MenuEvent::receiver().try_recv() {
-            if self.talk_ids.contains(&event.id) {
-                actions.push(Action::Talk);
-            } else if self.toggle_ids.contains(&event.id) {
-                actions.push(Action::ToggleVisible);
-            } else if self.hook_ids.contains(&event.id) {
-                actions.push(Action::ToggleClaudeHook);
-            } else if self.quit_ids.contains(&event.id) {
-                actions.push(Action::Quit);
-            }
+            actions.extend(self.actions.iter().find(|(id, _)| *id == event.id).map(|(_, action)| *action));
         }
         actions
     }
@@ -119,16 +112,29 @@ fn build_menu() -> Built {
     let title = MenuItem::new("Capri — prototype", false, None);
     let talk_shortcut = Accelerator::new(Modifiers::CONTROL | Modifiers::ALT, Code::KeyP);
     let talk = MenuItem::new("Parler à Capri", true, Some(talk_shortcut));
+    let hush = MenuItem::new("La faire taire", true, None);
+    let forget = MenuItem::new("Nouvelle conversation", true, None);
     let shortcut = Accelerator::new(Modifiers::CONTROL | Modifiers::ALT, Code::KeyC);
     let toggle = MenuItem::new("Cacher Capri", true, Some(shortcut));
     let hook = MenuItem::new("Brancher Claude Code", true, None);
     let quit = MenuItem::new("Quitter", true, None);
     let menu = Menu::new();
-    let (first, second) = (PredefinedMenuItem::separator(), PredefinedMenuItem::separator());
-    if let Err(err) = menu.append_items(&[&title, &first, &talk, &toggle, &hook, &second, &quit]) {
+    let separator = PredefinedMenuItem::separator;
+    let (first, second, third) = (separator(), separator(), separator());
+    if let Err(err) =
+        menu.append_items(&[&title, &first, &talk, &hush, &forget, &second, &toggle, &hook, &third, &quit])
+    {
         log::warn!("menu incomplet : {err}");
     }
-    Built { menu, talk, toggle, hook, quit }
+    let items = vec![
+        (Action::Talk, talk),
+        (Action::Hush, hush),
+        (Action::Forget, forget),
+        (Action::ToggleVisible, toggle),
+        (Action::ToggleClaudeHook, hook),
+        (Action::Quit, quit),
+    ];
+    Built { menu, items }
 }
 
 /// Un masque stylisé (visage en losange, deux yeux en amande), dessiné à la volée :

@@ -3,7 +3,8 @@
 Compagne de bureau (Capri, *Cyberpunk: Edgerunners* 2) écrite en Rust, 100 % native, pour macOS
 (cible principale, Apple Silicon) et Windows. Projet de fan non commercial. Le README décrit l'état
 du projet et la feuille de route ; jalons 1 (elle flotte) et 2 (le bandeau Claude Code) faits,
-jalon 4 (lui parler) commencé : saisie et bulle en place, pas encore de modèle.
+jalon 4 (lui parler) en cours : saisie, bulle et modèle local (Ollama) en place ; fournisseurs à
+clé, puis voix, à venir.
 
 ## Architecture : où va quoi
 
@@ -13,8 +14,11 @@ jalon 4 (lui parler) commencé : saisie et bulle en place, pas encore de modèle
   lecture de l'entrée des hooks, protocole, suivi des sessions, édition de `settings.json` de
   texte à texte. Avec des tests.
 - `capri-chat` : la conversation, **sans dépendance système ni réseau** : historique borné,
-  réponses en flux, cerveaux. Avec des tests. Le réseau, quand il viendra, vivra dans un crate à
-  part, le seul à en avoir le droit.
+  format des fournisseurs (ce qu'on envoie, comment lire le flux), règles d'adresse, réglages du
+  cerveau, personnalité, nettoyage du Markdown. Avec des tests.
+- `capri-net` : **le seul crate qui parle au réseau** (ureq). Il se connecte et rien d'autre :
+  quoi envoyer et comment lire la réponse est décidé par `capri-chat`. Testé contre un faux
+  serveur local ; aucun test ne sort de la machine.
 - `capri-render` : wgpu, et le tracé du texte du bandeau et de la bulle (cosmic-text, polices du
   système).
   Couleurs prémultipliées de bout en bout.
@@ -51,7 +55,7 @@ précisément quoi vérifier plutôt que de l'affirmer.
 ## Règles
 
 - **API des crates** : wgpu 30, winit 0.30, objc2 0.6 / objc2-app-kit 0.3, windows-sys 0.61,
-  tray-icon 0.26, cosmic-text 0.19. Ces API changent souvent : vérifier dans les sources
+  tray-icon 0.26, cosmic-text 0.19, ureq 3.5 (sans TLS pour l'instant). Ces API changent souvent : vérifier dans les sources
   (`~/.cargo/registry/src`) ou docs.rs, pas de mémoire. Même règle pour Claude Code : le format
   des hooks se vérifie dans sa documentation (<https://code.claude.com/docs/en/hooks>).
 - Chaque bloc `unsafe` a un commentaire `// SAFETY:` qui justifie pourquoi il est sûr.
@@ -66,6 +70,13 @@ précisément quoi vérifier plutôt que de l'affirmer.
   `tools/fetch-assets.sh`, qui vérifie leurs empreintes. Le code les charge au lancement.
   Dans un worktree sans images, utiliser `CAPRI_ASSETS=/chemin/vers/assets`.
 - Aucune télémétrie, rien n'envoyé sur le réseau sans action explicite de l'utilisateur.
+- Le chat : seules la personnalité et la conversation partent vers le modèle, et seulement vers
+  l'adresse que l'utilisateur a choisie. Jamais l'activité de Claude Code. Pas de proxy, aucune
+  redirection suivie. `http://` seulement vers la machine ou un réseau privé : toute adresse
+  passe par `capri_chat::Endpoint`. Ce qui se dit n'est jamais écrit dans le journal.
+- Aucun nom de modèle écrit en dur : il vient de l'utilisateur ou de la liste que donne le
+  serveur. Même règle que pour les API : format et adresses d'un fournisseur se vérifient dans sa
+  documentation, pas de mémoire.
 - Le canal du hook : socket Unix (Windows : named pipe) accessible au seul utilisateur, jamais
   un port TCP sans authentification.
 - `capri-hook` ne doit **jamais gêner Claude Code** : rien sur la sortie standard, toujours le

@@ -58,17 +58,60 @@ Limites connues, qui viennent de ce que Claude Code signale ou non :
   jusqu'à la fin de l'outil en question ;
 - dans un dossier que tu n'as pas encore approuvé, Claude Code retient tous les hooks.
 
-## Jalon 4, premier lot : lui parler
+## Jalon 4 : lui parler
 
 **⌃⌥P** (Ctrl+Alt+P), ou « Parler à Capri » dans son menu, ouvre un champ de saisie sous ses
 pieds. Entrée envoie, Échap ou un clic ailleurs referme, et le clavier revient tout seul à la
 fenêtre où tu étais. Elle répond dans une bulle au-dessus d'elle, qui se remplit mot après mot et
-tourne ses pages au rythme de la lecture.
+tourne ses pages au rythme de la lecture. Le champ de saisie n'existe encore que sur macOS.
 
-Pour l'instant elle n'a **pas de cerveau** : elle répète ce qu'on lui dit. Ce lot met au point la
-saisie et la bulle ; aucun modèle n'est appelé, rien ne part sur le réseau. Les lots suivants
-brancheront un modèle local, puis des fournisseurs à clé. Le champ de saisie n'existe encore que
-sur macOS.
+### Lui donner un cerveau
+
+Sans réglage, elle n'a **pas de cerveau** : elle répète ce qu'on lui dit, et rien ne part sur le
+réseau. Pour qu'elle réponde vraiment, donne-lui un modèle local servi par
+[Ollama](https://ollama.com) : ni compte, ni clé, et la conversation ne quitte pas ta machine.
+
+```bash
+brew install ollama
+ollama serve                              # ou, pour qu'il démarre tout seul : brew services start ollama
+ollama pull <modèle>                      # à choisir sur ollama.com/library, selon ta mémoire
+./target/release/capri chat use ollama    # prend le modèle installé (--model <nom> s'il y en a plusieurs)
+./target/release/capri chat test          # lui parler depuis le terminal
+./target/release/capri chat status        # quel cerveau elle utilise, et s'il répond
+./target/release/capri chat off           # lui retirer son cerveau
+```
+
+Le choix vaut dès ta phrase suivante, sans relancer Capri. Dans son menu, « La faire taire » coupe
+sa réponse (le modèle cesse d'écrire) et « Nouvelle conversation » lui fait oublier ce qui s'est
+dit ; elle garde en mémoire les 24 dernières prises de parole, et rien n'est écrit sur le disque.
+
+Sa personnalité tient en quelques lignes, qui sont les nôtres et pas une citation de la série.
+Pour la changer, écris la tienne dans `persona.md`, dans le dossier de ses réglages (sur macOS,
+`~/Library/Application Support/Capri/`) : `capri chat status` en donne le chemin.
+
+Ce que Capri garantit :
+
+- **seules sa personnalité et la conversation partent vers le modèle** : jamais ce que fait
+  Claude Code, ni rien d'autre de ta machine ;
+- **elle ne parle qu'à l'adresse choisie** : aucun proxy, même si l'environnement en déclare un,
+  et aucune redirection suivie ;
+- **en clair (`http://`), seulement vers cette machine ou un réseau privé** donné par son adresse
+  IP, par exemple `--url http://192.168.1.20:11434/v1` pour un Ollama qui tourne ailleurs chez
+  toi. Toute autre adresse en `http://` est refusée ;
+- **tout est borné** : le temps de connexion, le silence du serveur (deux minutes), la longueur
+  d'une réponse.
+
+Ce qu'il faut savoir :
+
+- pas encore de `https://` : les fournisseurs à clé (OpenRouter, DeepSeek, ProxyAPI, Anthropic)
+  arrivent avec le lot suivant, leurs clés dans le trousseau du système ;
+- Ollama décharge le modèle après quelques minutes sans rien lui demander : la réponse suivante
+  met alors quelques secondes à commencer ;
+- avec un modèle « à réflexion », la bulle reste sur « … » pendant qu'il réfléchit : il n'y a pas
+  encore de réglage pour l'en empêcher ;
+- si tu la fais taire avant son premier mot, la connexion n'est fermée qu'au premier signe du
+  serveur ;
+- un modèle écrit volontiers du Markdown : les signes sont retirés à l'affichage, les mots restent.
 
 ## Installer et lancer
 
@@ -99,7 +142,10 @@ Aucune permission système n'est nécessaire. Pour plus de détails dans le term
 crates/
   capri-core/      logique pure : animation, mouvement, lancer, hit-test, bandeau, parole (testée)
   capri-claude/    logique pure : hooks de Claude Code, protocole, sessions, settings.json (testée)
-  capri-chat/      logique pure : conversation, réponses en flux, cerveau provisoire (testée)
+  capri-chat/      logique pure : conversation, format des fournisseurs, flux de réponse, règles
+                   d'adresse, réglages du cerveau, personnalité (testée)
+  capri-net/       le seul crate qui parle au réseau : envoyer la conversation, lire la réponse
+                   au fil de l'eau (testé contre un faux serveur local)
   capri-render/    rendu wgpu : Metal sur macOS, DirectX 12 + DirectComposition sur Windows
     sprite.wgsl    le shader : boil et copie violette
     banner.rs      le texte du bandeau et de la bulle, tracé avec les polices du système
@@ -113,7 +159,8 @@ crates/
     unix.rs          socket Unix dans un dossier réservé à l'utilisateur
     windows.rs       tube nommé au nom aléatoire
   capri-hook/      le binaire appelé par les hooks de Claude Code
-  capri-app/       l'application : boucle, souris, menus, raccourci, images, bandeau
+  capri-app/       l'application : boucle, souris, menus, raccourci, images, bandeau, bulle,
+                   et les commandes `capri hook` et `capri chat`
 tools/             récupération vérifiée des images
 ```
 
@@ -124,12 +171,17 @@ Règle : tout ce qui peut être testé sans écran va dans `capri-core`, `capri-
 
 Vérifié automatiquement :
 
-- formatage, `clippy -D warnings` et 131 tests sur **macOS Apple Silicon** : animation, lancer et
+- formatage, `clippy -D warnings` et 196 tests sur **macOS Apple Silicon** : animation, lancer et
   rebonds, hit-test, clics, bandeau, parole en pages, bulle sur plusieurs lignes, conversation,
   **validation du shader** par le compilateur de wgpu, lecture
   des exemples de hooks de la documentation de Claude Code, suivi des sessions, aller-retour sur
   `settings.json`, socket (droits, connexions simultanées), et le binaire `capri-hook` lancé pour
   de vrai (sortie standard vide, code 0, durée bornée) ;
+- le chat, sans sortir de la machine : le format des fournisseurs et le flux de réponse coupé à
+  tous les endroits possibles, les adresses acceptées et refusées, le nettoyage du Markdown (ce
+  qui est montré n'est jamais repris), et le client réseau contre un faux serveur local (requête
+  envoyée, arrêt en cours de réponse, refus, redirection jamais suivie, serveur muet, réponse
+  coupée ou sans fin) ;
 - `clippy -D warnings` en compilation croisée pour **Windows x64** et **Linux x64** (le code
   compile, il n'est pas exécuté).
 
@@ -174,9 +226,10 @@ Points à surveiller :
 2. ~~Le hook Claude Code : un petit binaire Rust, une socket Unix réservée à ton utilisateur, et
    un bandeau qui affiche ce que fait Claude~~ ← jalon 2
 3. Elle s'assoit sur tes fenêtres (macOS : CoreGraphics + Accessibilité ; Windows : Win32).
-4. Le chat avec un modèle d'IA : Claude par le binaire `claude` de ton propre abonnement (sans clé
-   d'API, à vérifier contre les conditions d'Anthropic), Ollama, ou une API compatible OpenAI
-   avec ses clés dans le trousseau.
+4. Le chat avec un modèle d'IA : ~~la saisie et la bulle~~, ~~un modèle local par Ollama~~, puis
+   les fournisseurs à clé (OpenRouter, DeepSeek, ProxyAPI, Anthropic) avec leurs clés dans le
+   trousseau, et Capri dans Claude Code pour qui a un abonnement. Ensuite sa voix : ses réponses
+   lues à voix haute, puis lui parler au micro.
 5. App signée et notarisée (`.app` / installeur), mises à jour.
 
 ## Licence

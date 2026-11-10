@@ -54,6 +54,14 @@ impl Conversation {
         }
     }
 
+    /// Oublie la dernière question si elle est restée sans réponse (le cerveau était injoignable,
+    /// par exemple) : reposée, elle ne doit pas arriver en double au modèle.
+    pub fn retract_unanswered(&mut self) {
+        if self.turns.last().is_some_and(|turn| turn.role == Role::User) {
+            self.turns.pop();
+        }
+    }
+
     pub fn clear(&mut self) {
         self.turns.clear();
     }
@@ -95,6 +103,20 @@ mod tests {
         c.push(Role::User, "question 5");
         assert_eq!(roles(&c), "UCU");
         assert_eq!(c.turns()[0].text, "question 4");
+    }
+
+    #[test]
+    fn an_unanswered_question_can_be_taken_back() {
+        let mut c = Conversation::new(10);
+        c.retract_unanswered(); // rien à reprendre
+        c.push(Role::User, "un");
+        c.push(Role::Capri, "réponse");
+        c.retract_unanswered();
+        assert_eq!(roles(&c), "UC", "une question qui a eu sa réponse reste");
+        c.push(Role::User, "deux");
+        c.retract_unanswered();
+        assert_eq!(roles(&c), "UC");
+        assert_eq!(c.turns()[1].text, "réponse");
     }
 
     #[test]

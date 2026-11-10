@@ -16,6 +16,7 @@ capri-chat = { path = "../capri-chat" }
 capri-claude = { path = "../capri-claude" }
 capri-core = { path = "../capri-core" }
 capri-ipc = { path = "../capri-ipc" }
+capri-net = { path = "../capri-net" }
 capri-platform = { path = "../capri-platform" }
 capri-render = { path = "../capri-render" }
 env_logger = "0.11"
@@ -28,6 +29,9 @@ winit = "0.30.13"
 # L'icône de la barre des menus (macOS) / de la zone de notification (Windows).
 [target.'cfg(any(target_os = "macos", windows))'.dependencies]
 tray-icon = "0.26.1"
+
+[dev-dependencies]
+serde_json = "1.0.154"
 
 [lints]
 workspace = true

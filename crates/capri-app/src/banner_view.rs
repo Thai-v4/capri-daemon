@@ -18,6 +18,7 @@ use capri_core::{Banner, Rect, Vec2, place_banner};
 use capri_render::banner::{BannerPainter, BannerStyle};
 use capri_render::{Renderer, SpriteDraw, SpriteImage};
 
+use crate::brain_setup;
 use crate::chat::Chat;
 use crate::claude::Feed;
 
@@ -89,9 +90,12 @@ impl BannerView {
                 Painter::Unavailable
             }
         };
+        let settings = brain_setup::config_dir()
+            .inspect_err(|err| log::warn!("pas de dossier de réglages, donc pas de cerveau : {err:#}"))
+            .ok();
         Self {
             feed: Feed::start(),
-            chat: Chat::new(),
+            chat: Chat::new(settings),
             banner: Banner::new(),
             notice: None,
             painter,
@@ -124,6 +128,20 @@ impl BannerView {
         log::debug!("message de {} caractères", message.chars().count());
         self.chat.say(message);
         self.refresh = true;
+    }
+
+    /// La fait taire : elle arrête de répondre, et sa bulle s'efface.
+    #[cfg(any(target_os = "macos", windows))]
+    pub fn hush(&mut self) {
+        self.chat.hush();
+        self.refresh = true;
+    }
+
+    /// Repart de zéro : elle se tait et oublie la conversation.
+    #[cfg(any(target_os = "macos", windows))]
+    pub fn forget(&mut self) {
+        self.chat.forget();
+        self.notify("C'est oublié, on repart de zéro", Tone::Done);
     }
 
     /// La densité de l'écran a changé : l'image est à retracer.

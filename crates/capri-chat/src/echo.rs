@@ -1,7 +1,8 @@
-//! Le cerveau provisoire : il répète ce qu'on lui dit.
+//! Le cerveau de secours : il répète ce qu'on lui dit.
 //!
-//! Aucun modèle, aucun réseau. Il sert à vérifier la saisie (accents, émojis, longs textes) et la
-//! bulle (remplissage progressif, pages) avant de brancher un vrai fournisseur.
+//! Aucun modèle, aucun réseau : c'est lui qui répond tant qu'aucun cerveau n'a été choisi. Il
+//! sert aussi à vérifier la saisie (accents, émojis, longs textes) et la bulle (remplissage
+//! progressif, pages) sans dépendre d'un fournisseur.
 
 /// Ce que Capri répond à `message` tant qu'elle n'a pas de cerveau.
 pub fn reply_to(message: &str) -> String {
@@ -9,7 +10,10 @@ pub fn reply_to(message: &str) -> String {
     if message.is_empty() {
         return "Tu n'as rien dit.".to_owned();
     }
-    format!("Tu as dit : « {message} ». Je n'ai pas encore de cerveau, alors je répète ce qu'on me dit.")
+    format!(
+        "Tu as dit : « {message} ». Je n'ai pas encore de cerveau, alors je répète. Pour m'en donner un : \
+         capri chat use ollama"
+    )
 }
 
 #[cfg(test)]
