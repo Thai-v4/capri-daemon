@@ -9,6 +9,10 @@
 //!
 //! L'adresse est lue par un analyseur volontairement étroit, qui refuse ce qu'il ne connaît pas
 //! (identifiants dans l'adresse, paramètres, caractères inattendus) plutôt que de deviner.
+//!
+//! Une clé d'API est plus exigeante que la conversation : elle ne part qu'en `https://`, ou en
+//! `http://` vers cette machine même ([`Endpoint::may_carry_secret`]). Jamais en clair sur le
+//! réseau, même privé.
 
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
@@ -27,6 +31,17 @@ pub enum EndpointError {
          partirait en clair"
     )]
     PlainHttpToPublicHost(String),
+}
+
+/// Jusqu'où part ce qu'on envoie à une adresse.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Reach {
+    /// Cette machine : `localhost`, ou une adresse de boucle locale.
+    ThisMachine,
+    /// Un réseau privé, désigné par une adresse IP privée.
+    PrivateNetwork,
+    /// Ailleurs : un nom d'hôte (on ne sait pas où il mène), ou une adresse publique.
+    Internet,
 }
 
 /// Une adresse de base acceptée, par exemple `http://localhost:11434/v1`.
@@ -86,6 +101,24 @@ impl Endpoint {
         format!("{scheme}://{host}{port}{}{resource}", self.path)
     }
 
+    /// Jusqu'où part ce qu'on envoie à cette adresse. Un nom d'hôte autre que `localhost` compte
+    /// pour Internet, même s'il mène chez soi : rien ne le garantit.
+    pub fn reach(&self) -> Reach {
+        if is_this_machine(&self.host) {
+            Reach::ThisMachine
+        } else if is_local_or_private(&self.host) {
+            Reach::PrivateNetwork
+        } else {
+            Reach::Internet
+        }
+    }
+
+    /// Une clé d'API peut-elle partir vers cette adresse ? En `https://`, oui ; en `http://`,
+    /// seulement vers cette machine, où rien ne passe sur le réseau.
+    pub fn may_carry_secret(&self) -> bool {
+        self.secure || self.reach() == Reach::ThisMachine
+    }
+
     /// De quoi désigner le serveur dans un message : `localhost:11434`.
     pub fn display_host(&self) -> String {
         let host = if self.host.contains(':') { format!("[{}]", self.host) } else { self.host.clone() };
@@ -115,6 +148,21 @@ fn split_host_port(authority: &str) -> Result<(String, Option<&str>), EndpointEr
         return Err(EndpointError::Malformed);
     }
     Ok((host.to_ascii_lowercase(), port))
+}
+
+/// Cette machine même : `localhost`, ou une adresse de boucle locale (`127.0.0.0/8`, `::1`, et
+/// `127.x.y.z` écrite en IPv6).
+fn is_this_machine(host: &str) -> bool {
+    if host == "localhost" {
+        return true;
+    }
+    match host.parse::<IpAddr>() {
+        Ok(IpAddr::V4(address)) => address.is_loopback(),
+        Ok(IpAddr::V6(address)) => {
+            address.is_loopback() || address.to_ipv4_mapped().is_some_and(|mapped| mapped.is_loopback())
+        }
+        Err(_) => false,
+    }
 }
 
 /// Cette machine, ou une adresse qui ne sort pas d'un réseau privé ?
@@ -224,6 +272,77 @@ mod tests {
         // en https, la destination est libre
         assert!(ok("https://example.com/v1").secure);
         assert!(ok("https://8.8.8.8").secure);
+    }
+
+    #[test]
+    fn knows_how_far_what_is_sent_goes() {
+        for url in [
+            "http://localhost:11434/v1",
+            "http://127.0.0.1",
+            "http://127.8.9.10:1234",
+            "http://[::1]",
+            "http://[::ffff:127.0.0.1]",
+            "https://localhost:8443",
+        ] {
+            assert_eq!(ok(url).reach(), Reach::ThisMachine, "{url}");
+        }
+        for url in [
+            "http://192.168.1.20:11434/v1",
+            "http://10.0.0.5",
+            "http://100.64.0.1",
+            "http://[fd7a:115c:a1e0::1]",
+            "http://[fe80::1]",
+            "http://169.254.10.10",
+            "https://192.168.1.20",
+        ] {
+            assert_eq!(ok(url).reach(), Reach::PrivateNetwork, "{url}");
+        }
+        for url in [
+            "https://openrouter.ai/api/v1",
+            "https://api.deepseek.com",
+            "https://8.8.8.8",
+            "https://tesseract",
+            "https://tesseract.local",
+            "https://ollama.localhost",
+        ] {
+            assert_eq!(ok(url).reach(), Reach::Internet, "{url} : un nom ne garantit rien");
+        }
+    }
+
+    #[test]
+    fn a_secret_never_travels_in_clear() {
+        // en https, partout
+        for url in [
+            "https://openrouter.ai/api/v1",
+            "https://192.168.1.20:8443/v1",
+            "https://localhost",
+            "https://8.8.8.8",
+        ] {
+            assert!(ok(url).may_carry_secret(), "{url}");
+        }
+        // en http, seulement vers cette machine
+        for url in [
+            "http://localhost:1234/v1",
+            "http://127.0.0.1:11434",
+            "http://127.0.0.2",
+            "http://[::1]:1234",
+            "http://[::ffff:127.0.0.1]:1234",
+        ] {
+            assert!(ok(url).may_carry_secret(), "{url}");
+        }
+        // jamais en clair sur le réseau, même privé
+        for url in [
+            "http://192.168.1.20:11434/v1",
+            "http://10.0.0.5:1234",
+            "http://172.16.0.1",
+            "http://100.64.0.1",
+            "http://169.254.10.10",
+            "http://[fd7a:115c:a1e0::1]:1234",
+            "http://[fe80::1]",
+            "http://[::ffff:192.168.1.20]",
+        ] {
+            assert!(!ok(url).may_carry_secret(), "{url}");
+        }
     }
 
     #[test]

@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, channel};
 use std::time::{Duration, Instant};
 
-use capri_chat::{Brain, Provider, ReplyEvent, Role, Turn};
+use capri_chat::{ApiKey, Brain, Provider, ReplyEvent, Role, Turn};
 use capri_net::{Client, Limits, Problem};
 use serde_json::{Value, json};
 
@@ -160,7 +160,7 @@ fn conversation() -> Vec<Turn> {
 fn ask(client: &Client, brain: &Brain) -> (Vec<ReplyEvent>, Duration) {
     let started = Instant::now();
     let mut events = Vec::new();
-    client.answer(brain, "Tu es Capri.", &conversation(), &AtomicBool::new(false), &mut |event| {
+    client.answer(brain, None, "Tu es Capri.", &conversation(), &AtomicBool::new(false), &mut |event| {
         events.push(event)
     });
     (events, started.elapsed())
@@ -226,7 +226,7 @@ fn she_can_be_cut_off_and_the_server_is_told() {
     let cancelled = AtomicBool::new(false);
     let mut events = Vec::new();
     let started = Instant::now();
-    Client::new().answer(&server.brain(), "", &conversation(), &cancelled, &mut |event| {
+    Client::new().answer(&server.brain(), None, "", &conversation(), &cancelled, &mut |event| {
         events.push(event);
         if events.len() == 3 {
             cancelled.store(true, Ordering::Relaxed);
@@ -257,7 +257,8 @@ fn a_cancel_before_the_first_word_stops_at_the_server_s_first_sign() {
     });
     let mut events = Vec::new();
     let started = Instant::now();
-    Client::new().answer(&server.brain(), "", &conversation(), &cancelled, &mut |event| events.push(event));
+    Client::new()
+        .answer(&server.brain(), None, "", &conversation(), &cancelled, &mut |event| events.push(event));
     assert_eq!(events, [], "rien n'est émis");
     assert!(started.elapsed() < Duration::from_secs(2), "{:?}", started.elapsed());
     assert!(server.wait_for_hang_up());
@@ -286,7 +287,10 @@ fn nobody_listening_is_said_plainly() {
     let (events, elapsed) = ask(&Client::new(), &brain_at(address));
     assert_eq!(events, [failed(&format!("Je n'arrive pas à joindre Ollama ({address}). Il est lancé ?"))]);
     assert!(elapsed < Duration::from_secs(2), "{elapsed:?}");
-    assert_eq!(Client::new().models(brain_at(address).endpoint()), Err(Problem::Unreachable));
+    assert_eq!(
+        Client::new().models(Provider::Ollama, brain_at(address).endpoint(), None),
+        Err(Problem::Unreachable)
+    );
 }
 
 #[test]
@@ -369,7 +373,7 @@ fn https_is_refused_before_any_connection() {
     let (events, elapsed) = ask(&Client::new(), &brain);
     assert_eq!(events, [failed("Je ne sais pas me connecter en https sur ce système.")]);
     assert!(elapsed < Duration::from_millis(500), "aucune tentative : {elapsed:?}");
-    assert_eq!(Client::new().models(brain.endpoint()), Err(Problem::NoTls));
+    assert_eq!(Client::new().models(Provider::Ollama, brain.endpoint(), None), Err(Problem::NoTls));
 }
 
 /// Un serveur qui répond en clair à une adresse en https : la connexion sûre échoue, et rien de
@@ -401,7 +405,7 @@ fn https_never_falls_back_to_plain_text() {
         ))]
     );
     assert!(elapsed < Duration::from_secs(5), "{elapsed:?}");
-    assert_eq!(Client::new().models(brain.endpoint()), Err(Problem::Insecure));
+    assert_eq!(Client::new().models(Provider::Ollama, brain.endpoint(), None), Err(Problem::Insecure));
 
     for _ in 0..2 {
         let bytes = received.recv_timeout(Duration::from_secs(5)).expect("le serveur a été contacté");
@@ -500,21 +504,224 @@ fn a_page_that_is_not_a_stream_is_not_a_reply() {
 fn lists_the_models_the_server_offers() {
     let listing = r#"{"object":"list","data":[{"id":"un-modele:8b","object":"model"},{"id":"un-autre:4b","object":"model"}]}"#;
     let server = serve(vec![Step::Send(plain("200 OK", "application/json", listing))]);
-    let models = Client::new().models(server.brain().endpoint());
+    let models = Client::new().models(Provider::Ollama, server.brain().endpoint(), None);
     assert_eq!(models, Ok(vec!["un-modele:8b".to_owned(), "un-autre:4b".to_owned()]));
     let (head, body) = server.request();
     assert!(head.starts_with("GET /v1/models HTTP/1.1\r\n"), "{head}");
     assert_eq!(body, "");
 
     let server = serve(vec![Step::Send(plain("200 OK", "text/html", "<html>autre chose</html>"))]);
-    assert_eq!(Client::new().models(server.brain().endpoint()), Err(Problem::Unreadable));
+    assert_eq!(
+        Client::new().models(Provider::Ollama, server.brain().endpoint(), None),
+        Err(Problem::Unreadable)
+    );
     let server = serve(vec![Step::Send(plain(
         "500 Internal Server Error",
         "application/json",
         r#"{"error":"en panne"}"#,
     ))]);
     assert_eq!(
-        Client::new().models(server.brain().endpoint()),
+        Client::new().models(Provider::Ollama, server.brain().endpoint(), None),
         Err(Problem::Refused { status: 500, reason: Some("en panne".to_owned()) })
+    );
+}
+
+// --- La clé d'API ---
+
+/// Une clé qui n'existe nulle part ailleurs que dans ces tests.
+const KEY: &str = "sk-test-capri-0123456789abcdef";
+
+fn key() -> ApiKey {
+    ApiKey::parse(KEY).expect("une clé")
+}
+
+/// Un cerveau du fournisseur `provider`, joint sur le faux serveur.
+fn provider_at(provider: Provider, address: SocketAddr) -> Brain {
+    Brain::new(provider, Some(&format!("http://{address}/v1")), "modele-de-test").expect("adresse locale")
+}
+
+/// Pose la question avec cette clé, et rend ce qui a été émis.
+fn ask_with(brain: &Brain, key: Option<&ApiKey>) -> Vec<ReplyEvent> {
+    let mut events = Vec::new();
+    Client::new().answer(
+        brain,
+        key,
+        "Tu es Capri.",
+        &conversation(),
+        &AtomicBool::new(false),
+        &mut |event| events.push(event),
+    );
+    events
+}
+
+fn a_short_reply() -> Vec<Step> {
+    vec![
+        Step::Send(STREAM_HEAD.to_vec()),
+        Step::Send(chunk(&delta("Salut."))),
+        Step::Send(chunk(DONE)),
+        Step::Send(LAST_CHUNK.to_vec()),
+    ]
+}
+
+#[test]
+fn the_key_travels_as_a_bearer_token_in_its_header_and_nowhere_else() {
+    let server = serve(a_short_reply());
+    let brain = provider_at(Provider::OpenRouter, server.address);
+    assert_eq!(ask_with(&brain, Some(&key())), [said("Salut."), ReplyEvent::Done]);
+
+    let (head, body) = server.request();
+    assert_eq!(header(&head, "authorization"), Some(format!("Bearer {KEY}")));
+    assert_eq!(head.matches(KEY).count(), 1, "une seule fois, dans son en-tête : {head}");
+    assert!(!head.to_ascii_lowercase().contains("x-api-key"), "{head}");
+    assert!(!body.contains(KEY), "jamais dans le corps : {body}");
+    // aucun en-tête qui présente l'app au fournisseur
+    for absent in ["http-referer", "referer", "x-title", "x-openrouter-title"] {
+        assert_eq!(header(&head, absent), None, "{head}");
+    }
+}
+
+#[test]
+fn without_a_key_no_authorization_header_is_sent() {
+    // un serveur qui peut se passer de clé, et n'en a pas
+    let server = serve(a_short_reply());
+    assert_eq!(
+        ask_with(&provider_at(Provider::LmStudio, server.address), None),
+        [said("Salut."), ReplyEvent::Done]
+    );
+    let (head, _) = server.request();
+    assert_eq!(header(&head, "authorization"), None, "{head}");
+
+    // Ollama ne prend pas de clé : il n'en reçoit jamais, même si on lui en confie une
+    let server = serve(a_short_reply());
+    assert_eq!(
+        ask_with(&provider_at(Provider::Ollama, server.address), Some(&key())),
+        [said("Salut."), ReplyEvent::Done]
+    );
+    let (head, body) = server.request();
+    assert_eq!(header(&head, "authorization"), None, "{head}");
+    assert!(!head.contains(KEY) && !body.contains(KEY));
+}
+
+#[test]
+fn a_provider_that_needs_a_key_is_not_contacted_without_one() {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("un port libre");
+    listener.set_nonblocking(true).expect("écoute sans attente");
+    let address = listener.local_addr().expect("adresse");
+    for provider in [Provider::OpenRouter, Provider::DeepSeek, Provider::ProxyApi] {
+        let brain = provider_at(provider, address);
+        assert_eq!(
+            ask_with(&brain, None),
+            [failed(&format!(
+                "{} demande une clé, et je n'en ai pas. Pour me la donner : capri chat key {}",
+                provider.name(),
+                provider.id()
+            ))]
+        );
+        assert_eq!(Client::new().models(provider, brain.endpoint(), None), Err(Problem::NoKey));
+    }
+    std::thread::sleep(Duration::from_millis(50));
+    let knocked = listener.accept();
+    assert!(
+        matches!(&knocked, Err(err) if err.kind() == std::io::ErrorKind::WouldBlock),
+        "personne n'a été contacté : {knocked:?}"
+    );
+}
+
+#[test]
+fn a_refused_key_says_how_to_put_it_back_and_never_quotes_it() {
+    // le fournisseur répète la clé dans son refus
+    let error = format!(r#"{{"error":{{"message":"Incorrect API key provided: {KEY}","code":401}}}}"#);
+    let server = serve(vec![Step::Send(plain("401 Unauthorized", "application/json", &error))]);
+    let events = ask_with(&provider_at(Provider::OpenRouter, server.address), Some(&key()));
+    assert_eq!(
+        events,
+        [failed("OpenRouter refuse ma clé (401). Pour la remettre : capri chat key openrouter")]
+    );
+
+    // un 403 est cité, puisqu'il peut dire autre chose qu'une mauvaise clé, mais masqué
+    let error = format!(r#"{{"error":{{"message":"Key {KEY} may not use this model.","code":403}}}}"#);
+    let server = serve(vec![Step::Send(plain("403 Forbidden", "application/json", &error))]);
+    let events = ask_with(&provider_at(Provider::ProxyApi, server.address), Some(&key()));
+    assert_eq!(
+        events,
+        [failed(
+            "ProxyAPI refuse (403) : Key [clé masquée] may not use this model. Si c'est ma clé, pour la remettre : capri chat key proxyapi"
+        )]
+    );
+
+    // même un morceau de la clé ne passe pas, ni dans un refus ordinaire
+    let error = format!(r#"{{"detail":"trop de requêtes pour {}…","code":429}}"#, &KEY[..20]);
+    let server = serve(vec![Step::Send(plain("429 Too Many Requests", "application/json", &error))]);
+    let events = ask_with(&provider_at(Provider::ProxyApi, server.address), Some(&key()));
+    assert_eq!(events, [failed("ProxyAPI refuse (429) : trop de requêtes pour [clé masquée]…")]);
+}
+
+#[test]
+fn a_server_that_wants_a_key_says_so() {
+    let server = serve(vec![Step::Send(plain(
+        "401 Unauthorized",
+        "application/json",
+        r#"{"error":"token required"}"#,
+    ))]);
+    let events = ask_with(&provider_at(Provider::LmStudio, server.address), None);
+    assert_eq!(
+        events,
+        [failed(
+            "LM Studio demande une clé (401) : token required. Pour me la donner : capri chat key lmstudio"
+        )]
+    );
+}
+
+#[test]
+fn a_key_repeated_in_the_middle_of_the_stream_is_masked() {
+    let error = format!("data: {{\"error\":{{\"message\":\"session {KEY} closed\"}}}}\n\n");
+    let server = serve(vec![
+        Step::Send(STREAM_HEAD.to_vec()),
+        Step::Send(chunk(&delta("Je"))),
+        Step::Send(chunk(error.as_bytes())),
+        Step::Send(LAST_CHUNK.to_vec()),
+    ]);
+    let events = ask_with(&provider_at(Provider::DeepSeek, server.address), Some(&key()));
+    assert_eq!(events, [said("Je"), failed("DeepSeek a abandonné : session [clé masquée] closed")]);
+}
+
+#[test]
+fn the_models_are_listed_with_the_key_and_a_refusal_is_explained() {
+    let listing = r#"{"object":"list","data":[{"id":"fournisseur/un-modele","object":"model"}]}"#;
+    let server = serve(vec![Step::Send(plain("200 OK", "application/json", listing))]);
+    let brain = provider_at(Provider::DeepSeek, server.address);
+    assert_eq!(
+        Client::new().models(Provider::DeepSeek, brain.endpoint(), Some(&key())),
+        Ok(vec!["fournisseur/un-modele".to_owned()])
+    );
+    let (head, _) = server.request();
+    assert!(head.starts_with("GET /v1/models HTTP/1.1\r\n"), "{head}");
+    assert_eq!(header(&head, "authorization"), Some(format!("Bearer {KEY}")));
+
+    // la réponse de DeepSeek à une clé refusée : du texte brut, rien à citer
+    let server =
+        serve(vec![Step::Send(plain("401 Unauthorized", "text/plain", "Authentication Fails (governor)"))]);
+    assert_eq!(
+        Client::new().models(Provider::DeepSeek, brain_at(server.address).endpoint(), Some(&key())),
+        Err(Problem::KeyRefused { status: 401, reason: None })
+    );
+}
+
+#[test]
+fn a_redirect_never_takes_the_key_elsewhere() {
+    let elsewhere = TcpListener::bind("127.0.0.1:0").expect("un port libre");
+    elsewhere.set_nonblocking(true).expect("écoute sans attente");
+    let target = elsewhere.local_addr().expect("adresse");
+    let redirect = format!(
+        "HTTP/1.1 308 Permanent Redirect\r\nLocation: http://{target}/v1/chat/completions\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+    );
+    let server = serve(vec![Step::Send(redirect.into_bytes())]);
+    let events = ask_with(&provider_at(Provider::OpenRouter, server.address), Some(&key()));
+    assert_eq!(events, [failed("OpenRouter refuse (308).")]);
+    std::thread::sleep(Duration::from_millis(100));
+    let knocked = elsewhere.accept();
+    assert!(
+        matches!(&knocked, Err(err) if err.kind() == std::io::ErrorKind::WouldBlock),
+        "personne n'a contacté l'autre adresse : {knocked:?}"
     );
 }

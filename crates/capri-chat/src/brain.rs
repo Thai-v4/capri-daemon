@@ -12,20 +12,53 @@ use crate::endpoint::{Endpoint, EndpointError};
 /// Longueur maximale d'un nom de modèle.
 const MAX_MODEL_CHARS: usize = 200;
 
-/// Les fournisseurs que Capri connaît.
+/// Les fournisseurs que Capri connaît. Tous parlent le format « chat completions » d'OpenAI.
+///
+/// Les adresses viennent de la documentation de chacun, relue le 10 novembre 2026 :
+/// - Ollama : <https://docs.ollama.com/api/openai-compatibility> ;
+/// - LM Studio : <https://lmstudio.ai/docs/developer/openai-compat> (sans clé par défaut, mais on
+///   peut lui en demander une : <https://lmstudio.ai/docs/developer/core/authentication>) ;
+/// - OpenRouter : <https://openrouter.ai/docs/api-reference/authentication> ;
+/// - DeepSeek : <https://api-docs.deepseek.com> ;
+/// - ProxyAPI : <https://proxyapi.ru/docs/api-overview> (l'adresse unique ; les anciennes, par
+///   fournisseur, ferment le 1er février 2027 d'après <https://proxyapi.ru/docs/migration>).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Provider {
     /// Ollama, sur cette machine ou sur le réseau privé : aucun compte, aucune clé.
     Ollama,
+    /// LM Studio, sur cette machine : sans clé, sauf si on lui en a demandé une.
+    LmStudio,
+    OpenRouter,
+    DeepSeek,
+    ProxyApi,
+    /// Un autre serveur compatible, dont l'utilisateur donne l'adresse.
+    Custom,
+}
+
+/// Ce qu'un fournisseur demande comme clé.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum KeyNeed {
+    /// Il n'en prend pas : aucune n'est jamais envoyée.
+    None,
+    /// Il peut en demander une, selon ses réglages.
+    Optional,
+    /// Il n'accepte rien sans elle.
+    Required,
 }
 
 impl Provider {
-    pub const ALL: [Self; 1] = [Self::Ollama];
+    pub const ALL: [Self; 6] =
+        [Self::Ollama, Self::LmStudio, Self::OpenRouter, Self::DeepSeek, Self::ProxyApi, Self::Custom];
 
     /// Le nom écrit dans le fichier de réglages et tapé en ligne de commande.
     pub fn id(self) -> &'static str {
         match self {
             Self::Ollama => "ollama",
+            Self::LmStudio => "lmstudio",
+            Self::OpenRouter => "openrouter",
+            Self::DeepSeek => "deepseek",
+            Self::ProxyApi => "proxyapi",
+            Self::Custom => "custom",
         }
     }
 
@@ -33,13 +66,31 @@ impl Provider {
     pub fn name(self) -> &'static str {
         match self {
             Self::Ollama => "Ollama",
+            Self::LmStudio => "LM Studio",
+            Self::OpenRouter => "OpenRouter",
+            Self::DeepSeek => "DeepSeek",
+            Self::ProxyApi => "ProxyAPI",
+            Self::Custom => "Serveur personnalisé",
         }
     }
 
-    /// L'adresse de base quand l'utilisateur n'en donne pas.
-    pub fn default_url(self) -> &'static str {
+    /// L'adresse de base quand l'utilisateur n'en donne pas. `None` : il doit la donner.
+    pub fn default_url(self) -> Option<&'static str> {
         match self {
-            Self::Ollama => "http://localhost:11434/v1",
+            Self::Ollama => Some("http://localhost:11434/v1"),
+            Self::LmStudio => Some("http://localhost:1234/v1"),
+            Self::OpenRouter => Some("https://openrouter.ai/api/v1"),
+            Self::DeepSeek => Some("https://api.deepseek.com"),
+            Self::ProxyApi => Some("https://api.proxyapi.ru/v1"),
+            Self::Custom => None,
+        }
+    }
+
+    pub fn key_need(self) -> KeyNeed {
+        match self {
+            Self::Ollama => KeyNeed::None,
+            Self::LmStudio | Self::Custom => KeyNeed::Optional,
+            Self::OpenRouter | Self::DeepSeek | Self::ProxyApi => KeyNeed::Required,
         }
     }
 
@@ -58,6 +109,8 @@ pub enum BrainError {
     UnknownProvider(String),
     #[error("adresse refusée : {0}")]
     Endpoint(#[from] EndpointError),
+    #[error("ce fournisseur n'a pas d'adresse habituelle : il faut la donner")]
+    MissingUrl,
     #[error("le nom du modèle est vide, trop long, ou contient des espaces")]
     Model,
 }
@@ -73,7 +126,8 @@ pub struct Brain {
 impl Brain {
     /// `base_url` : `None` pour l'adresse habituelle du fournisseur.
     pub fn new(provider: Provider, base_url: Option<&str>, model: &str) -> Result<Self, BrainError> {
-        let endpoint = Endpoint::parse(base_url.unwrap_or(provider.default_url()).trim())?;
+        let base_url = base_url.or(provider.default_url()).ok_or(BrainError::MissingUrl)?;
+        let endpoint = Endpoint::parse(base_url.trim())?;
         let model = model.trim();
         let model_is_plain = !model.is_empty()
             && model.chars().count() <= MAX_MODEL_CHARS
@@ -190,8 +244,50 @@ mod tests {
     fn every_provider_has_a_usable_default_address() {
         for provider in Provider::ALL {
             assert_eq!(Provider::from_id(provider.id()), Some(provider));
-            assert!(Endpoint::parse(provider.default_url()).is_ok(), "{}", provider.name());
+            if let Some(url) = provider.default_url() {
+                let endpoint =
+                    Endpoint::parse(url).unwrap_or_else(|err| panic!("{} : {err}", provider.name()));
+                if provider.key_need() == KeyNeed::Required {
+                    assert!(endpoint.secure, "{} : une clé ne part qu'en https", provider.name());
+                }
+            }
         }
         assert_eq!(Provider::from_id("Ollama"), None, "l'identifiant s'écrit en minuscules");
+        assert_eq!(Provider::from_id(""), None);
+    }
+
+    #[test]
+    fn each_provider_says_where_it_lives_and_what_key_it_needs() {
+        let url = |provider: Provider| Brain::new(provider, None, "m").map(|brain| brain.endpoint().url(""));
+        assert_eq!(url(Provider::Ollama).as_deref(), Ok("http://localhost:11434/v1"));
+        assert_eq!(url(Provider::LmStudio).as_deref(), Ok("http://localhost:1234/v1"));
+        assert_eq!(url(Provider::OpenRouter).as_deref(), Ok("https://openrouter.ai/api/v1"));
+        assert_eq!(url(Provider::DeepSeek).as_deref(), Ok("https://api.deepseek.com"));
+        assert_eq!(url(Provider::ProxyApi).as_deref(), Ok("https://api.proxyapi.ru/v1"));
+        assert_eq!(url(Provider::Custom), Err(BrainError::MissingUrl), "son adresse est à donner");
+
+        let need = |id: &str| Provider::from_id(id).map(Provider::key_need);
+        assert_eq!(need("ollama"), Some(KeyNeed::None));
+        assert_eq!(need("lmstudio"), Some(KeyNeed::Optional));
+        assert_eq!(need("custom"), Some(KeyNeed::Optional));
+        for id in ["openrouter", "deepseek", "proxyapi"] {
+            assert_eq!(need(id), Some(KeyNeed::Required), "{id}");
+        }
+    }
+
+    #[test]
+    fn a_custom_server_is_written_with_its_address() {
+        let brain = Brain::new(Provider::Custom, Some("https://llm.example.com/v1"), "m").expect("valide");
+        let text = brain.to_json();
+        assert!(
+            text.contains("\"provider\": \"custom\"") && text.contains("https://llm.example.com/v1"),
+            "{text}"
+        );
+        assert_eq!(Brain::from_json(&text), Ok(brain));
+        // pas d'adresse dans le fichier : il est refusé, comme pour les autres
+        assert_eq!(
+            Brain::from_json(r#"{"provider":"custom","model":"m"}"#),
+            Err(BrainError::Missing("base_url"))
+        );
     }
 }

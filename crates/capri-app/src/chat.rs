@@ -310,8 +310,9 @@ fn think(
     log::debug!("réponse demandée à {} ({})", setup.brain.model(), setup.brain.provider().name());
     // un modèle écrit volontiers du Markdown, qui n'a aucun sens dans une bulle ni à voix haute
     let mut plain = PlainStream::new();
-    client
-        .answer(&setup.brain, &setup.persona, turns, cancelled, &mut |event| plain.filter(event, &mut emit));
+    client.answer(&setup.brain, None, &setup.persona, turns, cancelled, &mut |event| {
+        plain.filter(event, &mut emit)
+    });
 }
 
 /// Le cerveau de secours : il répète le dernier message, mot à mot.

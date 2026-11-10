@@ -77,8 +77,15 @@ pub fn interpret(data: &str) -> Piece {
 
 /// Le message d'erreur que porte un corps de réponse, s'il en porte un. Sert pour un refus
 /// (réponse 4xx ou 5xx) comme pour un abandon en plein flux.
+///
+/// En plus des deux formes de [`interpret`], un refus peut prendre la forme `{"detail": "…"}` :
+/// c'est celle des vérifications propres à ProxyAPI (<https://proxyapi.ru/docs/errors>).
 pub fn error_message(body: &str) -> Option<String> {
-    error_in(&serde_json::from_str::<Value>(body.trim()).ok()?)
+    let value = serde_json::from_str::<Value>(body.trim()).ok()?;
+    error_in(&value).or_else(|| {
+        let detail = value.get("detail")?.as_str()?.trim();
+        Some(if detail.is_empty() { "erreur sans explication".to_owned() } else { detail.to_owned() })
+    })
 }
 
 /// Les noms des modèles que liste la réponse à `GET /models`.
@@ -250,9 +257,29 @@ mod tests {
             Some("model is required")
         );
         assert_eq!(error_message(r#"{"error":{"code":429}}"#).as_deref(), Some("erreur sans explication"));
-        for body in
-            ["", "<html>502 Bad Gateway</html>", "{}", r#"{"error":null}"#, r#"{"message":"ailleurs"}"#]
-        {
+        // OpenRouter, sans clé (forme relevée le 10 novembre 2026)
+        assert_eq!(
+            error_message(r#"{"error":{"message":"No cookie auth credentials found","code":401}}"#)
+                .as_deref(),
+            Some("No cookie auth credentials found")
+        );
+        // ProxyAPI, quand ses propres vérifications refusent (forme relevée le 10 novembre 2026)
+        assert_eq!(error_message(r#"{"detail":"Invalid API Key"}"#).as_deref(), Some("Invalid API Key"));
+        assert_eq!(error_message(r#"{"detail":" "}"#).as_deref(), Some("erreur sans explication"));
+        assert_eq!(
+            error_message(r#"{"detail":[{"loc":["body"]}]}"#),
+            None,
+            "un détail qui n'est pas un texte"
+        );
+        // DeepSeek répond en texte brut quand la clé manque : rien à citer
+        for body in [
+            "",
+            "<html>502 Bad Gateway</html>",
+            "Authentication Fails (governor)",
+            "{}",
+            r#"{"error":null}"#,
+            r#"{"message":"ailleurs"}"#,
+        ] {
             assert_eq!(error_message(body), None, "{body:?}");
         }
     }

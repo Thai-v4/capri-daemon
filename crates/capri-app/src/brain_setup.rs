@@ -205,7 +205,7 @@ fn status() -> Result<()> {
         ),
         Err(err) => println!("persona  : par défaut, car {err:#}"),
     }
-    match Client::new().models(endpoint) {
+    match Client::new().models(brain.provider(), endpoint, None) {
         Ok(models) if has_model(&models, brain.model()) => {
             println!("serveur  : répond, et le modèle est là");
         }
@@ -224,10 +224,10 @@ fn status() -> Result<()> {
 
 /// Choisit un cerveau, après avoir vérifié auprès du serveur que le modèle existe.
 fn choose(provider: Provider, model: Option<&str>, url: Option<&str>) -> Result<()> {
-    let endpoint =
-        Endpoint::parse(url.unwrap_or(provider.default_url()).trim()).context("adresse refusée")?;
+    let url = url.or(provider.default_url()).context("il faut donner son adresse : --url <adresse>")?;
+    let endpoint = Endpoint::parse(url.trim()).context("adresse refusée")?;
     let models = Client::new()
-        .models(&endpoint)
+        .models(provider, &endpoint, None)
         .map_err(|problem| anyhow!("{}\n{}", problem.explain(provider, &endpoint), how_to_start(provider)))?;
     let model = match model {
         Some(model) if has_model(&models, model) => model,
@@ -276,7 +276,7 @@ fn test(message: &str) -> Result<()> {
     let mut failure = None;
     // le même nettoyage que pour sa bulle : on voit ici ce qu'elle dirait
     let mut plain = PlainStream::new();
-    Client::new().answer(&setup.brain, &setup.persona, &turns, &AtomicBool::new(false), &mut |event| {
+    Client::new().answer(&setup.brain, None, &setup.persona, &turns, &AtomicBool::new(false), &mut |event| {
         plain.filter(event, &mut |event| match event {
             ReplyEvent::Delta(text) => {
                 first_word.get_or_insert_with(|| started.elapsed());
@@ -328,6 +328,10 @@ fn installed(models: &[String]) -> String {
 fn how_to_get(provider: Provider, model: &str) -> String {
     match provider {
         Provider::Ollama => format!("Pour le télécharger : ollama pull {model}"),
+        Provider::LmStudio => {
+            "Pour en installer un : dans LM Studio, onglet de recherche des modèles".to_owned()
+        }
+        _ => format!("Choisis-en un que {} propose.", provider.name()),
     }
 }
 
@@ -336,6 +340,8 @@ fn how_to_start(provider: Provider) -> &'static str {
         Provider::Ollama => {
             "Pour le lancer : ollama serve (ou, pour qu'il démarre tout seul : brew services start ollama)"
         }
+        Provider::LmStudio => "Pour le lancer : dans LM Studio, démarre son serveur local.",
+        _ => "",
     }
 }
 
