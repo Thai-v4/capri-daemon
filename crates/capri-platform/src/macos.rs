@@ -11,6 +11,9 @@ pub fn configure_event_loop<T: 'static>(builder: &mut EventLoopBuilder<T>) {
     // Une app « accessoire » : pas d'icône dans le Dock, pas de menu d'app, comme un utilitaire
     // de barre des menus.
     builder.with_activation_policy(ActivationPolicy::Accessory);
+    // Par défaut, winit fait passer l'app au premier plan à son lancement : Capri prendrait le
+    // clavier à l'app en cours rien qu'en démarrant.
+    builder.with_activate_ignoring_other_apps(false);
 }
 
 pub fn overlay_attributes(attrs: WindowAttributes) -> WindowAttributes {
