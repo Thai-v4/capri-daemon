@@ -4,8 +4,9 @@
 //! La plus importante est [`destination`] : où part ce qu'on dit à Capri. Elle doit être vraie,
 //! quitte à prévenir pour rien : dans le doute, elle dit que ça sort de la machine.
 
-use crate::brain::Provider;
+use crate::brain::{Brain, Provider};
 use crate::endpoint::{Endpoint, Reach};
+use crate::key::KeyError;
 
 /// Ce qui ne part jamais, quel que soit le cerveau.
 const NOTHING_ELSE: &str = "Rien d'autre de ta machine : ni ce que fait Claude Code, ni tes fichiers.";
@@ -74,6 +75,68 @@ pub fn destination(provider: Provider, endpoint: &Endpoint, model: Option<&str>)
             )
         }
     }
+}
+
+/// La phrase d'essai, quand on n'en donne pas.
+pub const TEST_QUESTION: &str = "Présente-toi en une phrase.";
+
+/// Sans cerveau.
+pub const NO_BRAIN: &str =
+    "Capri n'a pas de cerveau : elle répète ce qu'on lui dit, et rien ne sort de ta machine.";
+
+/// Le cerveau qu'elle vient de prendre : « Capri pense maintenant avec m (Ollama, localhost:11434). »
+pub fn thinks_now_with(brain: &Brain) -> String {
+    format!(
+        "Capri pense maintenant avec {} ({}, {}).",
+        brain.model(),
+        brain.provider().name(),
+        brain.endpoint().display_host()
+    )
+}
+
+/// La clé vient d'être rangée.
+pub fn key_stored(provider: Provider, keychain: &str, address: &str) -> String {
+    format!(
+        "Clé {} rangée dans {keychain}, pour {address} seulement : elle ne partira vers aucune autre adresse, \
+         et n'est écrite nulle part ailleurs.",
+        of_provider(provider)
+    )
+}
+
+/// La clé vient d'être retirée, ou il n'y en avait pas.
+pub fn key_forgotten(provider: Provider, keychain: &str, address: &str, was_there: bool) -> String {
+    let of = of_provider(provider);
+    if was_there {
+        format!("Clé {of} pour {address} retirée : elle n'est plus dans {keychain}.")
+    } else {
+        format!("Il n'y avait pas de clé {of} pour {address} dans {keychain}.")
+    }
+}
+
+/// Une clé rangée sans adresse par une version précédente vient d'être retirée ; `too` : en même
+/// temps que celle de l'adresse.
+pub fn legacy_key_removed(provider: Provider, too: bool) -> String {
+    format!(
+        "L'ancienne clé {}, rangée sans adresse par une version précédente de Capri, est retirée{}.",
+        of_provider(provider),
+        if too { " aussi" } else { "" }
+    )
+}
+
+/// Ce qui a été donné n'est pas une clé : on ne le répète pas.
+pub fn not_a_key(error: KeyError) -> String {
+    match error {
+        KeyError::Empty => "aucune clé lue : rien n'est changé".to_owned(),
+        error => format!("ce n'est pas une clé ({error}) : rien n'est changé"),
+    }
+}
+
+/// Aucune clé n'est rangée pour une adresse jointe en clair sur le réseau : elle n'y partirait
+/// jamais.
+pub fn no_key_in_clear(address: &str) -> String {
+    format!(
+        "une clé ne part jamais en clair sur le réseau, et {address} n'est joint qu'en http : Capri ne la range pas."
+    )
 }
 
 #[cfg(test)]

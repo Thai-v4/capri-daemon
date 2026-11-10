@@ -8,18 +8,14 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
-use capri_chat::voice::{VoiceInfo, VoiceSettings, pick, speakable};
+use capri_chat::voice::{
+    BETTER_VOICES, LANGUAGE, TEST_SENTENCE, VoiceInfo, VoiceSettings, describe, french, pick, speakable,
+};
 use capri_platform::Voice;
 
 use crate::brain_setup::{config_dir, read_text, write_file};
 
 const VOICE_FILE: &str = "voice.json";
-/// La langue dans laquelle Capri parle.
-const LANGUAGE: &str = "fr";
-const TEST_SENTENCE: &str = "Salut, c'est Capri. Tu m'entends bien ?";
-/// Où télécharger de meilleures voix (libellés de macOS 27).
-const BETTER_VOICES: &str = "Pour une voix plus naturelle : Réglages Système > Accessibilité > Lire et énoncer > \
-                             Voix système, et télécharge une voix française de meilleure qualité.";
 
 const USAGE: &str = "\
 usage : capri voice status            si elle parle à voix haute, et avec quelle voix
@@ -124,9 +120,7 @@ fn list() -> Result<()> {
     let settings = load(&config_dir()?)?;
     let voices = installed();
     let chosen = pick(&voices, LANGUAGE, settings.voice.as_deref()).map(|voice| voice.id.clone());
-    let mut french: Vec<&VoiceInfo> =
-        voices.iter().filter(|voice| pick(std::slice::from_ref(voice), LANGUAGE, None).is_some()).collect();
-    french.sort_by(|a, b| (b.quality, &a.name, &a.language).cmp(&(a.quality, &b.name, &b.language)));
+    let french = french(&voices);
     if french.is_empty() {
         println!("Aucune voix française n'est installée. {BETTER_VOICES}");
         return Ok(());
@@ -194,16 +188,6 @@ fn test(sentence: &str) -> Result<()> {
     Ok(())
 }
 
-fn describe(voice: &VoiceInfo) -> String {
-    let quality = match voice.quality {
-        3.. => "qualité supérieure",
-        2 => "qualité améliorée",
-        _ => "qualité de base",
-    };
-    let gender = if voice.female { "voix de femme" } else { "autre voix" };
-    format!("{} [{}, {gender}, {quality}] {}", voice.name, voice.language, voice.id)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -227,17 +211,5 @@ mod tests {
         let error = format!("{:#}", load(&directory).expect_err("illisible"));
         assert!(error.contains("réglages illisibles") && error.contains("voice.json"), "{error}");
         let _ = std::fs::remove_dir_all(directory);
-    }
-
-    #[test]
-    fn a_voice_is_described_in_one_line() {
-        let voice = VoiceInfo {
-            id: "com.exemple.voix".to_owned(),
-            name: "Amélie".to_owned(),
-            language: "fr-CA".to_owned(),
-            quality: 1,
-            female: true,
-        };
-        assert_eq!(describe(&voice), "Amélie [fr-CA, voix de femme, qualité de base] com.exemple.voix");
     }
 }

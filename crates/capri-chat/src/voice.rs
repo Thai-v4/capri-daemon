@@ -31,6 +31,40 @@ impl VoiceInfo {
     }
 }
 
+/// La langue dans laquelle Capri parle.
+pub const LANGUAGE: &str = "fr";
+/// Ce qu'elle dit quand on veut l'écouter.
+pub const TEST_SENTENCE: &str = "Salut, c'est Capri. Tu m'entends bien ?";
+/// Où télécharger de meilleures voix (libellés de macOS 27).
+pub const BETTER_VOICES: &str = "Pour une voix plus naturelle : Réglages Système > Accessibilité > Lire et énoncer \
+                                 > Voix système, et télécharge une voix française de meilleure qualité.";
+
+/// Une voix en une ligne : « Amélie [fr-CA, voix de femme, qualité de base] com.exemple.voix ».
+pub fn describe(voice: &VoiceInfo) -> String {
+    format!("{} [{}, {}, {}] {}", voice.name, voice.language, gender(voice), quality(voice), voice.id)
+}
+
+/// « qualité de base », « qualité améliorée », « qualité supérieure ».
+pub fn quality(voice: &VoiceInfo) -> &'static str {
+    match voice.quality {
+        3.. => "qualité supérieure",
+        2 => "qualité améliorée",
+        _ => "qualité de base",
+    }
+}
+
+fn gender(voice: &VoiceInfo) -> &'static str {
+    if voice.female { "voix de femme" } else { "autre voix" }
+}
+
+/// Les voix de la langue de Capri, de la meilleure qualité à la moins bonne, puis par nom.
+pub fn french(voices: &[VoiceInfo]) -> Vec<&VoiceInfo> {
+    let mut french: Vec<&VoiceInfo> =
+        voices.iter().filter(|voice| pick(std::slice::from_ref(voice), LANGUAGE, None).is_some()).collect();
+    french.sort_by(|a, b| (b.quality, &a.name, &a.language).cmp(&(a.quality, &b.name, &b.language)));
+    french
+}
+
 /// La voix à utiliser pour la langue `language` (`fr`), parmi `voices`.
 ///
 /// `wanted` est le choix de l'utilisateur, par identifiant ou par nom : il l'emporte s'il existe
@@ -200,6 +234,17 @@ mod tests {
             voice("com.apple.voice.compact.fr-CA.Amelie", "Amélie", "fr-CA", 1, true),
             voice("com.apple.speech.synthesis.voice.Zarvox", "Zarvox", "fr-FR", 1, true),
         ]
+    }
+
+    #[test]
+    fn a_voice_is_described_in_one_line_and_french_ones_come_best_first() {
+        let amelie = voice("com.exemple.voix", "Amélie", "fr-CA", 1, true);
+        assert_eq!(describe(&amelie), "Amélie [fr-CA, voix de femme, qualité de base] com.exemple.voix");
+        let mut voices = system_voices();
+        voices.push(voice("com.apple.voice.premium.fr-FR.Audrey", "Audrey", "fr-FR", 3, true));
+        let names: Vec<&str> = french(&voices).iter().map(|voice| voice.name.as_str()).collect();
+        assert_eq!(names, ["Audrey", "Amélie", "Flo", "Grandma", "Thomas", "Zarvox"], "sans Samantha");
+        assert_eq!(quality(&voices[6]), "qualité supérieure");
     }
 
     #[test]

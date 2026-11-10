@@ -197,9 +197,53 @@ impl Brain {
     }
 }
 
+/// Le nombre de modèles montrés au plus quand on en cherche un : un fournisseur distant en
+/// propose des centaines.
+pub const MAX_LISTED_MODELS: usize = 30;
+
+/// Le serveur a-t-il ce modèle ? Un nom sans étiquette désigne `:latest`, comme pour Ollama.
+pub fn has_model(models: &[String], model: &str) -> bool {
+    models.iter().any(|known| known == model || (!model.contains(':') && *known == format!("{model}:latest")))
+}
+
+/// Les noms que l'on peut afficher sans risque : un nom venu du serveur qui contiendrait des
+/// caractères de contrôle (de quoi piloter le terminal) est laissé de côté.
+pub fn printable(models: &[String]) -> impl Iterator<Item = &String> {
+    models.iter().filter(|model| !model.chars().any(char::is_control))
+}
+
+/// Les modèles affichables dont le nom contient `word` (sans tenir compte de la casse ; tous si
+/// `word` est vide), dans l'ordre alphabétique.
+pub fn search_models<'a>(models: &'a [String], word: &str) -> Vec<&'a String> {
+    let word = word.trim().to_lowercase();
+    let mut found: Vec<&String> =
+        printable(models).filter(|model| word.is_empty() || model.to_lowercase().contains(&word)).collect();
+    found.sort();
+    found
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_model_without_a_tag_means_latest() {
+        let models = ["un:8b".to_owned(), "deux:latest".to_owned()];
+        assert!(has_model(&models, "un:8b"));
+        assert!(has_model(&models, "deux") && has_model(&models, "deux:latest"));
+        assert!(!has_model(&models, "un") && !has_model(&models, "un:4b") && !has_model(&models, "trois"));
+    }
+
+    #[test]
+    fn models_are_searched_in_order_and_unprintable_names_are_left_out() {
+        let models: Vec<String> = ["labo/b", "Labo/A", "autre/chose", "piege/\u{1b}[31mlabo"]
+            .iter()
+            .map(|m| (*m).to_owned())
+            .collect();
+        assert_eq!(search_models(&models, "  LABO "), ["Labo/A", "labo/b"]);
+        assert_eq!(search_models(&models, ""), ["Labo/A", "autre/chose", "labo/b"]);
+        assert!(search_models(&models, "introuvable").is_empty());
+    }
 
     #[test]
     fn a_brain_survives_being_written_and_read_back() {

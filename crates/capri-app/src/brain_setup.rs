@@ -15,14 +15,18 @@
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, anyhow, bail};
-use capri_chat::phrases::{destination, of_provider, server};
+use capri_chat::brain::{MAX_LISTED_MODELS, has_model, printable, search_models};
+use capri_chat::phrases::{
+    NO_BRAIN, TEST_QUESTION, destination, key_forgotten, key_stored, legacy_key_removed, no_key_in_clear,
+    not_a_key, of_provider, server, thinks_now_with,
+};
 use capri_chat::plain::PlainStream;
 use capri_chat::{
-    ApiKey, BoundKey, Brain, Endpoint, KeyAccount, KeyError, KeyNeed, Provider, Reach, ReplyEvent, Role,
-    Turn, key, persona,
+    ApiKey, BoundKey, Brain, Endpoint, KeyAccount, KeyNeed, Provider, Reach, ReplyEvent, Role, Turn, key,
+    persona,
 };
 use capri_net::{Client, Problem};
 
@@ -30,11 +34,6 @@ use crate::keys::{self, KeyStore, SystemKeychain};
 
 const BRAIN_FILE: &str = "chat.json";
 const PERSONA_FILE: &str = "persona.md";
-/// La question de `capri chat test` quand on n'en donne pas.
-const TEST_QUESTION: &str = "Présente-toi en une phrase.";
-
-/// Le nombre de modèles montrés au plus par `capri chat models`.
-const MAX_LISTED: usize = 30;
 
 const USAGE: &str = "\
 usage : capri chat status                  quel cerveau Capri utilise, et où part ce qu'on lui dit
@@ -92,7 +91,7 @@ pub fn load(directory: &Path) -> Result<Option<Setup>> {
 
 /// La personnalité à utiliser. Un fichier `persona.md` illisible ou trop long ne fait pas taire
 /// Capri : elle garde sa personnalité par défaut, et le journal dit pourquoi.
-fn load_persona(directory: &Path) -> String {
+pub fn load_persona(directory: &Path) -> String {
     match custom_persona(directory) {
         Ok(Some(text)) => text,
         Ok(None) => persona::DEFAULT.to_owned(),
@@ -287,10 +286,7 @@ impl Cli<'_> {
     fn status(&mut self) -> Result<()> {
         writeln!(self.out, "réglages : {}", self.directory.join(BRAIN_FILE).display())?;
         let Some(setup) = load(&self.directory)? else {
-            writeln!(
-                self.out,
-                "Capri n'a pas de cerveau : elle répète ce qu'on lui dit, et rien ne sort de ta machine."
-            )?;
+            writeln!(self.out, "{NO_BRAIN}")?;
             writeln!(
                 self.out,
                 "Pour lui en donner un : capri chat use ollama (ou un autre fournisseur : capri chat)"
@@ -424,27 +420,17 @@ impl Cli<'_> {
     fn choose(&mut self, provider: Provider, model: Option<&str>, url: Option<&str>) -> Result<()> {
         let endpoint = endpoint_for(provider, url)?;
         let chosen = self.chosen();
-        let key = key_for_server(self.keys, provider, &endpoint, chosen.as_ref())?;
-        let models = self.client.models(provider, &endpoint, key.as_ref()).map_err(|problem| {
-            let hint = how_to_fix(provider, &problem).map(|hint| format!("\n{hint}")).unwrap_or_default();
-            anyhow!("{}{hint}", problem.explain(provider, &endpoint, chosen.as_ref()))
-        })?;
-        let model = pick_model(provider, &endpoint, &models, model)?;
+        let listed = list_models(self.keys, &self.client, provider, &endpoint, chosen.as_ref())?;
+        let model = pick_model(provider, &endpoint, &listed.models, model)?;
         let brain = Brain::new(provider, Some(&endpoint.url("")), &model)?;
         let file = save(&self.directory, &brain)?;
-        writeln!(
-            self.out,
-            "Capri pense maintenant avec {} ({}, {}).",
-            brain.model(),
-            provider.name(),
-            endpoint.display_host()
-        )?;
+        writeln!(self.out, "{}", thinks_now_with(&brain))?;
         writeln!(self.out, "{}", destination(provider, &endpoint, Some(brain.model())))?;
-        if let Some(key) = &key {
+        if listed.with_key {
             writeln!(
                 self.out,
                 "Sa clé, rangée pour {}, est lue dans {} à chaque message, et n'est écrite nulle part ailleurs.",
-                key.account().address(),
+                KeyAccount::new(provider, &endpoint).address(),
                 self.keys.name()
             )?;
         }
@@ -494,49 +480,31 @@ impl Cli<'_> {
         };
         let account = KeyAccount::new(provider, &endpoint);
         let (keychain, address) = (self.keys.name().to_owned(), account.address());
-        let legacy = key::legacy_account(provider);
 
         if forget {
-            if self.keys.forget(&account.name())? {
-                writeln!(self.out, "Clé {of} pour {address} retirée : elle n'est plus dans {keychain}.")?;
-            } else {
-                writeln!(self.out, "Il n'y avait pas de clé {of} pour {address} dans {keychain}.")?;
-            }
-            if self.keys.forget(legacy)? {
-                writeln!(
-                    self.out,
-                    "L'ancienne clé {of}, rangée sans adresse par une version précédente de Capri, est retirée aussi."
-                )?;
+            let forgotten = keys::forget(self.keys, &account)?;
+            writeln!(self.out, "{}", key_forgotten(provider, &keychain, address, forgotten.key))?;
+            if forgotten.legacy {
+                writeln!(self.out, "{}", legacy_key_removed(provider, true))?;
             }
             return Ok(());
         }
         // inutile de demander une clé qui ne pourrait jamais partir
         if !endpoint.may_carry_secret() {
             bail!(
-                "une clé ne part jamais en clair sur le réseau, et {address} n'est joint qu'en http : Capri ne la \
-                 range pas. Il faut une adresse en https (capri chat key {id} --url https://…)."
+                "{} Il faut une adresse en https (capri chat key {id} --url https://…).",
+                no_key_in_clear(address)
             );
         }
         let prompt = format!("Clé d'API {of} pour {address} (elle ne s'affiche pas pendant la frappe) : ");
-        let key = match ApiKey::parse(&(self.read_key)(&prompt)?) {
-            Ok(key) => key,
-            Err(KeyError::Empty) => bail!("aucune clé lue : rien n'est changé"),
-            Err(err) => bail!("ce n'est pas une clé ({err}) : rien n'est changé"),
-        };
-        self.keys.save(&account, &key)?;
-        writeln!(
-            self.out,
-            "Clé {of} rangée dans {keychain}, pour {address} seulement : elle ne partira vers aucune autre \
-             adresse, et n'est écrite nulle part ailleurs."
-        )?;
+        let key = ApiKey::parse(&(self.read_key)(&prompt)?).map_err(|err| anyhow!(not_a_key(err)))?;
+        let legacy = keys::store(self.keys, &account, &key)?;
+        writeln!(self.out, "{}", key_stored(provider, &keychain, address))?;
         // l'ancienne clé sans adresse est remplacée par celle-ci : elle n'aurait plus jamais servi
-        match self.keys.forget(legacy) {
-            Ok(true) => writeln!(
-                self.out,
-                "L'ancienne clé {of}, rangée sans adresse par une version précédente de Capri, est retirée."
-            )?,
-            Ok(false) => {}
-            Err(err) => writeln!(
+        match legacy {
+            keys::Legacy::Removed => writeln!(self.out, "{}", legacy_key_removed(provider, false))?,
+            keys::Legacy::None => {}
+            keys::Legacy::Kept(err) => writeln!(
                 self.out,
                 "L'ancienne clé {of}, rangée sans adresse, n'a pas pu être retirée ({err:#}) : elle n'est \
                  jamais envoyée."
@@ -578,16 +546,9 @@ impl Cli<'_> {
     fn models(&mut self, provider: Provider, word: Option<&str>, url: Option<&str>) -> Result<()> {
         let endpoint = endpoint_for(provider, url)?;
         let chosen = self.chosen();
-        let key = key_for_server(self.keys, provider, &endpoint, chosen.as_ref())?;
-        let models = self
-            .client
-            .models(provider, &endpoint, key.as_ref())
-            .map_err(|problem| anyhow!("{}", problem.explain(provider, &endpoint, chosen.as_ref())))?;
+        let models = list_models(self.keys, &self.client, provider, &endpoint, chosen.as_ref())?.models;
         let word = word.map(str::to_lowercase);
-        let mut found: Vec<&String> = printable(&models)
-            .filter(|model| word.as_deref().is_none_or(|word| model.to_lowercase().contains(word)))
-            .collect();
-        found.sort();
+        let found = search_models(&models, word.as_deref().unwrap_or(""));
         let (name, id) = (provider.name(), provider.id());
         if found.is_empty() {
             match &word {
@@ -600,14 +561,14 @@ impl Cli<'_> {
             }
             return Ok(());
         }
-        for model in found.iter().take(MAX_LISTED) {
+        for model in found.iter().take(MAX_LISTED_MODELS) {
             writeln!(self.out, "{model}")?;
         }
-        if found.len() > MAX_LISTED {
+        if found.len() > MAX_LISTED_MODELS {
             writeln!(
                 self.out,
                 "… et {} autres : précise ta recherche (capri chat models {id} <mot>).",
-                found.len() - MAX_LISTED
+                found.len() - MAX_LISTED_MODELS
             )?;
         }
         let url = url.map(|url| format!(" --url {url}")).unwrap_or_default();
@@ -619,49 +580,33 @@ impl Cli<'_> {
     fn test(&mut self, message: &str) -> Result<()> {
         let setup = load(&self.directory)?
             .context("Capri n'a pas de cerveau. Pour lui en donner un : capri chat use ollama")?;
-        let provider = setup.brain.provider();
-        let key = keys::key_for(self.keys, provider, setup.brain.endpoint())
-            .with_context(|| format!("pas de réponse : la clé {} est illisible", of_provider(provider)))?;
         let message = if message.trim().is_empty() { TEST_QUESTION } else { message.trim() };
-        let turns = [Turn { role: Role::User, text: message.to_owned() }];
         writeln!(self.out, "> {message}")?;
-
-        let started = Instant::now();
-        let mut first_word = None;
-        let mut failure = None;
-        // le même nettoyage que pour sa bulle : on voit ici ce qu'elle dirait
-        let mut plain = PlainStream::new();
-        let Self { client, out, .. } = self;
-        client.answer(
+        let mut wrote = false;
+        let Self { keys, client, out, .. } = self;
+        let talked = talk(
+            *keys,
+            client,
             &setup.brain,
-            key.as_ref(),
             &setup.persona,
-            &turns,
+            message,
             &AtomicBool::new(false),
-            &mut |event| {
-                plain.filter(event, &mut |event| match event {
-                    ReplyEvent::Delta(text) => {
-                        first_word.get_or_insert_with(|| started.elapsed());
-                        let _ = write!(out, "{text}");
-                        let _ = out.flush();
-                    }
-                    ReplyEvent::Done => {}
-                    ReplyEvent::Failed(reason) => failure = Some(reason),
-                });
+            &mut |text| {
+                wrote = true;
+                let _ = write!(out, "{text}");
+                let _ = out.flush();
             },
         );
-        if first_word.is_some() {
+        if wrote {
             writeln!(self.out)?;
         }
-        if let Some(reason) = failure {
-            bail!("{reason}");
-        }
+        let talked = talked?;
         eprintln!(
             "({}, modèle {} : premier mot en {:.1} s, réponse en {:.1} s)",
-            provider.name(),
+            setup.brain.provider().name(),
             setup.brain.model(),
-            first_word.unwrap_or_default().as_secs_f32(),
-            started.elapsed().as_secs_f32()
+            talked.first_word.unwrap_or_default().as_secs_f32(),
+            talked.total.as_secs_f32()
         );
         Ok(())
     }
@@ -692,6 +637,77 @@ fn endpoint_for(provider: Provider, url: Option<&str>) -> Result<Endpoint> {
         format!("{} n'a pas d'adresse habituelle : donne-la avec --url <adresse>", provider.name())
     })?;
     Endpoint::parse(url.trim()).context("adresse refusée")
+}
+
+/// Ce que propose un serveur.
+pub struct Listed {
+    pub models: Vec<String>,
+    /// Demandé avec la clé rangée pour son adresse.
+    pub with_key: bool,
+}
+
+/// Les modèles que propose le serveur de `provider` à `endpoint`, demandés avec la clé rangée pour
+/// cette adresse s'il en faut une (les règles de [`key_for_server`] : personne n'est contacté
+/// sans la clé exigée). `capri chat use`, `capri chat models` et la fenêtre de réglages passent
+/// par ici. `chosen` : le cerveau choisi, pour les commandes que proposent les messages.
+/// Bloque : hors du thread principal.
+pub fn list_models(
+    keys: &dyn KeyStore,
+    client: &Client,
+    provider: Provider,
+    endpoint: &Endpoint,
+    chosen: Option<&Brain>,
+) -> Result<Listed> {
+    let key = key_for_server(keys, provider, endpoint, chosen)?;
+    let models = client.models(provider, endpoint, key.as_ref()).map_err(|problem| {
+        let hint = how_to_fix(provider, &problem).map(|hint| format!("\n{hint}")).unwrap_or_default();
+        anyhow!("{}{hint}", problem.explain(provider, endpoint, chosen))
+    })?;
+    Ok(Listed { models, with_key: key.is_some() })
+}
+
+/// Ce qu'a duré un échange avec le cerveau.
+pub struct Talked {
+    pub first_word: Option<Duration>,
+    pub total: Duration,
+}
+
+/// Dit `message` à `brain`, avec la clé rangée pour son adresse s'il en prend une, et passe sa
+/// réponse à `on_text` au fil de l'eau, nettoyée comme pour sa bulle. Une panne est l'erreur
+/// rendue, dans les mots de sa bulle. `capri chat test` et l'essai de la fenêtre de réglages
+/// passent par ici. Bloque : hors du thread principal.
+pub fn talk(
+    keys: &dyn KeyStore,
+    client: &Client,
+    brain: &Brain,
+    persona: &str,
+    message: &str,
+    cancelled: &AtomicBool,
+    on_text: &mut dyn FnMut(&str),
+) -> Result<Talked> {
+    let provider = brain.provider();
+    let key = keys::key_for(keys, provider, brain.endpoint())
+        .with_context(|| format!("pas de réponse : la clé {} est illisible", of_provider(provider)))?;
+    let turns = [Turn { role: Role::User, text: message.to_owned() }];
+    let started = Instant::now();
+    let mut first_word = None;
+    let mut failure = None;
+    // le même nettoyage que pour sa bulle : on voit ici ce qu'elle dirait
+    let mut plain = PlainStream::new();
+    client.answer(brain, key.as_ref(), persona, &turns, cancelled, &mut |event| {
+        plain.filter(event, &mut |event| match event {
+            ReplyEvent::Delta(text) => {
+                first_word.get_or_insert_with(|| started.elapsed());
+                on_text(&text);
+            }
+            ReplyEvent::Done => {}
+            ReplyEvent::Failed(reason) => failure = Some(reason),
+        });
+    });
+    if let Some(reason) = failure {
+        bail!("{reason}");
+    }
+    Ok(Talked { first_word, total: started.elapsed() })
 }
 
 /// « --url <adresse> » à ajouter à une commande pour viser `endpoint`, sauf si c'est l'adresse
@@ -776,17 +792,6 @@ fn search_command(provider: Provider, endpoint: &Endpoint) -> String {
         _ => format!(" --url {}", endpoint.url("")),
     };
     format!("capri chat models {} <mot>{url}", provider.id())
-}
-
-/// Le serveur a-t-il ce modèle ? Un nom sans étiquette désigne `:latest`, comme pour Ollama.
-fn has_model(models: &[String], model: &str) -> bool {
-    models.iter().any(|known| known == model || (!model.contains(':') && *known == format!("{model}:latest")))
-}
-
-/// Les noms que l'on peut afficher sans risque : un nom venu du serveur qui contiendrait des
-/// caractères de contrôle (de quoi piloter le terminal) est laissé de côté.
-fn printable(models: &[String]) -> impl Iterator<Item = &String> {
-    models.iter().filter(|model| !model.chars().any(char::is_control))
 }
 
 fn installed(models: &[String]) -> String {
@@ -928,14 +933,6 @@ mod tests {
             assert_eq!(parse_use("ollama", wrong), None, "{wrong:?}");
         }
         assert_eq!(parse_use("skynet", &[]), None);
-    }
-
-    #[test]
-    fn a_model_without_a_tag_means_latest() {
-        let models = ["un:8b".to_owned(), "deux:latest".to_owned()];
-        assert!(has_model(&models, "un:8b"));
-        assert!(has_model(&models, "deux") && has_model(&models, "deux:latest"));
-        assert!(!has_model(&models, "un") && !has_model(&models, "un:4b") && !has_model(&models, "trois"));
     }
 
     // --- La ligne de commande, avec un trousseau en mémoire et un faux serveur local ---
@@ -1527,14 +1524,14 @@ mod tests {
         let ran = run(&directory, &MemoryKeys::default(), None, &["models", "custom", "--url", &url]);
         assert_eq!(ran.error, None);
         let lines: Vec<&str> = ran.out.lines().collect();
-        assert_eq!(lines.len(), MAX_LISTED + 2, "{}", ran.out);
+        assert_eq!(lines.len(), MAX_LISTED_MODELS + 2, "{}", ran.out);
         assert_eq!(lines[0], "autre/chose", "dans l'ordre alphabétique");
         assert_eq!(
-            lines[MAX_LISTED],
+            lines[MAX_LISTED_MODELS],
             "… et 91 autres : précise ta recherche (capri chat models custom <mot>)."
         );
         assert_eq!(
-            lines[MAX_LISTED + 1],
+            lines[MAX_LISTED_MODELS + 1],
             format!("Pour en choisir un : capri chat use custom --model <nom> --url {url}")
         );
         assert!(!ran.out.contains('\u{1b}'), "un nom qui piloterait le terminal n'est pas affiché");

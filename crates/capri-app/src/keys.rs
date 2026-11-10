@@ -122,6 +122,44 @@ pub fn has_legacy_key(keys: &dyn KeyStore, provider: Provider) -> bool {
         && keys.contains(capri_chat::key::legacy_account(provider)).unwrap_or(false)
 }
 
+/// Ce qu'il est advenu d'une ancienne clé, rangée sans adresse, quand on en donne une nouvelle.
+#[derive(Debug)]
+pub enum Legacy {
+    /// Il n'y en avait pas.
+    None,
+    /// Elle est retirée : elle n'aurait plus jamais servi.
+    Removed,
+    /// Elle n'a pas pu être retirée ; elle n'est de toute façon jamais envoyée.
+    Kept(anyhow::Error),
+}
+
+/// Range `key` pour ce compte, à la place de ce qui y était, et retire l'ancienne clé de ce
+/// fournisseur rangée sans adresse : `capri chat key` et la fenêtre de réglages passent par ici.
+pub fn store(keys: &dyn KeyStore, account: &KeyAccount, key: &ApiKey) -> Result<Legacy> {
+    keys.save(account, key)?;
+    Ok(match keys.forget(capri_chat::key::legacy_account(account.provider())) {
+        Ok(true) => Legacy::Removed,
+        Ok(false) => Legacy::None,
+        Err(err) => Legacy::Kept(err),
+    })
+}
+
+/// Ce que [`forget`] a retiré.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Forgotten {
+    /// La clé de ce compte était là.
+    pub key: bool,
+    /// Une ancienne clé de ce fournisseur, rangée sans adresse, était là aussi.
+    pub legacy: bool,
+}
+
+/// Retire la clé de ce compte, et l'ancienne clé de ce fournisseur rangée sans adresse.
+pub fn forget(keys: &dyn KeyStore, account: &KeyAccount) -> Result<Forgotten> {
+    let key = keys.forget(&account.name())?;
+    let legacy = keys.forget(capri_chat::key::legacy_account(account.provider()))?;
+    Ok(Forgotten { key, legacy })
+}
+
 /// Lit la clé que donne l'utilisateur : tapée sans s'afficher si l'entrée est un terminal, sinon
 /// lue sur l'entrée standard (`pbpaste | capri chat key openrouter`). `prompt` s'affiche sur la
 /// sortie d'erreur, seulement au terminal.
