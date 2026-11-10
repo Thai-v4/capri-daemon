@@ -16,6 +16,8 @@
 //! - [`dictation`] : lui parler au micro, le déroulé d'une prise de parole ;
 //! - [`voice`] : de quoi dire ses réponses à voix haute (phrases, texte prononçable, choix de la
 //!   voix, réglages) ;
+//! - [`settings`] : le modèle de la fenêtre de réglages, ses rubriques (« Cerveau », « Voix »),
+//!   ce qu'elle affiche et ce qu'elle demande à l'app de faire ;
 //! - [`echo`] : le cerveau de secours, qui répète ce qu'on lui dit tant qu'aucun modèle n'est
 //!   choisi.
 //!
@@ -32,6 +34,7 @@ pub mod persona;
 pub mod phrases;
 pub mod plain;
 pub mod reply;
+pub mod settings;
 pub mod sse;
 pub mod voice;
 

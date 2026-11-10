@@ -9,7 +9,8 @@ use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 use capri_chat::voice::{
-    BETTER_VOICES, LANGUAGE, TEST_SENTENCE, VoiceInfo, VoiceSettings, describe, french, pick, speakable,
+    BETTER_VOICES, LANGUAGE, TEST_SENTENCE, VOICE_OFF, VOICE_ON, VoiceInfo, VoiceSettings, describe, french,
+    pick, speakable,
 };
 use capri_platform::Voice;
 
@@ -109,9 +110,9 @@ fn switch(enabled: bool) -> Result<()> {
     let settings = VoiceSettings { enabled, ..load(&directory)? };
     save(&directory, &settings)?;
     if enabled {
-        println!("Capri dira ses réponses à voix haute, dès la prochaine. Pour l'écouter : capri voice test");
+        println!("{VOICE_ON} Pour l'écouter : capri voice test");
     } else {
-        println!("Capri ne répondra plus que par écrit.");
+        println!("{VOICE_OFF}");
     }
     Ok(())
 }

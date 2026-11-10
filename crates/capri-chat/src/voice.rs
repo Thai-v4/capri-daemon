@@ -39,6 +39,11 @@ pub const TEST_SENTENCE: &str = "Salut, c'est Capri. Tu m'entends bien ?";
 pub const BETTER_VOICES: &str = "Pour une voix plus naturelle : Réglages Système > Accessibilité > Lire et énoncer \
                                  > Voix système, et télécharge une voix française de meilleure qualité.";
 
+/// Sa voix vient d'être activée.
+pub const VOICE_ON: &str = "Capri dira ses réponses à voix haute, dès la prochaine.";
+/// Sa voix vient d'être coupée.
+pub const VOICE_OFF: &str = "Capri ne répondra plus que par écrit.";
+
 /// Une voix en une ligne : « Amélie [fr-CA, voix de femme, qualité de base] com.exemple.voix ».
 pub fn describe(voice: &VoiceInfo) -> String {
     format!("{} [{}, {}, {}] {}", voice.name, voice.language, gender(voice), quality(voice), voice.id)

@@ -376,6 +376,7 @@ dependencies = [
 name = "capri-chat"
 version = "0.1.0"
 dependencies = [
+ "capri-core",
  "serde_json",
  "thiserror 2.0.21",
 ]

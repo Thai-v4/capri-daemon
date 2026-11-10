@@ -94,6 +94,37 @@ pub fn thinks_now_with(brain: &Brain) -> String {
     )
 }
 
+/// Le cerveau a été retiré.
+pub const NO_MORE_BRAIN: &str =
+    "Capri n'a plus de cerveau : elle répète ce qu'on lui dit, et rien ne sort de ta machine.";
+
+/// Le cerveau qu'elle utilise : « Capri pense avec m (Ollama, localhost:11434). »
+pub fn thinks_with(brain: &Brain) -> String {
+    format!(
+        "Capri pense avec {} ({}, {}).",
+        brain.model(),
+        brain.provider().name(),
+        brain.endpoint().display_host()
+    )
+}
+
+/// Ce que tu lui dis sort-il de ce réseau pour aller sur Internet, avec ce modèle ?
+pub fn goes_on_internet(provider: Provider, endpoint: &Endpoint, model: Option<&str>) -> bool {
+    endpoint.reach() == Reach::Internet
+        || (provider == Provider::Ollama && model.is_some_and(is_ollama_cloud_model))
+}
+
+/// Comment obtenir un modèle qui manque à un serveur sur cette machine ou le réseau privé.
+pub fn how_to_get(provider: Provider, model: &str) -> String {
+    match provider {
+        Provider::Ollama => format!("Pour le télécharger : ollama pull {model}"),
+        Provider::LmStudio => {
+            "Pour en installer un : dans LM Studio, cherche-le parmi ses modèles.".to_owned()
+        }
+        _ => format!("Choisis-en un que {} propose.", provider.name()),
+    }
+}
+
 /// La clé vient d'être rangée.
 pub fn key_stored(provider: Provider, keychain: &str, address: &str) -> String {
     format!(

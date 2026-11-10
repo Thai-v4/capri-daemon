@@ -20,8 +20,8 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result, anyhow, bail};
 use capri_chat::brain::{MAX_LISTED_MODELS, has_model, printable, search_models};
 use capri_chat::phrases::{
-    NO_BRAIN, TEST_QUESTION, destination, key_forgotten, key_stored, legacy_key_removed, no_key_in_clear,
-    not_a_key, of_provider, server, thinks_now_with,
+    NO_BRAIN, NO_MORE_BRAIN, TEST_QUESTION, destination, how_to_get, key_forgotten, key_stored,
+    legacy_key_removed, no_key_in_clear, not_a_key, of_provider, server, thinks_now_with,
 };
 use capri_chat::plain::PlainStream;
 use capri_chat::{
@@ -613,10 +613,7 @@ impl Cli<'_> {
 
     fn off(&mut self) -> Result<()> {
         if forget(&self.directory)? {
-            writeln!(
-                self.out,
-                "Capri n'a plus de cerveau : elle répète ce qu'on lui dit, et rien ne sort de ta machine."
-            )?;
+            writeln!(self.out, "{NO_MORE_BRAIN}")?;
         } else {
             writeln!(self.out, "Capri n'avait pas de cerveau.")?;
         }
@@ -813,16 +810,6 @@ fn missing_model(provider: Provider, endpoint: &Endpoint, models: &[String], mod
         )]
     } else {
         vec![installed(models), how_to_get(provider, model)]
-    }
-}
-
-fn how_to_get(provider: Provider, model: &str) -> String {
-    match provider {
-        Provider::Ollama => format!("Pour le télécharger : ollama pull {model}"),
-        Provider::LmStudio => {
-            "Pour en installer un : dans LM Studio, cherche-le parmi ses modèles.".to_owned()
-        }
-        _ => format!("Choisis-en un que {} propose.", provider.name()),
     }
 }
 
