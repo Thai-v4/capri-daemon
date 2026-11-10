@@ -262,10 +262,10 @@ temps. La rouvrir ramène la même fenêtre devant. ⌘V, ⌘C, ⌘X, ⌘A et �
 - la **clé** : la fenêtre dit s'il y en a une pour l'adresse affichée (« Une clé est rangée pour
   openrouter.ai:443 », « Aucune clé pour cette adresse »), sans jamais la montrer. Colle-la dans
   le champ (rien ne s'affiche), puis « Enregistrer la clé » (ou Entrée) : elle va dans le
-  trousseau, pour cette adresse seulement, et le champ se vide, avec ce que ⌘Z
-  pourrait y remettre. « Retirer la clé » l'en retire. La clé reste dans ton presse-papiers, d'où tu l'as collée : Capri n'y touche
-  pas.
-  Mêmes règles qu'en ligne de commande : jamais en clair, jamais vers une autre adresse ;
+  trousseau, pour cette adresse seulement, et le champ se vide, avec ce que ⌘Z pourrait y
+  remettre. « Retirer la clé » l'en retire. La clé reste dans ton presse-papiers, d'où tu l'as
+  collée : Capri n'y touche pas. Mêmes règles qu'en ligne de commande : jamais en clair, jamais
+  vers une autre adresse ;
 - le **modèle** : la liste vient du serveur. Celle d'un serveur de ta machine est demandée
   d'elle-même ; ailleurs, seulement quand tu appuies sur « Demander la liste » (et jamais sans la
   clé qu'il exige). Chez un fournisseur qui en propose des centaines, un champ de recherche, et
