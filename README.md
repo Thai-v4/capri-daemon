@@ -469,19 +469,14 @@ vérifié avant le passage à la fenêtre « Overlay » ; il n'a pas été revé
     acceptée.
 
 17. avec OpenRouter choisi comme cerveau, elle répond dans sa bulle ; fenêtre de réglages
-    ouverte, ⌘Q et ⌘H ne ferment que la fenêtre, et Capri reste là.
+    ouverte, ⌘Q et ⌘H ne ferment que la fenêtre, et Capri reste là ; dans le champ ⌃⌥P, ils ne
+    ferment que le champ ;
+18. sans clé, la bulle le dit et renvoie à « Réglages… », sans commande de terminal ; une clé
+    refusée (401) cite la raison que donne le fournisseur.
 
 **Pas encore vérifié** : une vraie conversation avec DeepSeek, ProxyAPI ou Ollama en ligne (ils
 passent par le même code qu'OpenRouter, mais n'ont pas été essayés) ; un vrai LM Studio ; la
 demande d'accès au trousseau quand `Capri.app` lit une clé rangée depuis le terminal.
-
-**Encore à vérifier à la main** :
-
-1. dans le champ ⌃⌥P, ⌘Q et ⌘H ferment seulement le champ, comme Échap ; Capri reste là ;
-2. un message de panne dans la bulle (clé absente ou refusée) dit d'ouvrir « Réglages… », et le
-   même dans la fenêtre dit « remets-la ci-dessus », sans commande ;
-3. une clé refusée (401) cite la raison que donne le fournisseur (« User not found », par
-   exemple), sans rien de la clé.
 
 **Pas encore testé sur un vrai PC Windows** : il n'y a pas encore de fenêtre de réglages. Le tube
 nommé de `capri-ipc` n'y a jamais tourné, le champ de saisie et la voix n'y existent pas encore,
