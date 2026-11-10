@@ -173,6 +173,8 @@ impl SettingsView {
         }
     }
 
+    /// La fenêtre a-t-elle le clavier ? Pour les essais.
+    #[cfg(debug_assertions)]
     pub fn has_keyboard(&self) -> bool {
         self.window.has_keyboard()
     }
