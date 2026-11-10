@@ -18,6 +18,7 @@ use std::sync::atomic::AtomicBool;
 use std::time::Instant;
 
 use anyhow::{Context, Result, anyhow, bail};
+use capri_chat::phrases::{destination, of_provider, server};
 use capri_chat::plain::PlainStream;
 use capri_chat::{
     ApiKey, BoundKey, Brain, Endpoint, KeyAccount, KeyError, KeyNeed, Provider, Reach, ReplyEvent, Role,
@@ -52,7 +53,7 @@ usage : capri chat status                  quel cerveau Capri utilise, et où pa
         capri chat off                     lui retirer son cerveau (les clés restent)
 
 fournisseurs : ollama, lmstudio      sur ta machine, sans compte
-               openrouter, deepseek, proxyapi
+               openrouter, deepseek, proxyapi, ollama-cloud
                                      sur Internet, avec une clé d'API
                custom                un autre serveur compatible, avec --url (clé facultative)";
 
@@ -338,7 +339,7 @@ impl Cli<'_> {
         let provider = brain.provider();
         writeln!(self.out, "cerveau  : {}, modèle {}", provider.name(), brain.model())?;
         writeln!(self.out, "adresse  : {}", endpoint.url(""))?;
-        writeln!(self.out, "envoi    : {}", destination(provider, endpoint))?;
+        writeln!(self.out, "envoi    : {}", destination(provider, endpoint, Some(brain.model())))?;
         writeln!(self.out, "clé      : {}", self.key_status(brain))?;
         if keys::has_legacy_key(self.keys, provider) {
             writeln!(
@@ -438,7 +439,7 @@ impl Cli<'_> {
             provider.name(),
             endpoint.display_host()
         )?;
-        writeln!(self.out, "{}", destination(provider, &endpoint))?;
+        writeln!(self.out, "{}", destination(provider, &endpoint, Some(brain.model())))?;
         if let Some(key) = &key {
             writeln!(
                 self.out,
@@ -775,41 +776,6 @@ fn search_command(provider: Provider, endpoint: &Endpoint) -> String {
         _ => format!(" --url {}", endpoint.url("")),
     };
     format!("capri chat models {} <mot>{url}", provider.id())
-}
-
-/// Le serveur, pour une phrase : « OpenRouter (openrouter.ai:443) », ou l'adresse seule d'un
-/// serveur personnalisé.
-fn server(provider: Provider, endpoint: &Endpoint) -> String {
-    match provider {
-        Provider::Custom => endpoint.display_host(),
-        _ => format!("{} ({})", provider.name(), endpoint.display_host()),
-    }
-}
-
-/// Où part ce qu'on dit à Capri avec ce cerveau, en une phrase.
-fn destination(provider: Provider, endpoint: &Endpoint) -> String {
-    let host = endpoint.display_host();
-    let how = if endpoint.secure { "chiffré (https)" } else { "en clair (http)" };
-    match endpoint.reach() {
-        Reach::ThisMachine => "Ce que tu lui dis reste sur cette machine.".to_owned(),
-        Reach::PrivateNetwork => format!("Ce que tu lui dis part vers {host}, sur ton réseau privé, {how}."),
-        Reach::Internet => {
-            let whom = server(provider, endpoint);
-            format!(
-                "Attention : ce que tu lui dis partira chez {whom}, sur Internet, à chaque message, avec sa \
-                 personnalité. Rien d'autre de ta machine : ni ce que fait Claude Code, ni tes fichiers."
-            )
-        }
-    }
-}
-
-/// « d'OpenRouter », « de DeepSeek », « du serveur personnalisé ».
-fn of_provider(provider: Provider) -> String {
-    match provider {
-        Provider::Custom => "du serveur personnalisé".to_owned(),
-        _ if provider.name().starts_with(['A', 'E', 'I', 'O', 'U']) => format!("d'{}", provider.name()),
-        _ => format!("de {}", provider.name()),
-    }
 }
 
 /// Le serveur a-t-il ce modèle ? Un nom sans étiquette désigne `:latest`, comme pour Ollama.
@@ -1365,28 +1331,29 @@ mod tests {
     }
 
     #[test]
-    fn choosing_a_brain_says_where_the_conversation_goes() {
-        assert_eq!(
-            destination(Provider::Ollama, &at("http://localhost:11434/v1")),
-            "Ce que tu lui dis reste sur cette machine."
-        );
-        assert_eq!(
-            destination(Provider::Ollama, &at("http://192.168.1.20:11434/v1")),
-            "Ce que tu lui dis part vers 192.168.1.20:11434, sur ton réseau privé, en clair (http)."
-        );
-        assert_eq!(
-            destination(Provider::OpenRouter, &at("https://openrouter.ai/api/v1")),
-            "Attention : ce que tu lui dis partira chez OpenRouter (openrouter.ai:443), sur Internet, à chaque message, \
-             avec sa personnalité. Rien d'autre de ta machine : ni ce que fait Claude Code, ni tes fichiers."
-        );
+    fn a_cloud_model_of_the_local_ollama_is_said_to_leave_the_machine() {
+        let directory = scratch_dir("modele-cloud");
+        let (address, _requests) = fake_server::serve(vec![
+            fake_server::listing(&["un-modele:cloud", "un-autre:8b"]),
+            fake_server::listing(&["un-modele:cloud", "un-autre:8b"]),
+        ]);
+        let url = format!("http://{address}/v1");
+        let keys = MemoryKeys::default();
+        let ran =
+            run(&directory, &keys, None, &["use", "ollama", "--url", &url, "--model", "un-modele:cloud"]);
+        assert_eq!(ran.error, None);
         assert!(
-            destination(Provider::Custom, &at("https://llm.example.com/v1"))
-                .contains("partira chez llm.example.com:443,")
+            ran.out.contains(
+                "Attention : avec ce modèle « cloud », l'Ollama de cette machine relaie ce que tu lui dis vers les \
+                 serveurs d'Ollama, sur Internet"
+            ),
+            "{}",
+            ran.out
         );
-        // un nom qui mène peut-être chez soi compte pour Internet : rien ne le garantit
-        assert!(
-            destination(Provider::Custom, &at("https://tesseract.local:8443/v1")).starts_with("Attention")
-        );
+        assert!(!ran.out.contains("reste sur cette machine"), "{}", ran.out);
+        let ran = run(&directory, &keys, None, &["status"]);
+        assert!(ran.out.contains("envoi    : Attention : avec ce modèle « cloud »"), "{}", ran.out);
+        let _ = std::fs::remove_dir_all(directory);
     }
 
     #[test]

@@ -71,7 +71,8 @@ Sans réglage, elle n'a **pas de cerveau** : elle répète ce qu'on lui dit, et 
 réseau. Pour qu'elle réponde vraiment, donne-lui un modèle.
 
 **Sur ta machine**, servi par [Ollama](https://ollama.com) ou [LM Studio](https://lmstudio.ai) :
-ni compte, ni clé, et la conversation ne quitte pas ta machine.
+ni compte, ni clé, et la conversation ne quitte pas ta machine (sauf avec un modèle « cloud »
+d'Ollama : voir plus bas).
 
 ```bash
 brew install ollama
@@ -85,8 +86,10 @@ ollama pull <modèle>                      # à choisir sur ollama.com/library, 
 ```
 
 **Chez un fournisseur, sur Internet** : [OpenRouter](https://openrouter.ai),
-[DeepSeek](https://platform.deepseek.com), [ProxyAPI](https://proxyapi.ru), ou tout autre serveur
-qui parle le format « chat completions » d'OpenAI. Il faut un compte chez lui et sa clé d'API, et
+[DeepSeek](https://platform.deepseek.com), [ProxyAPI](https://proxyapi.ru),
+[Ollama en ligne](https://docs.ollama.com/cloud) (les serveurs d'Ollama, joints directement, avec
+une clé créée sur <https://ollama.com/settings/keys>), ou tout autre serveur qui parle le format
+« chat completions » d'OpenAI. Il faut un compte chez lui et sa clé d'API, et
 **ce que tu dis à Capri part alors chez lui**, avec sa personnalité, à chaque message :
 `capri chat use` le rappelle.
 
@@ -111,6 +114,7 @@ choisie demande `--url`.
 | `openrouter` | `https://openrouter.ai/api/v1` | obligatoire                                 |
 | `deepseek`   | `https://api.deepseek.com`     | obligatoire                                 |
 | `proxyapi`   | `https://api.proxyapi.ru/v1`   | obligatoire                                 |
+| `ollama-cloud` | `https://ollama.com/v1`      | obligatoire                                 |
 | `custom`     | à donner avec `--url`          | facultative                                 |
 
 `--url` remplace l'adresse de n'importe lequel, par exemple `--url http://192.168.1.20:11434/v1`
@@ -147,8 +151,8 @@ Ce que Capri garantit :
   Choisir une autre adresse (`--url`, un autre port, `localhost` au lieu de `127.0.0.1`) ne
   l'emporte jamais : il faut en donner une pour celle-là ;
 - **une clé ne part jamais en clair** : seulement en `https://`, ou vers cette machine même,
-  jamais en `http://` sur le réseau, même privé. Un fournisseur qui n'en prend pas (Ollama) n'en
-  reçoit jamais ;
+  jamais en `http://` sur le réseau, même privé. Un fournisseur qui n'en prend pas (l'Ollama de ta
+  machine) n'en reçoit jamais ;
 - si un fournisseur répète la clé dans un message d'erreur, elle y est masquée ; une clé refusée
   se dit dans sa bulle, avec la commande pour la remettre ;
 - **tout est borné** : le temps de connexion, le silence du serveur (deux minutes), la longueur
@@ -172,6 +176,11 @@ Ce qu'il faut savoir :
   même : OpenRouter le précise pour une partie des fournisseurs qu'il sert ;
 - sous Linux, ni `https://` ni trousseau (il y faudrait OpenSSL et un autre trousseau) : seulement
   un modèle sur la machine ou le réseau privé ;
+- **un modèle « cloud » d'Ollama ne reste pas sur ta machine**, même demandé à l'Ollama local :
+  sa documentation les nomme `…:cloud` ou `…-cloud`, et l'Ollama connecté (`ollama signin`) les
+  relaie vers ses serveurs. Capri reconnaît ces noms et le dit (`capri chat use`, `capri chat
+  status`) au lieu de promettre que rien ne sort ; un modèle « cloud » nommé autrement ne serait pas
+  reconnu ;
 - Ollama décharge le modèle après quelques minutes sans rien lui demander : la réponse suivante
   met alors quelques secondes à commencer ;
 - avec un modèle « à réflexion », la bulle reste sur « … » pendant qu'il réfléchit : il n'y a pas

@@ -21,16 +21,22 @@ const MAX_MODEL_CHARS: usize = 200;
 /// - OpenRouter : <https://openrouter.ai/docs/api-reference/authentication> ;
 /// - DeepSeek : <https://api-docs.deepseek.com> ;
 /// - ProxyAPI : <https://proxyapi.ru/docs/api-overview> (l'adresse unique ; les anciennes, par
-///   fournisseur, ferment le 1er février 2027 d'après <https://proxyapi.ru/docs/migration>).
+///   fournisseur, ferment le 1er février 2027 d'après <https://proxyapi.ru/docs/migration>) ;
+/// - Ollama en ligne : <https://docs.ollama.com/api/authentication> et
+///   <https://docs.ollama.com/cloud> (« Direct cloud inference at `https://ollama.com/api` and
+///   `https://ollama.com/v1` requires an API key », dans l'en-tête `Authorization: Bearer`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Provider {
-    /// Ollama, sur cette machine ou sur le réseau privé : aucun compte, aucune clé.
+    /// Ollama, sur cette machine ou sur le réseau privé : aucun compte, aucune clé. Un modèle
+    /// « cloud » y est relayé vers les serveurs d'Ollama ([`crate::phrases::is_ollama_cloud_model`]).
     Ollama,
     /// LM Studio, sur cette machine : sans clé, sauf si on lui en a demandé une.
     LmStudio,
     OpenRouter,
     DeepSeek,
     ProxyApi,
+    /// Les serveurs d'Ollama, joints directement, avec une clé : rien à installer.
+    OllamaCloud,
     /// Un autre serveur compatible, dont l'utilisateur donne l'adresse.
     Custom,
 }
@@ -47,8 +53,15 @@ pub enum KeyNeed {
 }
 
 impl Provider {
-    pub const ALL: [Self; 6] =
-        [Self::Ollama, Self::LmStudio, Self::OpenRouter, Self::DeepSeek, Self::ProxyApi, Self::Custom];
+    pub const ALL: [Self; 7] = [
+        Self::Ollama,
+        Self::LmStudio,
+        Self::OpenRouter,
+        Self::DeepSeek,
+        Self::ProxyApi,
+        Self::OllamaCloud,
+        Self::Custom,
+    ];
 
     /// Le nom écrit dans le fichier de réglages et tapé en ligne de commande.
     pub fn id(self) -> &'static str {
@@ -58,6 +71,7 @@ impl Provider {
             Self::OpenRouter => "openrouter",
             Self::DeepSeek => "deepseek",
             Self::ProxyApi => "proxyapi",
+            Self::OllamaCloud => "ollama-cloud",
             Self::Custom => "custom",
         }
     }
@@ -70,6 +84,7 @@ impl Provider {
             Self::OpenRouter => "OpenRouter",
             Self::DeepSeek => "DeepSeek",
             Self::ProxyApi => "ProxyAPI",
+            Self::OllamaCloud => "Ollama en ligne",
             Self::Custom => "Serveur personnalisé",
         }
     }
@@ -82,6 +97,7 @@ impl Provider {
             Self::OpenRouter => Some("https://openrouter.ai/api/v1"),
             Self::DeepSeek => Some("https://api.deepseek.com"),
             Self::ProxyApi => Some("https://api.proxyapi.ru/v1"),
+            Self::OllamaCloud => Some("https://ollama.com/v1"),
             Self::Custom => None,
         }
     }
@@ -90,7 +106,7 @@ impl Provider {
         match self {
             Self::Ollama => KeyNeed::None,
             Self::LmStudio | Self::Custom => KeyNeed::Optional,
-            Self::OpenRouter | Self::DeepSeek | Self::ProxyApi => KeyNeed::Required,
+            Self::OpenRouter | Self::DeepSeek | Self::ProxyApi | Self::OllamaCloud => KeyNeed::Required,
         }
     }
 
@@ -264,13 +280,14 @@ mod tests {
         assert_eq!(url(Provider::OpenRouter).as_deref(), Ok("https://openrouter.ai/api/v1"));
         assert_eq!(url(Provider::DeepSeek).as_deref(), Ok("https://api.deepseek.com"));
         assert_eq!(url(Provider::ProxyApi).as_deref(), Ok("https://api.proxyapi.ru/v1"));
+        assert_eq!(url(Provider::OllamaCloud).as_deref(), Ok("https://ollama.com/v1"));
         assert_eq!(url(Provider::Custom), Err(BrainError::MissingUrl), "son adresse est à donner");
 
         let need = |id: &str| Provider::from_id(id).map(Provider::key_need);
         assert_eq!(need("ollama"), Some(KeyNeed::None));
         assert_eq!(need("lmstudio"), Some(KeyNeed::Optional));
         assert_eq!(need("custom"), Some(KeyNeed::Optional));
-        for id in ["openrouter", "deepseek", "proxyapi"] {
+        for id in ["openrouter", "deepseek", "proxyapi", "ollama-cloud"] {
             assert_eq!(need(id), Some(KeyNeed::Required), "{id}");
         }
     }
