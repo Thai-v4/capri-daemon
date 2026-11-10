@@ -1,8 +1,12 @@
 //! Rendu GPU de Capri, avec wgpu.
 //!
-//! La surface couvre toute la fenêtre overlay et reste transparente : seule Capri est dessinée.
+//! La surface couvre toute la fenêtre overlay et reste transparente : seuls Capri et, quand il y
+//! en a un, son bandeau sont dessinés. Les deux passent par le même shader ; le texte du bandeau
+//! est tracé à part, sur le processeur (voir [`banner`]).
 //! Sur Windows, la transparence passe par DirectComposition (DirectX 12 en mode « visual ») :
 //! le swapchain classique, lié directement à la fenêtre, ne sait pas être transparent.
+
+pub mod banner;
 
 use bytemuck::{Pod, Zeroable};
 use wgpu::util::DeviceExt as _;
@@ -59,9 +63,17 @@ pub struct Renderer {
     config: wgpu::SurfaceConfiguration,
     view_format: wgpu::TextureFormat,
     pipeline: wgpu::RenderPipeline,
+    layout: wgpu::BindGroupLayout,
+    sampler: wgpu::Sampler,
+    sprite: Layer,
+    banner: Option<Layer>,
+    transparent: bool,
+}
+
+/// Une image à dessiner et ses réglages : Capri, ou son bandeau.
+struct Layer {
     bind_group: wgpu::BindGroup,
     uniforms: wgpu::Buffer,
-    transparent: bool,
 }
 
 impl Renderer {
@@ -73,14 +85,7 @@ impl Renderer {
         height: u32,
         sprite: SpriteImage<'_>,
     ) -> Result<Self, RenderError> {
-        let expected = sprite.width as usize * sprite.height as usize * 4;
-        if sprite.rgba.len() != expected {
-            return Err(RenderError::BadSprite {
-                width: sprite.width,
-                height: sprite.height,
-                len: sprite.rgba.len(),
-            });
-        }
+        check_image(sprite)?;
 
         let instance = wgpu::Instance::new(instance_descriptor());
         let surface = instance.create_surface(target)?;
@@ -125,8 +130,6 @@ impl Renderer {
         };
         surface.configure(&device, &config);
 
-        let texture = upload_sprite(&device, &queue, sprite);
-        let texture_view = texture.create_view(&wgpu::TextureViewDescriptor::default());
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("capri sprite"),
             address_mode_u: wgpu::AddressMode::ClampToEdge,
@@ -134,11 +137,6 @@ impl Renderer {
             mag_filter: wgpu::FilterMode::Linear,
             min_filter: wgpu::FilterMode::Linear,
             ..Default::default()
-        });
-        let uniforms = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("capri uniforms"),
-            contents: bytemuck::bytes_of(&Uniforms::zeroed()),
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
 
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -172,18 +170,7 @@ impl Renderer {
                 },
             ],
         });
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("capri"),
-            layout: &layout,
-            entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: uniforms.as_entire_binding() },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::TextureView(&texture_view),
-                },
-                wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::Sampler(&sampler) },
-            ],
-        });
+        let sprite = Layer::new(&device, &queue, &layout, &sampler, sprite);
 
         let shader = device.create_shader_module(wgpu::include_wgsl!("sprite.wgsl"));
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -217,7 +204,31 @@ impl Renderer {
             cache: None,
         });
 
-        Ok(Self { surface, device, queue, config, view_format, pipeline, bind_group, uniforms, transparent })
+        Ok(Self {
+            surface,
+            device,
+            queue,
+            config,
+            view_format,
+            pipeline,
+            layout,
+            sampler,
+            sprite,
+            banner: None,
+            transparent,
+        })
+    }
+
+    /// Remplace l'image du bandeau, ou le retire avec `None`.
+    pub fn set_banner(&mut self, image: Option<SpriteImage<'_>>) -> Result<(), RenderError> {
+        self.banner = match image {
+            Some(image) => {
+                check_image(image)?;
+                Some(Layer::new(&self.device, &self.queue, &self.layout, &self.sampler, image))
+            }
+            None => None,
+        };
+        Ok(())
     }
 
     /// La surface sait-elle être transparente ? (Sinon, le fond est noir.)
@@ -234,9 +245,10 @@ impl Renderer {
         self.surface.configure(&self.device, &self.config);
     }
 
-    /// Dessine une image. `pre_present` est appelé juste avant l'affichage (winit le demande
-    /// pour bien caler les images sur l'écran).
-    pub fn render(&mut self, draw: &SpriteDraw, pre_present: impl FnOnce()) {
+    /// Dessine une image : Capri, puis son bandeau s'il y en a un et que `banner` dit où.
+    /// `pre_present` est appelé juste avant l'affichage (winit le demande pour bien caler les
+    /// images sur l'écran).
+    pub fn render(&mut self, sprite: &SpriteDraw, banner: Option<&SpriteDraw>, pre_present: impl FnOnce()) {
         let frame = match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(f) | wgpu::CurrentSurfaceTexture::Suboptimal(f) => f,
             wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => return,
@@ -247,17 +259,22 @@ impl Renderer {
             }
         };
 
-        let u = Uniforms {
-            viewport: [self.config.width as f32, self.config.height as f32],
-            rect_min: draw.min,
-            rect_size: draw.size,
-            ghost: draw.ghost,
-            seed: draw.boil_seed as f32,
-            boil: draw.boil,
-            opacity: draw.opacity,
-            _pad: 0.0,
-        };
-        self.queue.write_buffer(&self.uniforms, 0, bytemuck::bytes_of(&u));
+        let viewport = [self.config.width as f32, self.config.height as f32];
+        let layers: Vec<(&Layer, &SpriteDraw)> =
+            std::iter::once((&self.sprite, sprite)).chain(self.banner.as_ref().zip(banner)).collect();
+        for (layer, draw) in &layers {
+            let u = Uniforms {
+                viewport,
+                rect_min: draw.min,
+                rect_size: draw.size,
+                ghost: draw.ghost,
+                seed: draw.boil_seed as f32,
+                boil: draw.boil,
+                opacity: draw.opacity,
+                _pad: 0.0,
+            };
+            self.queue.write_buffer(&layer.uniforms, 0, bytemuck::bytes_of(&u));
+        }
 
         let view = frame.texture.create_view(&wgpu::TextureViewDescriptor {
             format: Some(self.view_format),
@@ -283,13 +300,59 @@ impl Renderer {
                 multiview_mask: None,
             });
             pass.set_pipeline(&self.pipeline);
-            pass.set_bind_group(0, &self.bind_group, &[]);
-            pass.draw(0..6, 0..1);
+            for (layer, _) in &layers {
+                pass.set_bind_group(0, &layer.bind_group, &[]);
+                pass.draw(0..6, 0..1);
+            }
         }
         self.queue.submit([encoder.finish()]);
         pre_present();
         self.queue.present(frame);
     }
+}
+
+impl Layer {
+    fn new(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        layout: &wgpu::BindGroupLayout,
+        sampler: &wgpu::Sampler,
+        image: SpriteImage<'_>,
+    ) -> Self {
+        let texture = upload_sprite(device, queue, image);
+        let texture_view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let uniforms = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("capri uniforms"),
+            contents: bytemuck::bytes_of(&Uniforms::zeroed()),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("capri"),
+            layout,
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: uniforms.as_entire_binding() },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&texture_view),
+                },
+                wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::Sampler(sampler) },
+            ],
+        });
+        Self { bind_group, uniforms }
+    }
+}
+
+/// Les pixels font-ils bien la taille annoncée ?
+fn check_image(image: SpriteImage<'_>) -> Result<(), RenderError> {
+    let expected = image.width as usize * image.height as usize * 4;
+    if image.width == 0 || image.height == 0 || image.rgba.len() != expected {
+        return Err(RenderError::BadSprite {
+            width: image.width,
+            height: image.height,
+            len: image.rgba.len(),
+        });
+    }
+    Ok(())
 }
 
 fn instance_descriptor() -> wgpu::InstanceDescriptor {
@@ -378,6 +441,14 @@ mod tests {
         assert_eq!(pick_alpha_mode(&[M::Opaque, M::PostMultiplied]), M::PostMultiplied); // Metal
         assert_eq!(pick_alpha_mode(&[M::Auto, M::Opaque, M::PreMultiplied]), M::PreMultiplied); // DComp
         assert_eq!(pick_alpha_mode(&[M::Opaque]), M::Opaque);
+    }
+
+    #[test]
+    fn images_must_have_the_size_they_claim() {
+        let image = |width, height, len: usize| SpriteImage { width, height, rgba: &[0u8; 64][..len] };
+        assert!(check_image(image(4, 4, 64)).is_ok());
+        assert!(matches!(check_image(image(4, 4, 60)), Err(RenderError::BadSprite { len: 60, .. })));
+        assert!(check_image(image(0, 4, 0)).is_err(), "une image vide ne se dessine pas");
     }
 
     #[test]

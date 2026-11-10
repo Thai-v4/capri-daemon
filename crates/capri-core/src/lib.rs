@@ -5,12 +5,14 @@
 //! (12 dessins par seconde), comme en anime.
 
 pub mod anim;
+pub mod banner;
 pub mod body;
 pub mod geom;
 pub mod input;
 pub mod mask;
 
 pub use anim::{FRAME_RATE, Sheet, frame_at};
+pub use banner::{Banner, BannerPose, place_banner};
 pub use body::{Capri, Pose, Stance};
 pub use geom::{Rect, Vec2};
 pub use input::{Button, Press, interpret_press};

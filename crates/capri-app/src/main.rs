@@ -1,17 +1,25 @@
-//! Capri, jalon 1 : elle flotte sur ton bureau, on peut l'attraper, la poser et la lancer.
+//! Capri : elle flotte sur ton bureau, on peut l'attraper, la poser et la lancer (jalon 1), et
+//! un bandeau au-dessus d'elle dit ce que fait Claude Code (jalon 2).
 //!
 //! Une seule fenêtre transparente, l'overlay de `capri-platform`, couvre l'écran principal. Elle
 //! laisse passer la souris partout, sauf sur Capri elle-même. Le curseur est lu auprès du système
 //! 60 fois par seconde (la fenêtre ne reçoit pas les mouvements quand elle se laisse traverser),
-//! mais on ne redessine que quand sa pose change : environ 12 fois par seconde au repos.
+//! mais on ne redessine que quand sa pose ou son bandeau change : environ 12 fois par seconde au
+//! repos.
+//!
+//! `capri hook install | uninstall | status` branche Claude Code sur Capri, sans lancer la fenêtre.
 
 mod assets;
+mod banner_view;
+mod claude;
+mod hook_setup;
 #[cfg(any(target_os = "macos", windows))]
 mod menu;
 
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
+use banner_view::BannerView;
 use capri_core::{AlphaMask, Button, Capri, Pose, Press, Rect, Vec2, frame_at, interpret_press};
 use capri_platform::{Overlay, OverlayEvent};
 use capri_render::{Renderer, SpriteDraw, SpriteImage};
@@ -30,6 +38,18 @@ const TICK: Duration = Duration::from_micros(16_667);
 const BOIL: f32 = 1.0;
 
 fn main() -> Result<()> {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    match args.first().map(String::as_str) {
+        None => {}
+        Some("hook") => std::process::exit(hook_setup::run_cli(&args[1..])),
+        Some(_) => {
+            eprintln!(
+                "usage : capri                  lancer Capri\n        capri hook <action>    brancher Claude Code (voir capri hook)"
+            );
+            std::process::exit(2);
+        }
+    }
+
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
     let sprite = assets::load_sprite()?;
 
@@ -62,7 +82,11 @@ struct Running {
     last_step: Instant,
     cursor: Option<Vec2>,
     click_through: bool,
-    drawn: Option<Pose>,
+    banner: BannerView,
+    /// Image d'animation courante.
+    frame: u64,
+    /// Ce qui est à l'écran : sa pose et, s'il est là, son bandeau.
+    drawn: Option<(Pose, Option<SpriteDraw>)>,
 }
 
 impl ApplicationHandler for App {
@@ -91,10 +115,12 @@ impl ApplicationHandler for App {
         self.handle_menus(event_loop);
         self.handle_hotkey();
         self.handle_overlay(event_loop);
-        if !self.hidden
-            && let Some(r) = self.running.as_mut()
-        {
-            r.tick();
+        if let Some(r) = self.running.as_mut() {
+            if self.hidden {
+                r.banner.listen_only();
+            } else {
+                r.tick();
+            }
         }
         // sur macOS, le redessin que `tick` vient de demander se fait ici, sans attendre un tour
         self.handle_overlay(event_loop);
@@ -132,6 +158,7 @@ impl App {
         #[cfg(any(target_os = "macos", windows))]
         {
             self.menus = Some(menu::Menus::new());
+            self.refresh_hook_menu();
         }
         if !capri_platform::INTERACTIVE {
             log::warn!("système pas encore pris en charge : Capri s'affiche mais ne peut pas être attrapée");
@@ -147,6 +174,8 @@ impl App {
             last_step: now,
             cursor: None,
             click_through: true,
+            banner: BannerView::new(),
+            frame: 0,
             drawn: None,
         })
     }
@@ -167,6 +196,7 @@ impl App {
                 OverlayEvent::ScaleFactorChanged(scale) => {
                     log::debug!("overlay : densité {scale}");
                     r.capri.set_size(display_size(r.mask.size(), scale));
+                    r.banner.rescaled();
                 }
                 OverlayEvent::Pressed { button, ctrl } => {
                     // le curseur le plus frais, même si aucun mouvement n'est arrivé depuis
@@ -212,12 +242,59 @@ impl App {
             for action in actions {
                 match action {
                     menu::Action::ToggleVisible => self.toggle_hidden(),
+                    menu::Action::ToggleClaudeHook => self.toggle_claude_hook(),
                     menu::Action::Quit => event_loop.exit(),
                 }
             }
         }
         #[cfg(not(any(target_os = "macos", windows)))]
         let _ = event_loop;
+    }
+
+    /// Branche Claude Code sur Capri, ou le débranche s'il l'est déjà.
+    #[cfg(any(target_os = "macos", windows))]
+    fn toggle_claude_hook(&mut self) {
+        let done = (|| -> Result<bool> {
+            let file = hook_setup::settings_path()?;
+            if hook_setup::status(&file)?.is_installed() {
+                let outcome = hook_setup::uninstall(&file, false)?;
+                log::info!("Claude Code débranché ({})", outcome.settings.display());
+                Ok(false)
+            } else {
+                let outcome = hook_setup::install(&file, &hook_setup::hook_binary()?, false)?;
+                log::info!(
+                    "Claude Code branché ({}), sauvegarde : {:?}",
+                    outcome.settings.display(),
+                    outcome.backup
+                );
+                Ok(true)
+            }
+        })();
+        let (text, tone) = match &done {
+            Ok(true) => ("Claude Code est branché", capri_claude::Tone::Done),
+            Ok(false) => ("Claude Code est débranché", capri_claude::Tone::Done),
+            Err(err) => {
+                log::error!("branchement de Claude Code : {err:#}");
+                ("Branchement impossible, détails dans le journal", capri_claude::Tone::Failed)
+            }
+        };
+        if let Some(r) = self.running.as_mut() {
+            r.banner.notify(text, tone);
+        }
+        self.refresh_hook_menu();
+    }
+
+    /// Accorde le menu à ce que dit le fichier de réglages de Claude Code.
+    #[cfg(any(target_os = "macos", windows))]
+    fn refresh_hook_menu(&self) {
+        let installed = hook_setup::settings_path()
+            .and_then(|file| hook_setup::status(&file))
+            .inspect_err(|err| log::warn!("réglages de Claude Code illisibles : {err:#}"))
+            .map(|status| status.is_installed())
+            .ok();
+        if let Some(menus) = &self.menus {
+            menus.set_hook_installed(installed);
+        }
     }
 
     fn handle_hotkey(&mut self) {
@@ -274,7 +351,8 @@ impl Running {
         {
             self.capri.drag_to(c, self.seconds());
         }
-        self.capri.step(dt, frame_at(now - self.start));
+        self.frame = frame_at(now - self.start);
+        self.capri.step(dt, self.frame);
 
         // La souris traverse la fenêtre partout, sauf sur elle ou tant qu'on la tient.
         let over = self.cursor.is_some_and(|c| self.is_over(c));
@@ -284,13 +362,23 @@ impl Running {
             self.click_through = through;
         }
 
-        if self.drawn != Some(self.capri.pose()) {
+        self.banner.update(self.frame, self.overlay.scale_factor(), &mut self.renderer);
+        if self.drawn != Some(self.scene()) {
             self.overlay.request_redraw();
         }
     }
 
+    /// Ce qu'il faut dessiner maintenant : sa pose, et son bandeau s'il y en a un.
+    fn scene(&self) -> (Pose, Option<SpriteDraw>) {
+        let (width, height) = self.overlay.size();
+        let bounds = Rect::new(Vec2::ZERO, Vec2::new(width as f32, height as f32));
+        let standing = Rect::new(self.capri.position(), self.capri.size());
+        let banner = self.banner.draw(self.frame, standing, bounds, self.overlay.scale_factor());
+        (self.capri.pose(), banner)
+    }
+
     fn draw(&mut self) {
-        let pose = self.capri.pose();
+        let (pose, banner) = self.scene();
         let unit = pose.rect.size.y / 420.0;
         let draw = SpriteDraw {
             min: [pose.rect.min.x, pose.rect.min.y],
@@ -301,8 +389,8 @@ impl Running {
             opacity: 1.0,
         };
         let overlay = &self.overlay;
-        self.renderer.render(&draw, || overlay.pre_present_notify());
-        self.drawn = Some(pose);
+        self.renderer.render(&draw, banner.as_ref(), || overlay.pre_present_notify());
+        self.drawn = Some((pose, banner));
     }
 }
 

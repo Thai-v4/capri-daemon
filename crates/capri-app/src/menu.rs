@@ -9,6 +9,8 @@ use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Action {
     ToggleVisible,
+    /// Brancher ou débrancher le hook de Claude Code.
+    ToggleClaudeHook,
     Quit,
 }
 
@@ -17,15 +19,24 @@ pub struct Menus {
     context: Menu,
     toggles: Vec<MenuItem>,
     toggle_ids: Vec<MenuId>,
+    hooks: Vec<MenuItem>,
+    hook_ids: Vec<MenuId>,
     quit_ids: Vec<MenuId>,
+}
+
+/// Les éléments d'un menu dont on a besoin après sa création.
+struct Built {
+    menu: Menu,
+    toggle: MenuItem,
+    hook: MenuItem,
+    quit: MenuItem,
 }
 
 impl Menus {
     /// À créer une fois la boucle d'événements lancée (exigence de macOS).
     pub fn new() -> Self {
-        let (tray_menu, toggle_a, quit_a) = build_menu();
-        let (context, toggle_b, quit_b) = build_menu();
-        let builder = TrayIconBuilder::new().with_menu(Box::new(tray_menu)).with_tooltip("Capri");
+        let (a, b) = (build_menu(), build_menu());
+        let builder = TrayIconBuilder::new().with_menu(Box::new(a.menu)).with_tooltip("Capri");
         // macOS : icône « modèle », teintée par le système selon le thème clair ou sombre
         #[cfg(target_os = "macos")]
         let builder = builder.with_icon_templated(tray_icon());
@@ -35,10 +46,12 @@ impl Menus {
             builder.build().inspect_err(|err| log::warn!("pas d'icône de barre des menus : {err}")).ok();
         Self {
             _tray: tray,
-            context,
-            toggle_ids: vec![toggle_a.id().clone(), toggle_b.id().clone()],
-            quit_ids: vec![quit_a.id().clone(), quit_b.id().clone()],
-            toggles: vec![toggle_a, toggle_b],
+            context: b.menu,
+            toggle_ids: vec![a.toggle.id().clone(), b.toggle.id().clone()],
+            hook_ids: vec![a.hook.id().clone(), b.hook.id().clone()],
+            quit_ids: vec![a.quit.id().clone(), b.quit.id().clone()],
+            toggles: vec![a.toggle, b.toggle],
+            hooks: vec![a.hook, b.hook],
         }
     }
 
@@ -48,6 +61,8 @@ impl Menus {
         while let Ok(event) = MenuEvent::receiver().try_recv() {
             if self.toggle_ids.contains(&event.id) {
                 actions.push(Action::ToggleVisible);
+            } else if self.hook_ids.contains(&event.id) {
+                actions.push(Action::ToggleClaudeHook);
             } else if self.quit_ids.contains(&event.id) {
                 actions.push(Action::Quit);
             }
@@ -58,6 +73,18 @@ impl Menus {
     pub fn set_visible(&self, visible: bool) {
         for item in &self.toggles {
             item.set_text(if visible { "Cacher Capri" } else { "Montrer Capri" });
+        }
+    }
+
+    /// `Some(true)` : le hook de Claude Code est branché ; `None` : impossible de le savoir.
+    pub fn set_hook_installed(&self, installed: Option<bool>) {
+        for item in &self.hooks {
+            item.set_enabled(installed.is_some());
+            item.set_text(match installed {
+                Some(true) => "Débrancher Claude Code",
+                Some(false) => "Brancher Claude Code",
+                None => "Claude Code : réglages illisibles",
+            });
         }
     }
 
@@ -81,17 +108,18 @@ impl Menus {
     }
 }
 
-fn build_menu() -> (Menu, MenuItem, MenuItem) {
+fn build_menu() -> Built {
     let title = MenuItem::new("Capri — prototype", false, None);
     let shortcut = Accelerator::new(Modifiers::CONTROL | Modifiers::ALT, Code::KeyC);
     let toggle = MenuItem::new("Cacher Capri", true, Some(shortcut));
+    let hook = MenuItem::new("Brancher Claude Code", true, None);
     let quit = MenuItem::new("Quitter", true, None);
     let menu = Menu::new();
-    let separator = PredefinedMenuItem::separator();
-    if let Err(err) = menu.append_items(&[&title, &separator, &toggle, &quit]) {
+    let (first, second) = (PredefinedMenuItem::separator(), PredefinedMenuItem::separator());
+    if let Err(err) = menu.append_items(&[&title, &first, &toggle, &hook, &second, &quit]) {
         log::warn!("menu incomplet : {err}");
     }
-    (menu, toggle, quit)
+    Built { menu, toggle, hook, quit }
 }
 
 /// Un masque stylisé (visage en losange, deux yeux en amande), dessiné à la volée :

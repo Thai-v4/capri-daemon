@@ -12,7 +12,9 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow = "1"
+capri-claude = { path = "../capri-claude" }
 capri-core = { path = "../capri-core" }
+capri-ipc = { path = "../capri-ipc" }
 capri-platform = { path = "../capri-platform" }
 capri-render = { path = "../capri-render" }
 env_logger = "0.11"
