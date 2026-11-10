@@ -165,8 +165,12 @@ impl Problem {
             Self::KeyInClear => {
                 format!("Je n'envoie pas ma clé en clair à {host} : seulement en https, ou à cette machine.")
             }
-            Self::KeyRefused { status: 401, .. } => {
-                format!("{who} refuse ma clé (401). Pour la remettre : {}", how_to(KeyJob::PutBack))
+            Self::KeyRefused { status: 401, reason } => {
+                format!(
+                    "{who} refuse ma clé (401){}. Pour la remettre : {}",
+                    quote(reason),
+                    how_to(KeyJob::PutBack)
+                )
             }
             Self::KeyRefused { status, reason } => {
                 format!(
@@ -443,7 +447,20 @@ fn authorize(
 /// Le refus d'un serveur (`status` hors de 2xx), avec son explication masquée. `sent` : la clé
 /// envoyée avec la requête, s'il y en avait une.
 fn refusal(status: u16, body: &str, provider: Provider, sent: Option<&BoundKey>) -> Problem {
-    let reason = openai::error_message(body).map(|reason| masked(&reason, sent));
+    let said = openai::error_message(body);
+    let reason = said.as_deref().map(|reason| masked(reason, sent));
+    match (status, sent) {
+        // La clé vient d'être refusée, et la raison du fournisseur dit pourquoi (inconnue, mal
+        // formée, révoquée) : on la cite. Certains y rappellent le début ou la fin de la clé :
+        // ici, le moindre morceau est masqué.
+        (401, Some(key)) => {
+            Problem::KeyRefused { status, reason: said.map(|reason| key.redact_any_trace(&brief(&reason))) }
+        }
+        _ => refusal_of(status, reason, provider, sent),
+    }
+}
+
+fn refusal_of(status: u16, reason: Option<String>, provider: Provider, sent: Option<&BoundKey>) -> Problem {
     match status {
         401 | 403 if sent.is_some() => Problem::KeyRefused { status, reason },
         401 | 403 if provider.key_need() != KeyNeed::None => Problem::KeyNeeded { status, reason },
@@ -576,9 +593,13 @@ mod tests {
             "OpenRouter demande une clé, et je n'en ai pas pour openrouter.ai:443. Pour me la donner : capri chat key openrouter"
         );
         assert_eq!(
-            say(Problem::KeyRefused { status: 401, reason: Some("Key ****cdef is not valid".to_owned()) }),
-            "OpenRouter refuse ma clé (401). Pour la remettre : capri chat key openrouter",
-            "le message d'un refus de clé n'est pas cité : il pourrait en montrer un morceau"
+            say(Problem::KeyRefused { status: 401, reason: Some("User not found.".to_owned()) }),
+            "OpenRouter refuse ma clé (401) : User not found. Pour la remettre : capri chat key openrouter",
+            "la raison du fournisseur est citée : c'est elle qui dit si la clé est inconnue ou mal formée"
+        );
+        assert_eq!(
+            say(Problem::KeyRefused { status: 401, reason: None }),
+            "OpenRouter refuse ma clé (401). Pour la remettre : capri chat key openrouter"
         );
         assert_eq!(
             say(Problem::KeyRefused { status: 403, reason: Some("Your input was flagged.".to_owned()) }),
@@ -743,6 +764,25 @@ mod tests {
             Problem::KeyNeeded { status: 401, reason: None }
         );
         // Ollama ne prend pas de clé : un 401 n'est qu'un refus parmi d'autres
+        // un refus de la clé qui en rappelle le début et la fin : rien n'en reste
+        let echoed = r#"{"error":{"message":"Incorrect API key provided: sk-t****6789."}}"#;
+        assert_eq!(
+            refusal(401, echoed, Provider::OpenRouter, Some(&key)),
+            Problem::KeyRefused {
+                status: 401,
+                reason: Some("Incorrect API key provided: [clé masquée]****[clé masquée].".to_owned())
+            }
+        );
+        // la raison qui dit pourquoi, telle qu'OpenRouter la donne pour une clé inconnue
+        assert_eq!(
+            refusal(
+                401,
+                r#"{"error":{"message":"User not found.","code":401}}"#,
+                Provider::OpenRouter,
+                Some(&key)
+            ),
+            Problem::KeyRefused { status: 401, reason: Some("User not found.".to_owned()) }
+        );
         assert_eq!(refusal(401, "", Provider::Ollama, None), Problem::Refused { status: 401, reason: None });
         assert_eq!(
             refusal(429, body, Provider::OpenRouter, Some(&key)),

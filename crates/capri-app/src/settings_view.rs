@@ -543,7 +543,9 @@ mod tests {
         window.press(rubric::TALK, None);
         assert_eq!(
             window.note(rubric::TALK_NOTE),
-            format!("{address} refuse ma clé (401). Pour la remettre : remets-la ci-dessus.")
+            format!(
+                "{address} refuse ma clé (401) : bad key [clé masquée]. Pour la remettre : remets-la ci-dessus."
+            )
         );
         assert!(!format!("{:?}", window.settings.form()).contains(KEY));
         let _ = std::fs::remove_dir_all(directory);

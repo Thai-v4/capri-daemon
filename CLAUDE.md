@@ -188,7 +188,10 @@ précisément quoi vérifier plutôt que de l'affirmer.
   Une clé ne part qu'en `https://`, ou en `http://` vers cette machine même
   (`Endpoint::may_carry_secret`, vérifié par `capri-net` avant toute connexion) ; jamais vers un
   fournisseur qui n'en prend pas. Un message de fournisseur est masqué (`ApiKey::redact`) avant
-  d'être cité, et un 401 n'est jamais cité. Le journal de l'app ne contient jamais les traces
+  d'être cité. Celui d'un refus de la clé (401) est cité aussi, parce que lui seul dit pourquoi
+  (clé inconnue, mal formée, révoquée), mais masqué jusqu'au moindre morceau
+  (`redact_any_trace`) : des fournisseurs y rappellent le début ou la fin de la clé. Le journal
+  de l'app ne contient jamais les traces
   `trace` de ureq (`NoWireLog` dans `main.rs`), qui écrivent les octets échangés sans masque.
 - Trousseau et tests : un test qui touche au vrai trousseau est `#[ignore]`, n'utilise qu'un
   service réservé aux tests et nettoie derrière lui. Pour des essais en ligne de commande :

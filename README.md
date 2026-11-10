@@ -361,7 +361,7 @@ Règle : tout ce qui peut être testé sans écran va dans `capri-core`, `capri-
 
 Vérifié automatiquement :
 
-- formatage, `clippy -D warnings` et 303 tests sur **macOS Apple Silicon** (plus 3 qui ne
+- formatage, `clippy -D warnings` et 305 tests sur **macOS Apple Silicon** (plus 3 qui ne
   tournent qu'à la main : ils écrivent des images, lisent un vrai `settings.json` ou touchent au
   vrai trousseau) : animation, lancer et rebonds, hit-test, clics, bandeau, parole en pages, bulle
   sur plusieurs lignes, conversation, **validation du shader** par le compilateur de wgpu, lecture
@@ -461,9 +461,14 @@ vérifié avant le passage à la fenêtre « Overlay » ; il n'a pas été revé
     d'envoi apparaît pour un fournisseur distant ; la liste de modèles se filtre ; « Essayer » et
     « Utiliser ce cerveau » fonctionnent ; le clavier revient à l'app d'avant à la fermeture.
 
+16. avec de vraies clés rangées depuis la fenêtre, les listes de modèles d'Ollama en ligne et
+    d'OpenRouter arrivent en https, et un refus d'OpenRouter à l'essai (401) s'affiche en rouge.
+    Ces listes sont publiques : les recevoir ne prouve pas que la clé est acceptée.
+
 **Pas encore vérifié** : une vraie conversation avec un fournisseur à clé (OpenRouter, DeepSeek,
-ProxyAPI, Ollama en ligne) ; un vrai LM Studio ; la bulle avec un fournisseur distant ; la demande
-d'accès au trousseau quand `Capri.app` lit une clé rangée depuis le terminal.
+ProxyAPI, Ollama en ligne), aucune n'ayant encore abouti ; un vrai LM Studio ; la bulle avec un
+fournisseur distant ; la demande d'accès au trousseau quand `Capri.app` lit une clé rangée depuis
+le terminal.
 
 **À vérifier à la main : ⌘Q et ⌘H** (le choix du raccourci est testé, pas la fenêtre) :
 
@@ -472,7 +477,9 @@ d'accès au trousseau quand `Capri.app` lit une clé rangée depuis le terminal.
 2. dans le champ ⌃⌥P, ⌘Q et ⌘H ferment seulement le champ, comme Échap ; Capri reste là ;
 3. sans fenêtre ni champ ouverts, rien ne change : « Quitter » dans son menu quitte Capri ;
 4. un message de panne dans la bulle (clé absente ou refusée) dit d'ouvrir « Réglages… », et le
-   même dans la fenêtre dit « remets-la ci-dessus », sans commande.
+   même dans la fenêtre dit « remets-la ci-dessus », sans commande ;
+5. une clé refusée (401) cite la raison que donne le fournisseur (« User not found », par
+   exemple), sans rien de la clé.
 
 **Pas encore testé sur un vrai PC Windows** : il n'y a pas encore de fenêtre de réglages. Le tube
 nommé de `capri-ipc` n'y a jamais tourné, le champ de saisie et la voix n'y existent pas encore,

@@ -28,6 +28,9 @@ pub const MASK: &str = "[clé masquée]";
 /// ordinaire, assez court pour qu'un morceau de clé ne passe pas.
 const MIN_FRAGMENT_CHARS: usize = 8;
 
+/// Le plus court morceau masqué dans le message d'un refus de la clé elle-même.
+const MIN_TRACE_CHARS: usize = 4;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum KeyError {
     #[error("la clé est vide")]
@@ -149,8 +152,19 @@ impl ApiKey {
     /// caractères) est remplacé par [`MASK`]. Pour citer un message venu d'un fournisseur, qui
     /// pourrait la répéter.
     pub fn redact(&self, text: &str) -> String {
+        self.redact_from(text, MIN_FRAGMENT_CHARS)
+    }
+
+    /// Comme [`ApiKey::redact`], mais jusqu'aux plus petits morceaux : pour le message d'un
+    /// fournisseur qui vient de refuser la clé, et qui en cite volontiers le début ou la fin
+    /// (« sk-…abcd »). Quitte à masquer un mot ordinaire qui lui ressemblerait.
+    pub fn redact_any_trace(&self, text: &str) -> String {
+        self.redact_from(text, MIN_TRACE_CHARS)
+    }
+
+    fn redact_from(&self, text: &str, shortest: usize) -> String {
         let key: Vec<char> = self.0.chars().collect();
-        let shortest = MIN_FRAGMENT_CHARS.min(key.len());
+        let shortest = shortest.min(key.len());
         let text: Vec<char> = text.chars().collect();
         let mut redacted = String::with_capacity(text.len());
         let mut at = 0;
@@ -203,6 +217,11 @@ impl BoundKey {
     pub fn redact(&self, text: &str) -> String {
         self.key.redact(text)
     }
+
+    /// `text`, sans le moindre morceau de la clé : voir [`ApiKey::redact_any_trace`].
+    pub fn redact_any_trace(&self, text: &str) -> String {
+        self.key.redact_any_trace(text)
+    }
 }
 
 /// La valeur de l'en-tête `Authorization` qui porte `key` vers `endpoint` pour `provider`, si elle
@@ -221,6 +240,27 @@ pub fn authorization(key: &BoundKey, provider: Provider, endpoint: &Endpoint) ->
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_refusal_that_quotes_the_ends_of_the_key_shows_none_of_it() {
+        let key = ApiKey::parse("sk-test-0123456789abcdef").expect("une clé");
+        // la façon dont des fournisseurs rappellent la clé qu'ils refusent : son début et sa fin
+        assert_eq!(
+            key.redact_any_trace("Incorrect API key provided: sk-t****cdef. Check it."),
+            "Incorrect API key provided: [clé masquée]****[clé masquée]. Check it."
+        );
+        assert_eq!(
+            key.redact_any_trace("User not found."),
+            "User not found.",
+            "un message ordinaire reste entier"
+        );
+        assert_eq!(key.redact_any_trace("bad key sk-test-0123456789abcdef"), "bad key [clé masquée]");
+        // le masquage ordinaire laisse passer un morceau aussi court : c'est pour cela que l'autre existe
+        assert_eq!(key.redact("fin de clé : cdef"), "fin de clé : cdef");
+        assert_eq!(key.redact_any_trace("fin de clé : cdef"), "fin de clé : [clé masquée]");
+        // trois caractères ne disent rien de la clé, et masquer si court abîmerait tout message
+        assert_eq!(key.redact_any_trace("code def"), "code def");
+    }
 
     fn key(text: &str) -> ApiKey {
         ApiKey::parse(text).expect("une clé valable")

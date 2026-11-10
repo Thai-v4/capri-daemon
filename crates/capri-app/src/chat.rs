@@ -484,7 +484,9 @@ mod tests {
         let answer = listen(&mut chat);
         assert_eq!(
             answer,
-            format!("{address} refuse ma clé (401). Pour la remettre : ouvre Réglages… dans mon menu.")
+            format!(
+                "{address} refuse ma clé (401) : bad key [clé masquée]. Pour la remettre : ouvre Réglages… dans mon menu."
+            )
         );
         assert!(!answer.contains(KEY));
         let _ = std::fs::remove_dir_all(directory);

@@ -1540,7 +1540,7 @@ mod tests {
         let ran = run(&directory, &keys, None, &["test"]);
         assert_eq!(
             ran.error.as_deref(),
-            Some(format!("{address} refuse ma clé (401). Pour la remettre : capri chat key custom").as_str())
+            Some(format!("{address} refuse ma clé (401) : bad key [clé masquée]. Pour la remettre : capri chat key custom").as_str())
         );
         assert!(!ran.out.contains(KEY));
         let _ = std::fs::remove_dir_all(directory);

@@ -44,8 +44,12 @@ enum Shortcut {
 fn shortcut(flags: NSEventModifierFlags, key: &str) -> Option<Shortcut> {
     let command = NSEventModifierFlags::Command;
     let shifted = command | NSEventModifierFlags::Shift;
+    // Seules comptent les quatre touches qu'on tient : le verrouillage des majuscules, lui, ne
+    // change pas un raccourci. Sans cela, ⌘Q majuscules verrouillées quitterait Capri.
+    let flags = flags & (shifted | NSEventModifierFlags::Option | NSEventModifierFlags::Control);
+    let key = key.to_lowercase();
     if flags == command {
-        match key {
+        match key.as_str() {
             "x" => Some(Shortcut::Edit(sel!(cut:))),
             "c" => Some(Shortcut::Edit(sel!(copy:))),
             "v" => Some(Shortcut::Edit(sel!(paste:))),
@@ -54,7 +58,7 @@ fn shortcut(flags: NSEventModifierFlags, key: &str) -> Option<Shortcut> {
             "w" | "q" | "h" => Some(Shortcut::Dismiss),
             _ => None,
         }
-    } else if flags == shifted && key.eq_ignore_ascii_case("z") {
+    } else if flags == shifted && key == "z" {
         Some(Shortcut::Edit(sel!(redo:)))
     } else {
         None
@@ -145,6 +149,20 @@ mod tests {
             assert_eq!(shortcut(COMMAND | NSEventModifierFlags::Shift, key), None);
             assert_eq!(shortcut(NSEventModifierFlags::empty(), key), None);
         }
+    }
+
+    #[test]
+    fn caps_lock_changes_nothing() {
+        let locked = COMMAND | NSEventModifierFlags::CapsLock;
+        for key in ["q", "Q", "h", "H", "w", "W"] {
+            assert_eq!(shortcut(locked, key), Some(Shortcut::Dismiss), "⌘{key}, majuscules verrouillées");
+        }
+        assert_eq!(shortcut(locked, "V"), Some(Shortcut::Edit(sel!(paste:))));
+        assert_eq!(
+            shortcut(locked | NSEventModifierFlags::Option, "H"),
+            None,
+            "⌥⌘H n'est toujours pas des nôtres"
+        );
     }
 
     #[test]

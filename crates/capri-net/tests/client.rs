@@ -643,7 +643,10 @@ fn a_refused_key_says_how_to_put_it_back_and_never_quotes_it() {
     let events = ask_with(&brain, Some(&key_for(&brain)));
     assert_eq!(
         events,
-        [failed("OpenRouter refuse ma clé (401). Pour la remettre : ouvre Réglages… dans mon menu.")]
+        [failed(
+            "OpenRouter refuse ma clé (401) : Incorrect API key provided: [clé masquée]. Pour la remettre : \
+             ouvre Réglages… dans mon menu."
+        )]
     );
 
     // un 403 est cité, puisqu'il peut dire autre chose qu'une mauvaise clé, mais masqué
