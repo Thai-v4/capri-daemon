@@ -68,18 +68,49 @@ tourne ses pages au rythme de la lecture. Le champ de saisie n'existe encore que
 ### Lui donner un cerveau
 
 Sans réglage, elle n'a **pas de cerveau** : elle répète ce qu'on lui dit, et rien ne part sur le
-réseau. Pour qu'elle réponde vraiment, donne-lui un modèle local servi par
-[Ollama](https://ollama.com) : ni compte, ni clé, et la conversation ne quitte pas ta machine.
+réseau. Pour qu'elle réponde vraiment, donne-lui un modèle.
+
+**Sur ta machine**, servi par [Ollama](https://ollama.com) ou [LM Studio](https://lmstudio.ai) :
+ni compte, ni clé, et la conversation ne quitte pas ta machine.
 
 ```bash
 brew install ollama
 ollama serve                              # ou, pour qu'il démarre tout seul : brew services start ollama
 ollama pull <modèle>                      # à choisir sur ollama.com/library, selon ta mémoire
 ./target/release/capri chat use ollama    # prend le modèle installé (--model <nom> s'il y en a plusieurs)
+./target/release/capri chat use lmstudio  # ou LM Studio, son serveur local démarré
 ./target/release/capri chat test          # lui parler depuis le terminal
-./target/release/capri chat status        # quel cerveau elle utilise, et s'il répond
+./target/release/capri chat status        # quel cerveau elle utilise, où part ce qu'on lui dit, et s'il répond
 ./target/release/capri chat off           # lui retirer son cerveau
 ```
+
+**Chez un fournisseur, sur Internet** : [OpenRouter](https://openrouter.ai),
+[DeepSeek](https://platform.deepseek.com), [ProxyAPI](https://proxyapi.ru), ou tout autre serveur
+qui parle le format « chat completions » d'OpenAI. Il faut un compte chez lui et sa clé d'API, et
+**ce que tu dis à Capri part alors chez lui**, avec sa personnalité, à chaque message :
+`capri chat use` le rappelle.
+
+```bash
+./target/release/capri chat key openrouter                # colle la clé : elle ne s'affiche pas
+pbpaste | ./target/release/capri chat key openrouter      # ou depuis le presse-papiers (macOS)
+./target/release/capri chat models openrouter <mot>       # chercher le nom d'un modèle
+./target/release/capri chat use openrouter --model <nom>  # le nom est obligatoire chez un fournisseur
+./target/release/capri chat test
+./target/release/capri chat key openrouter --forget       # retirer la clé du trousseau
+```
+
+| fournisseur  | adresse par défaut             | clé                                         |
+| ------------ | ------------------------------ | ------------------------------------------- |
+| `ollama`     | `http://localhost:11434/v1`    | aucune                                      |
+| `lmstudio`   | `http://localhost:1234/v1`     | facultative (si tu en exiges une dans LM Studio) |
+| `openrouter` | `https://openrouter.ai/api/v1` | obligatoire                                 |
+| `deepseek`   | `https://api.deepseek.com`     | obligatoire                                 |
+| `proxyapi`   | `https://api.proxyapi.ru/v1`   | obligatoire                                 |
+| `custom`     | à donner avec `--url`          | facultative                                 |
+
+`--url` remplace l'adresse de n'importe lequel, par exemple `--url http://192.168.1.20:11434/v1`
+pour un Ollama qui tourne ailleurs chez toi. Les adresses viennent de la documentation de chaque
+fournisseur, relue le 10 novembre 2026.
 
 Le choix vaut dès ta phrase suivante, sans relancer Capri. Dans son menu, « La faire taire » coupe
 sa réponse (le modèle cesse d'écrire) et « Nouvelle conversation » lui fait oublier ce qui s'est
@@ -94,17 +125,34 @@ Ce que Capri garantit :
 - **seules sa personnalité et la conversation partent vers le modèle** : jamais ce que fait
   Claude Code, ni rien d'autre de ta machine ;
 - **elle ne parle qu'à l'adresse choisie** : aucun proxy, même si l'environnement en déclare un,
-  et aucune redirection suivie ;
+  aucune redirection suivie, et aucun en-tête qui la présente au fournisseur ;
 - **en clair (`http://`), seulement vers cette machine ou un réseau privé** donné par son adresse
-  IP, par exemple `--url http://192.168.1.20:11434/v1` pour un Ollama qui tourne ailleurs chez
-  toi. Toute autre adresse en `http://` est refusée ;
+  IP. Toute autre adresse en `http://` est refusée ;
+- **en `https://`, le TLS du système** (Security.framework sur macOS, SChannel sur Windows) et les
+  certificats auxquels il fait confiance : un certificat refusé arrête tout, avant le moindre mot ;
+- **la clé ne vit que dans le trousseau du système** (le trousseau de session sur macOS, le
+  Gestionnaire d'identification sur Windows) : jamais dans `chat.json` ni ailleurs sur le disque,
+  jamais dans le journal, jamais à l'écran, jamais en argument d'une commande.
+  `capri chat status` dit si elle est là, sans la montrer ;
+- **une clé ne part jamais en clair** : seulement en `https://`, ou vers cette machine même,
+  jamais en `http://` sur le réseau, même privé. Un fournisseur qui n'en prend pas (Ollama) n'en
+  reçoit jamais ;
+- si un fournisseur répète la clé dans un message d'erreur, elle y est masquée ; une clé refusée
+  se dit dans sa bulle, avec la commande pour la remettre ;
 - **tout est borné** : le temps de connexion, le silence du serveur (deux minutes), la longueur
   d'une réponse.
 
 Ce qu'il faut savoir :
 
-- pas encore de `https://` : les fournisseurs à clé (OpenRouter, DeepSeek, ProxyAPI, Anthropic)
-  arrivent avec le lot suivant, leurs clés dans le trousseau du système ;
+- **sur macOS, un élément du trousseau appartient à l'app qui l'a rangé**. Une autre app doit
+  en demander l'accès, et macOS te pose la question : c'est ce qui devrait arriver quand
+  `Capri.app` lit une clé rangée depuis le terminal, ou après une reconstruction. Réponds
+  « Toujours autoriser ». Cette demande n'a pas encore été vue à la main ;
+- une seule clé par fournisseur : `custom` n'en a qu'une, quel que soit le serveur ;
+- « La faire taire » ferme la connexion, mais un fournisseur peut compter la réponse entière quand
+  même : OpenRouter le précise pour une partie des fournisseurs qu'il sert ;
+- sous Linux, ni `https://` ni trousseau (il y faudrait OpenSSL et un autre trousseau) : seulement
+  un modèle sur la machine ou le réseau privé ;
 - Ollama décharge le modèle après quelques minutes sans rien lui demander : la réponse suivante
   met alors quelques secondes à commencer ;
 - avec un modèle « à réflexion », la bulle reste sur « … » pendant qu'il réfléchit : il n'y a pas
@@ -195,10 +243,11 @@ Aucune permission système n'est nécessaire. Pour plus de détails dans le term
 crates/
   capri-core/      logique pure : animation, mouvement, lancer, hit-test, bandeau, parole (testée)
   capri-claude/    logique pure : hooks de Claude Code, protocole, sessions, settings.json (testée)
-  capri-chat/      logique pure : conversation, format des fournisseurs, flux de réponse, règles
-                   d'adresse, réglages du cerveau, personnalité, phrases à dire, dictée (testée)
-  capri-net/       le seul crate qui parle au réseau : envoyer la conversation, lire la réponse
-                   au fil de l'eau (testé contre un faux serveur local)
+  capri-chat/      logique pure : conversation, fournisseurs et format « chat completions », flux
+                   de réponse, règles d'adresse et de clé, réglages du cerveau, personnalité,
+                   phrases à dire, dictée (testée)
+  capri-net/       le seul crate qui parle au réseau : envoyer la conversation (en https par le TLS
+                   du système), lire la réponse au fil de l'eau (testé contre un faux serveur local)
   capri-render/    rendu wgpu : Metal sur macOS, DirectX 12 + DirectComposition sur Windows
     sprite.wgsl    le shader : boil et copie violette
     banner.rs      le texte du bandeau et de la bulle, tracé avec les polices du système
@@ -207,6 +256,8 @@ crates/
     macos/input.rs   le champ de saisie : le seul panneau qui prend le clavier, sur demande
     voice.rs         sa voix ; macos/voice.rs : la synthèse vocale du système
     ear.rs           son oreille ; macos/ear.rs : le micro et la reconnaissance sur l'appareil
+    keychain.rs      le trousseau des clés d'API ; macos/keychain.rs, windows/keychain.rs
+    terminal.rs      taper une clé sans qu'elle s'affiche
     winit_overlay.rs fenêtre winit, pour Windows et les autres systèmes
     windows.rs       Win32 via windows-sys
     other.rs         repli (Linux : affichage seul)
@@ -215,7 +266,7 @@ crates/
     windows.rs       tube nommé au nom aléatoire
   capri-hook/      le binaire appelé par les hooks de Claude Code
   capri-app/       l'application : boucle, souris, menus, raccourci, images, bandeau, bulle,
-                   voix, écoute, et les commandes `capri hook`, `capri chat`, `capri voice`,
+                   voix, écoute, clés, et les commandes `capri hook`, `capri chat`, `capri voice`,
                    `capri ear`
 tools/             récupération vérifiée des images, fabrication de Capri.app (macOS)
 ```
@@ -227,9 +278,10 @@ Règle : tout ce qui peut être testé sans écran va dans `capri-core`, `capri-
 
 Vérifié automatiquement :
 
-- formatage, `clippy -D warnings` et 211 tests sur **macOS Apple Silicon** : animation, lancer et
-  rebonds, hit-test, clics, bandeau, parole en pages, bulle sur plusieurs lignes, conversation,
-  **validation du shader** par le compilateur de wgpu, lecture
+- formatage, `clippy -D warnings` et 250 tests sur **macOS Apple Silicon** (plus 3 qui ne
+  tournent qu'à la main : ils écrivent des images, lisent un vrai `settings.json` ou touchent au
+  vrai trousseau) : animation, lancer et rebonds, hit-test, clics, bandeau, parole en pages, bulle
+  sur plusieurs lignes, conversation, **validation du shader** par le compilateur de wgpu, lecture
   des exemples de hooks de la documentation de Claude Code, suivi des sessions, aller-retour sur
   `settings.json`, socket (droits, connexions simultanées), et le binaire `capri-hook` lancé pour
   de vrai (sortie standard vide, code 0, durée bornée) ;
@@ -238,12 +290,30 @@ Vérifié automatiquement :
   qui est montré n'est jamais repris), et le client réseau contre un faux serveur local (requête
   envoyée, arrêt en cours de réponse, refus, redirection jamais suivie, serveur muet, réponse
   coupée ou sans fin) ;
+- la clé, sans sortir de la machine : la règle « jamais en clair » adresse par adresse, son
+  masquage dans un message (entière ou en morceaux), l'en-tête `Authorization: Bearer` tel que le
+  voit un faux serveur local (présent une seule fois, jamais dans le corps, absent sans clé ou
+  pour Ollama), aucun contact sans la clé exigée, les refus 401 et 403, et `https://` qui ne
+  retombe jamais en clair face à un serveur qui répond en clair ; les commandes `capri chat` avec
+  un trousseau en mémoire (la clé n'apparaît ni dans une sortie, ni dans une erreur, ni dans un
+  fichier) ;
 - la voix, pour ce qui se teste sans haut-parleur : le découpage en phrases quel que soit le
   rythme d'arrivée du texte, ce qui se prononce ou non, et le choix de la voix ;
 - l'écoute, pour ce qui se teste sans micro : le déroulé d'une prise de parole (texte provisoire,
   dernier mot attendu puis abandonné, silence, abandon) ;
 - `clippy -D warnings` en compilation croisée pour **Windows x64** et **Linux x64** (le code
   compile, il n'est pas exécuté).
+
+**Vérifié en ligne de commande sur ce Mac** (le 10 novembre 2026, sans la clé d'un vrai
+fournisseur) :
+
+- `https://` par le TLS du système : la liste publique des modèles d'OpenRouter est lue ; des
+  certificats expiré, auto-signé, à un autre nom et de racine inconnue (badssl.com) sont
+  refusés ;
+- une clé factice rangée dans le vrai trousseau (sous un service d'essai), tapée dans un vrai
+  terminal sans s'afficher (l'écho revient ensuite) ou lue sur l'entrée standard, puis envoyée à
+  un faux serveur local dans `Authorization: Bearer`, et retirée ;
+- le test qui touche au vrai trousseau, lancé une fois à la main.
 
 Le rendu réel sous Linux avec un GPU logiciel (le sprite s'affiche, flotte et « bout ») avait été
 vérifié avant le passage à la fenêtre « Overlay » ; il n'a pas été revérifié depuis.
@@ -275,9 +345,14 @@ vérifié avant le passage à la fenêtre « Overlay » ; il n'a pas été revé
     en maintenant ⌃⌥D, la bulle bleue montre ce qu'elle comprend, la phrase part au relâchement,
     elle se tait quand on lui coupe la parole, et un appui sans rien dire ne lui envoie rien.
 
+**Pas encore vérifié** : une vraie conversation avec un fournisseur à clé (OpenRouter, DeepSeek,
+ProxyAPI) ; un vrai LM Studio ; la bulle avec un fournisseur distant ; la demande d'accès au
+trousseau quand `Capri.app` lit une clé rangée depuis le terminal.
+
 **Pas encore testé sur un vrai PC Windows** : y repasser les points 1 à 5, puis 8 à 10. Le tube
 nommé de `capri-ipc` n'y a jamais tourné, le champ de saisie et la voix n'y existent pas encore,
-et le chat n'y a jamais été lancé.
+et le chat n'y a jamais été lancé : ni le https (SChannel), ni le Gestionnaire d'identification,
+ni la saisie d'une clé sans écho n'y ont tourné.
 
 Points à surveiller :
 
@@ -294,11 +369,11 @@ Points à surveiller :
 2. ~~Le hook Claude Code : un petit binaire Rust, une socket Unix réservée à ton utilisateur, et
    un bandeau qui affiche ce que fait Claude~~ ← jalon 2
 3. Elle s'assoit sur tes fenêtres (macOS : CoreGraphics + Accessibilité ; Windows : Win32).
-4. Le chat avec un modèle d'IA : ~~la saisie et la bulle~~, ~~un modèle local par Ollama~~, puis
-   les fournisseurs à clé (OpenRouter, DeepSeek, ProxyAPI, Anthropic) avec leurs clés dans le
-   trousseau, et Capri dans Claude Code pour qui a un abonnement. Sa voix : ~~ses réponses
-   dites à voix haute~~, ~~lui parler au micro~~ (reconnaissance sur la machine), puis un mot
-   d'éveil.
+4. Le chat avec un modèle d'IA : ~~la saisie et la bulle~~, ~~un modèle local par Ollama~~,
+   ~~les fournisseurs à clé compatibles OpenAI (OpenRouter, DeepSeek, ProxyAPI) avec leurs clés
+   dans le trousseau~~, puis l'API d'Anthropic, et Capri dans Claude Code pour qui a un
+   abonnement. Sa voix : ~~ses réponses dites à voix haute~~, ~~lui parler au micro~~
+   (reconnaissance sur la machine), puis un mot d'éveil.
 5. App signée et notarisée (`.app` / installeur), mises à jour.
 
 ## Licence
