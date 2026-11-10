@@ -382,7 +382,7 @@ impl SettingsWindow {
         );
         panel.setAutorecalculatesKeyViewLoop(true);
 
-        let content = EditKeysView::create(mtm, frame, true);
+        let content = EditKeysView::create(mtm, frame);
         let tabs = NSTabView::initWithFrame(
             mtm.alloc(),
             NSRect::new(NSPoint::new(12.0, 12.0), NSSize::new(WIDTH - 24.0, HEIGHT - 24.0)),
