@@ -69,7 +69,8 @@ impl Menus {
             #[cfg(target_os = "macos")]
             RawWindowHandle::AppKit(h) => {
                 // SAFETY: `ns_view` est la vue vivante de la fenêtre, utilisée sur le thread principal.
-                unsafe { self.context.show_context_menu_for_nsview(h.ns_view.as_ptr(), None) };
+                let picked = unsafe { self.context.show_context_menu_for_nsview(h.ns_view.as_ptr(), None) };
+                log::debug!("menu contextuel refermé (choix fait : {picked})");
             }
             #[cfg(windows)]
             RawWindowHandle::Win32(h) => {

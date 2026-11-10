@@ -30,6 +30,10 @@ use other as imp;
 /// Sinon, Capri s'affiche mais ne peut pas être attrapée.
 pub const INTERACTIVE: bool = cfg!(any(target_os = "macos", windows));
 
+/// Sur ce système, Ctrl + clic principal vaut-il un clic secondaire ? Sur macOS oui, et le
+/// système l'envoie à l'app comme un clic principal avec Ctrl enfoncé.
+pub const CTRL_CLICK_IS_SECONDARY: bool = cfg!(target_os = "macos");
+
 /// Réglages de la boucle d'événements (macOS : pas d'icône dans le Dock).
 pub fn configure_event_loop<T: 'static>(builder: &mut EventLoopBuilder<T>) {
     imp::configure_event_loop(builder);

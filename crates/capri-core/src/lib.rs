@@ -7,9 +7,11 @@
 pub mod anim;
 pub mod body;
 pub mod geom;
+pub mod input;
 pub mod mask;
 
 pub use anim::{FRAME_RATE, Sheet, frame_at};
 pub use body::{Capri, Pose, Stance};
 pub use geom::{Rect, Vec2};
+pub use input::{Button, Press, interpret_press};
 pub use mask::AlphaMask;

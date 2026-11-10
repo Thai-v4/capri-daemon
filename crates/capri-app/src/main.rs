@@ -13,13 +13,14 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
-use capri_core::{AlphaMask, Capri, Pose, Rect, Vec2, frame_at};
+use capri_core::{AlphaMask, Button, Capri, Pose, Press, Rect, Vec2, frame_at, interpret_press};
 use capri_render::{Renderer, SpriteDraw, SpriteImage};
 use global_hotkey::hotkey::{Code, HotKey, Modifiers};
 use global_hotkey::{GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState};
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, MouseButton, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
+use winit::keyboard::ModifiersState;
 use winit::window::{Window, WindowId, WindowLevel};
 
 /// Sa hauteur à l'écran, en points (pixels logiques).
@@ -47,6 +48,8 @@ struct App {
     sprite: Option<assets::Sprite>,
     running: Option<Running>,
     hidden: bool,
+    /// Touches modificatrices enfoncées, telles que la fenêtre les a vues en dernier.
+    modifiers: ModifiersState,
     hotkey: Option<(GlobalHotKeyManager, u32)>,
     #[cfg(any(target_os = "macos", windows))]
     menus: Option<menu::Menus>,
@@ -94,26 +97,43 @@ impl ApplicationHandler for App {
             WindowEvent::CursorMoved { position, .. } => {
                 r.cursor = Some(Vec2::new(position.x as f32, position.y as f32));
             }
+            // winit met cet état à jour à chaque clic, juste avant `MouseInput`, même quand la
+            // fenêtre n'a pas le clavier : il est donc fiable pour reconnaître Ctrl + clic.
+            WindowEvent::ModifiersChanged(modifiers) => self.modifiers = modifiers.state(),
             WindowEvent::MouseInput { state, button, .. } => {
                 // le curseur le plus frais, même si aucun mouvement n'est arrivé depuis
                 r.read_cursor();
                 let now = r.seconds();
-                match (button, state) {
-                    (MouseButton::Left, ElementState::Pressed) => {
-                        if let Some(c) = r.cursor.filter(|&c| r.is_over(c)) {
-                            r.capri.grab(c, now);
+                match state {
+                    ElementState::Pressed => {
+                        let on_her = r.cursor.filter(|&c| r.is_over(c));
+                        let ctrl = self.modifiers.control_key();
+                        let press = interpret_press(
+                            core_button(button),
+                            ctrl,
+                            capri_platform::CTRL_CLICK_IS_SECONDARY,
+                        );
+                        log::debug!(
+                            "appui {button:?} (Ctrl : {ctrl}, sur elle : {}) → {press:?}",
+                            on_her.is_some()
+                        );
+                        match (press, on_her) {
+                            (Press::Grab, Some(c)) => r.capri.grab(c, now),
+                            (Press::Menu, Some(_)) =>
+                            {
+                                #[cfg(any(target_os = "macos", windows))]
+                                if let Some(menus) = &self.menus {
+                                    menus.show_context(&r.window);
+                                }
+                            }
+                            _ => {}
                         }
                     }
-                    (MouseButton::Left, ElementState::Released) => r.capri.release(now),
-                    (MouseButton::Right, ElementState::Pressed) => {
-                        #[cfg(any(target_os = "macos", windows))]
-                        if r.cursor.is_some_and(|c| r.is_over(c))
-                            && let Some(menus) = &self.menus
-                        {
-                            menus.show_context(&r.window);
+                    ElementState::Released => {
+                        if button == MouseButton::Left {
+                            r.capri.release(now);
                         }
                     }
-                    _ => {}
                 }
             }
             WindowEvent::RedrawRequested => r.draw(),
@@ -296,6 +316,15 @@ impl Running {
         let window = Arc::clone(&self.window);
         self.renderer.render(&draw, || window.pre_present_notify());
         self.drawn = Some(pose);
+    }
+}
+
+/// Le bouton de winit, dans le vocabulaire de `capri-core`.
+fn core_button(button: MouseButton) -> Button {
+    match button {
+        MouseButton::Left => Button::Primary,
+        MouseButton::Right => Button::Secondary,
+        _ => Button::Other,
     }
 }
 
