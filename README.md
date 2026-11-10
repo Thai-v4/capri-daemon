@@ -271,6 +271,9 @@ vérifié avant le passage à la fenêtre « Overlay » ; il n'a pas été revé
     conversation, l'oublie avec « Nouvelle conversation », et « La faire taire » coupe sa réponse ;
 13. sa voix dit la réponse phrase par phrase, se coupe net avec « La faire taire », se met en
     pause quand on cache Capri et reprend à son retour ; « Couper sa voix » la rend muette.
+14. depuis `Capri.app`, macOS demande le micro et la reconnaissance vocale à la première écoute ;
+    en maintenant ⌃⌥D, la bulle bleue montre ce qu'elle comprend, la phrase part au relâchement,
+    elle se tait quand on lui coupe la parole, et un appui sans rien dire ne lui envoie rien.
 
 **Pas encore testé sur un vrai PC Windows** : y repasser les points 1 à 5, puis 8 à 10. Le tube
 nommé de `capri-ipc` n'y a jamais tourné, le champ de saisie et la voix n'y existent pas encore,
