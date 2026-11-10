@@ -369,6 +369,15 @@ name = "capri-core"
 version = "0.1.0"
 
 [[package]]
+name = "capri-ipc"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "thiserror 2.0.21",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "capri-platform"
 version = "0.1.0"
 dependencies = [
