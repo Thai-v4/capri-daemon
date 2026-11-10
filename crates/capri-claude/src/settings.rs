@@ -70,7 +70,25 @@ impl Status {
     pub fn is_installed(&self) -> bool {
         !self.events.is_empty()
     }
+
+    /// Où en est le branchement, en une phrase : la même pour `capri hook status` et pour la
+    /// fenêtre de réglages, qui y ajoutent chacune leur conseil.
+    pub fn describe(&self) -> String {
+        if !self.is_installed() {
+            return "Claude Code n'est pas branché sur Capri.".to_owned();
+        }
+        let coverage = if self.is_complete() {
+            "tous les événements suivis"
+        } else {
+            "une partie seulement des événements"
+        };
+        format!("Claude Code est branché sur Capri ({} événements, {coverage}).", self.events.len())
+    }
 }
+
+/// `disableAllHooks` est activé dans le fichier.
+pub const ALL_HOOKS_DISABLED: &str =
+    "Attention : « disableAllHooks » est activé dans ce fichier, aucun hook ne s'exécute.";
 
 /// Le texte du fichier une fois le hook branché sur `hook_command` (chemin absolu du binaire).
 /// Un texte vide vaut un fichier absent. Rebrancher remplace l'ancien branchement.

@@ -9,14 +9,17 @@
 //! textes de la fenêtre, à partir des mêmes règles et des mêmes phrases que la ligne de commande
 //! (`brain`, `key`, `phrases`, `voice`).
 //!
-//! La fenêtre est faite de rubriques ([`Rubric`]), une par onglet. Ajouter une rubrique, c'est
-//! écrire un module comme [`brain`] ou [`voice`] et l'inscrire dans [`Settings::new`] ; si elle
+//! La fenêtre est faite de rubriques ([`Rubric`]), une par onglet : [`brain`], [`voice`],
+//! [`claude`]. Ajouter une rubrique, c'est écrire un module comme eux et l'inscrire dans
+//! [`Settings::new`] ; si elle
 //! demande au système quelque chose qu'aucun [`Effect`] ne sait encore faire, il faut aussi la
 //! variante et son exécution dans `capri-app` (`settings_view.rs`).
 //!
 //! Les identifiants des lignes commencent par celui de leur rubrique (`brain.provider`) : c'est
 //! ainsi qu'un événement trouve la sienne.
 
+use capri_claude::settings::Status;
+use capri_claude::style::{Installed, Removed, StyleState};
 use capri_core::form::{Form, FormEvent, Row, Section};
 
 use crate::brain::{Brain, Provider};
@@ -25,6 +28,7 @@ use crate::key::{ApiKey, KeyAccount};
 use crate::voice::{VoiceInfo, VoiceSettings};
 
 pub mod brain;
+pub mod claude;
 pub mod voice;
 
 /// Le titre de la fenêtre.
@@ -72,6 +76,47 @@ pub enum Effect {
     SaveVoice(VoiceSettings),
     /// Dire `text` à voix haute, avec cette voix (`None` : celle du système). Sans résultat.
     SayAloud { voice: Option<String>, text: String },
+    /// Relire ce que sait la rubrique « Claude Code » (`capri hook status`) : le branchement dans
+    /// `settings.json`, le miroir, le style : [`Outcome::ClaudeLoaded`].
+    LoadClaude,
+    /// Brancher le hook (`capri hook install`), ou le débrancher (`capri hook uninstall`) :
+    /// [`Outcome::HookChanged`].
+    ChangeHook { plug: bool },
+    /// Activer ou désactiver le miroir (`capri hook mirror on|off`) : [`Outcome::MirrorSaved`].
+    SaveMirror(bool),
+    /// Installer le style de sortie (`capri hook style install`) : [`Outcome::StyleInstalled`].
+    InstallStyle,
+    /// Le retirer (`capri hook style uninstall`) : [`Outcome::StyleRemoved`].
+    RemoveStyle,
+}
+
+/// Ce que la fenêtre sait du branchement de Claude Code.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HookState {
+    /// `settings.json`, tel qu'il s'affiche.
+    pub file: String,
+    pub status: Status,
+    /// Un des binaires qu'appellent ces hooks est introuvable.
+    pub missing_binary: bool,
+}
+
+/// Ce qu'a fait un branchement ou un débranchement.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HookChange {
+    /// L'état relu après coup.
+    pub state: HookState,
+    /// Le fichier a-t-il changé ?
+    pub changed: bool,
+    /// La copie de l'original, s'il y en a une.
+    pub backup: Option<String>,
+}
+
+/// Le fichier du style de sortie, et ce qu'on y trouve.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StyleFile {
+    /// Son chemin, tel qu'il s'affiche.
+    pub file: String,
+    pub state: StyleState,
 }
 
 /// Le résultat d'un [`Effect`]. Une erreur est le message à montrer, tel que le dirait la ligne
@@ -116,6 +161,20 @@ pub enum Outcome {
         voices: Vec<VoiceInfo>,
     },
     VoiceSaved(Result<VoiceSettings, String>),
+    /// `mirror` : le miroir est-il activé ?
+    ClaudeLoaded {
+        hook: Result<HookState, String>,
+        mirror: Result<bool, String>,
+        style: Result<StyleFile, String>,
+    },
+    HookChanged {
+        plug: bool,
+        result: Result<HookChange, String>,
+    },
+    /// Le miroir est maintenant activé (`true`) ou désactivé.
+    MirrorSaved(Result<bool, String>),
+    StyleInstalled(Result<(StyleFile, Installed), String>),
+    StyleRemoved(Result<(StyleFile, Removed), String>),
 }
 
 /// Ce qu'il est advenu d'une ancienne clé, rangée sans adresse, quand on en range une nouvelle.
@@ -174,6 +233,7 @@ impl Settings {
         Self::with(vec![
             Box::new(brain::BrainRubric::new(environment)),
             Box::new(voice::VoiceRubric::new(environment)),
+            Box::new(claude::ClaudeRubric::new()),
         ])
     }
 
@@ -317,12 +377,13 @@ mod tests {
             [
                 Task { rubric: "brain", effect: Effect::LoadBrain },
                 Task { rubric: "voice", effect: Effect::LoadVoice },
+                Task { rubric: "claude", effect: Effect::LoadClaude },
             ]
         ));
         let form = settings.form();
         assert_eq!(
             form.sections.iter().map(|section| section.title.as_str()).collect::<Vec<_>>(),
-            ["Cerveau", "Voix"]
+            ["Cerveau", "Voix", "Claude Code"]
         );
         assert!(form.duplicate_ids().is_empty(), "{:?}", form.duplicate_ids());
         for section in &form.sections {

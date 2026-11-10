@@ -432,6 +432,7 @@ impl App {
                     }
                     self.refresh_voice_menu();
                 }
+                settings_view::Change::Hook => self.refresh_hook_menu(),
             }
         }
     }
@@ -439,10 +440,14 @@ impl App {
     /// Un pas de la répétition des réglages, s'il y en a une : chaque fournisseur, du dernier au
     /// premier, puis une clé factice collée dans le champ secret d'OpenRouter, rangée (dans le
     /// trousseau que désigne `CAPRI_KEYCHAIN_SERVICE`) et retirée. Le journal dit ce que la
-    /// fenêtre affiche, jamais la clé.
+    /// fenêtre affiche, jamais la clé. Puis, seulement si `CLAUDE_CONFIG_DIR` et
+    /// `CAPRI_CONFIG_DIR` désignent des dossiers d'essai, la rubrique « Claude Code » : le style
+    /// installé et retiré, Claude Code branché et débranché, le miroir activé et désactivé, par
+    /// les boutons de la vraie fenêtre.
     #[cfg(all(debug_assertions, any(target_os = "macos", windows)))]
     fn rehearse(&mut self, event_loop: &ActiveEventLoop) {
-        use capri_chat::settings::brain;
+        use capri_chat::settings::{brain, claude};
+        use capri_core::form::FormEvent;
         let Some(rehearsal) = self.rehearsal.as_mut() else { return };
         if Instant::now() < rehearsal.next {
             return;
@@ -487,6 +492,46 @@ impl App {
                 log::info!("répétition : après « Retirer la clé » : {}", note(view, brain::KEY_NOTE));
                 log::info!("répétition : état de la clé : {}", note(view, brain::KEY_STATUS));
                 log::info!("répétition : la fenêtre a le clavier : {}", view.has_keyboard());
+            }
+            Some(4) => {
+                let set = |name: &str| std::env::var_os(name).is_some_and(|value| !value.is_empty());
+                if !(set("CLAUDE_CONFIG_DIR") && set("CAPRI_CONFIG_DIR")) {
+                    log::info!(
+                        "répétition : rubrique Claude Code sautée, faute de CLAUDE_CONFIG_DIR et CAPRI_CONFIG_DIR d'essai"
+                    );
+                    rehearsal.step = usize::MAX - 1;
+                    return;
+                }
+                log::info!("répétition : branchement : {}", note(view, claude::HOOK));
+                log::info!("répétition : style : {}", note(view, claude::STYLE));
+                view.rehearse_press(claude::INSTALL_STYLE);
+            }
+            Some(5) => {
+                log::info!(
+                    "répétition : après « Installer le style Capri » : {}",
+                    note(view, claude::STYLE_NOTE)
+                );
+                view.rehearse_press(claude::REMOVE_STYLE);
+            }
+            Some(6) => {
+                log::info!("répétition : après « Retirer » : {}", note(view, claude::STYLE_NOTE));
+                view.rehearse_press(claude::PLUG);
+            }
+            Some(7) => {
+                log::info!("répétition : après « Brancher » : {}", note(view, claude::HOOK_NOTE));
+                log::info!("répétition : branchement : {}", note(view, claude::HOOK));
+                view.rehearse_press(claude::UNPLUG);
+            }
+            Some(8) => {
+                log::info!("répétition : après « Débrancher » : {}", note(view, claude::HOOK_NOTE));
+                view.rehearse_event(FormEvent::Toggled { id: claude::MIRROR.to_owned(), checked: true });
+            }
+            Some(9) => {
+                log::info!("répétition : miroir coché : {}", note(view, claude::MIRROR_NOTE));
+                view.rehearse_event(FormEvent::Toggled { id: claude::MIRROR.to_owned(), checked: false });
+            }
+            Some(10) => {
+                log::info!("répétition : miroir décoché : {}", note(view, claude::MIRROR_NOTE));
             }
             Some(_) => {
                 log::info!("répétition finie");
@@ -579,6 +624,9 @@ impl App {
             r.banner.notify(text, tone);
         }
         self.refresh_hook_menu();
+        if let Some(view) = self.settings.as_mut() {
+            view.reload_claude();
+        }
     }
 
     /// Accorde le menu à ce que dit le fichier de réglages de Claude Code.

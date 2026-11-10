@@ -301,15 +301,10 @@ fn hook_status(settings_file: &Path) -> Result<()> {
     let status = status(settings_file)?;
     println!("réglages : {}", settings_file.display());
     if !status.is_installed() {
-        println!("Claude Code n'est pas branché sur Capri. Pour le brancher : capri hook install");
+        println!("{} Pour le brancher : capri hook install", status.describe());
         return Ok(());
     }
-    let coverage = if status.is_complete() {
-        "tous les événements suivis"
-    } else {
-        "une partie seulement des événements"
-    };
-    println!("Claude Code est branché sur Capri ({} événements, {coverage}).", status.events.len());
+    println!("{}", status.describe());
     for command in &status.commands {
         let found = if Path::new(command).is_file() {
             "présent"
@@ -319,7 +314,7 @@ fn hook_status(settings_file: &Path) -> Result<()> {
         println!("binaire  : {command} ({found})");
     }
     if status.all_hooks_disabled {
-        println!("attention : « disableAllHooks » est activé dans ce fichier, aucun hook ne s'exécute.");
+        println!("{}", settings::ALL_HOOKS_DISABLED);
     }
     Ok(())
 }

@@ -7,6 +7,9 @@ publish.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+# Ce que Capri sait de Claude Code (logique pure) : la rubrique « Claude Code » de la fenêtre de
+# réglages en reprend les états et les phrases, celles de `capri hook`.
+capri-claude = { path = "../capri-claude" }
 # La description du formulaire de réglages, que le modèle des réglages produit (logique pure).
 capri-core = { path = "../capri-core" }
 # Lire et écrire du JSON : le format des fournisseurs et le fichier de réglages.

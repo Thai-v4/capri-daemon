@@ -2,8 +2,10 @@
 //! (`capri_platform::SettingsWindow`), et l'exécution de ce que le modèle demande.
 //!
 //! Les effets passent par les mêmes fonctions que la ligne de commande : `brain_setup` (fichier
-//! `chat.json`, liste des modèles, essai), `keys` (trousseau) et `voice_setup` (`voice.json`,
-//! voix installées). Ce qui attend le réseau ou le trousseau (qui peut attendre une réponse de
+//! `chat.json`, liste des modèles, essai), `keys` (trousseau), `voice_setup` (`voice.json`,
+//! voix installées), `hook_setup` (`settings.json` de Claude Code, avec sa sauvegarde et son
+//! écriture d'un seul coup ; le miroir) et `style_setup` (le style de sortie), comme
+//! `capri hook`. Ce qui attend le réseau ou le trousseau (qui peut attendre une réponse de
 //! l'utilisateur) tourne sur un thread à part ; les fichiers, petits, et la voix, qui vit sur le
 //! thread principal, sont traités sur place. Les résultats sont relevés à chaque pas de la boucle,
 //! comme le reste de l'app.
@@ -11,25 +13,51 @@
 //! Le journal ne garde que la sorte de chaque opération : jamais une clé, ni ce que répond le
 //! cerveau à l'essai.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, Sender, channel};
 
-use capri_chat::settings::{Done, Effect, Environment, Forgotten, LegacyKey, Outcome, Settings, Task};
+use capri_chat::settings::{
+    Done, Effect, Environment, Forgotten, HookChange, HookState, LegacyKey, Outcome, Settings, StyleFile,
+    Task,
+};
 use capri_chat::{Place, persona};
+use capri_claude::mirror::MirrorSettings;
 use capri_core::form::{Form, FormEvent};
 use capri_net::Client;
 use capri_platform::{SettingsWindow, SettingsWindowError, Voice};
 
 use crate::keys::{self, KeyStore};
-use crate::{brain_setup, voice_setup};
+use crate::{brain_setup, hook_setup, style_setup, voice_setup};
 
 /// Ce que l'app doit savoir de ce qui vient de changer.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Change {
     /// Sa voix vient d'être activée ou coupée.
     Voice { enabled: bool },
+    /// Claude Code vient d'être branché ou débranché : le menu doit le dire.
+    Hook,
+}
+
+/// Où sont les fichiers de Claude Code et le hook : les mêmes que pour `capri hook`.
+struct ClaudePlaces {
+    /// `settings.json`.
+    settings_file: Result<PathBuf, String>,
+    /// `output-styles/`.
+    styles: Result<PathBuf, String>,
+    /// Là où le binaire `capri-hook` est attendu.
+    hook: Result<PathBuf, String>,
+}
+
+impl ClaudePlaces {
+    fn of_this_user() -> Self {
+        Self {
+            settings_file: hook_setup::settings_path().map_err(text),
+            styles: style_setup::styles_dir().map_err(text),
+            hook: hook_setup::hook_binary_path().map_err(text),
+        }
+    }
 }
 
 pub struct SettingsView {
@@ -51,6 +79,7 @@ struct Effects {
     voice: Option<Voice>,
     /// Levé à la fermeture : l'essai en cours s'arrête.
     closing: Arc<AtomicBool>,
+    claude: ClaudePlaces,
 }
 
 impl SettingsView {
@@ -76,6 +105,7 @@ impl SettingsView {
             client: Arc::new(Client::new()),
             voice,
             closing: Arc::new(AtomicBool::new(false)),
+            claude: ClaudePlaces::of_this_user(),
         };
         let mut view = Self { window, settings, shown, results, effects };
         for task in opening {
@@ -98,6 +128,13 @@ impl SettingsView {
     pub fn reload_voice(&mut self) {
         let changes =
             self.effects.run(Task { rubric: capri_chat::settings::voice::ID, effect: Effect::LoadVoice });
+        debug_assert!(changes.is_none());
+    }
+
+    /// Claude Code a été branché ou débranché ailleurs (le menu) : elle relit où il en est.
+    pub fn reload_claude(&mut self) {
+        let changes =
+            self.effects.run(Task { rubric: capri_chat::settings::claude::ID, effect: Effect::LoadClaude });
         debug_assert!(changes.is_none());
     }
 
@@ -138,6 +175,12 @@ impl SettingsView {
     pub fn rehearse(&mut self, provider: usize) {
         let event =
             FormEvent::Chose { id: capri_chat::settings::brain::PROVIDER.to_owned(), index: provider };
+        self.rehearse_event(event);
+    }
+
+    /// Pour les essais : fait comme si l'utilisateur avait fait ceci dans la fenêtre.
+    #[cfg(debug_assertions)]
+    pub fn rehearse_event(&mut self, event: FormEvent) {
         for task in self.settings.event(event) {
             let _ = self.effects.run(task);
         }
@@ -302,9 +345,91 @@ impl Effects {
                     speaker.say(&text, voice.as_deref());
                 }
             }
+            Effect::LoadClaude => {
+                log::debug!("réglages : relecture de ce que sait la rubrique Claude Code");
+                let hook = self.claude.settings_file.clone().and_then(|file| hook_state(&file));
+                let mirror = directory.and_then(|directory| {
+                    hook_setup::load_mirror(&directory).map(|mirror| mirror.enabled).map_err(text)
+                });
+                let style = self.claude.styles.clone().and_then(|styles| style_file(&styles));
+                send(Outcome::ClaudeLoaded { hook, mirror, style });
+            }
+            Effect::ChangeHook { plug } => {
+                log::info!(
+                    "réglages : {} de Claude Code",
+                    if plug { "branchement" } else { "débranchement" }
+                );
+                let result = self.change_hook(plug);
+                let changed = result.as_ref().is_ok_and(|change| change.changed);
+                send(Outcome::HookChanged { plug, result });
+                return changed.then_some(Change::Hook);
+            }
+            Effect::SaveMirror(enabled) => {
+                log::info!("réglages : miroir {}", if enabled { "activé" } else { "désactivé" });
+                let saved = directory
+                    .and_then(|directory| {
+                        hook_setup::save_mirror(&directory, MirrorSettings { enabled }).map_err(text)
+                    })
+                    .map(|_| enabled);
+                send(Outcome::MirrorSaved(saved));
+            }
+            Effect::InstallStyle => {
+                log::info!("réglages : installation du style Capri");
+                let result = self.claude.styles.clone().and_then(|styles| {
+                    let (_, done) = style_setup::install(&styles).map_err(text)?;
+                    Ok((style_file(&styles)?, done))
+                });
+                send(Outcome::StyleInstalled(result));
+            }
+            Effect::RemoveStyle => {
+                log::info!("réglages : retrait du style Capri");
+                let result = self.claude.styles.clone().and_then(|styles| {
+                    let (_, done) = style_setup::uninstall(&styles).map_err(text)?;
+                    Ok((style_file(&styles)?, done))
+                });
+                send(Outcome::StyleRemoved(result));
+            }
         }
         None
     }
+
+    /// Branche ou débranche Claude Code comme `capri hook install | uninstall`, puis relit où il en
+    /// est. Sans le binaire `capri-hook`, il n'y a rien à brancher.
+    fn change_hook(&self, plug: bool) -> Result<HookChange, String> {
+        let file = self.claude.settings_file.clone()?;
+        let outcome = if plug {
+            let hook = self.claude.hook.clone()?;
+            if !hook.is_file() {
+                return Err(format!(
+                    "{} est introuvable : il doit se trouver à côté de Capri, et sans lui il n'y a rien à \
+                     brancher.",
+                    hook.display()
+                ));
+            }
+            hook_setup::install(&file, &hook, false)
+        } else {
+            hook_setup::uninstall(&file, false)
+        }
+        .map_err(text)?;
+        Ok(HookChange {
+            state: hook_state(&file)?,
+            changed: outcome.changed,
+            backup: outcome.backup.map(|backup| backup.display().to_string()),
+        })
+    }
+}
+
+/// Où en est le branchement dans ce `settings.json`, comme le dit `capri hook status`.
+fn hook_state(file: &Path) -> Result<HookState, String> {
+    let status = hook_setup::status(file).map_err(text)?;
+    let missing_binary = status.commands.iter().any(|command| !Path::new(command).is_file());
+    Ok(HookState { file: file.display().to_string(), status, missing_binary })
+}
+
+/// Le fichier du style dans ce dossier, et ce qu'on y trouve.
+fn style_file(styles: &Path) -> Result<StyleFile, String> {
+    let found = style_setup::status(styles).map_err(text)?;
+    Ok(StyleFile { file: found.file.display().to_string(), state: found.state })
 }
 
 impl Drop for Effects {
@@ -363,10 +488,13 @@ mod tests {
     }
 
     impl Harness {
+        /// Le dossier de Claude Code de ce test est `directory/claude`, et le binaire du hook,
+        /// `directory/bin/capri-hook`, n'existe que si le test le crée.
         fn open(directory: &Path, keys: Arc<MemoryKeys>) -> Self {
             let environment =
                 Environment { keychain: Some(keys.name().to_owned()), tls: capri_net::TLS, voice: false };
             let (sender, results) = channel();
+            let claude = directory.join("claude");
             let effects = Effects {
                 sender,
                 directory: Ok(directory.to_owned()),
@@ -374,6 +502,11 @@ mod tests {
                 client: Arc::new(Client::new()),
                 voice: None,
                 closing: Arc::new(AtomicBool::new(false)),
+                claude: ClaudePlaces {
+                    settings_file: Ok(claude.join("settings.json")),
+                    styles: Ok(claude.join("output-styles")),
+                    hook: Ok(directory.join("bin").join("capri-hook")),
+                },
             };
             let mut harness = Self { settings: Settings::new(&environment), effects, results };
             let tasks = harness.settings.open();
@@ -626,6 +759,82 @@ mod tests {
         window.settle();
         assert_eq!(changes, [Change::Voice { enabled: true }], "l'app doit accorder son menu");
         assert!(voice_setup::load(&directory).expect("lisible").enabled);
+        let _ = std::fs::remove_dir_all(directory);
+    }
+
+    /// Un `settings.json` comme on en trouve en vrai, avec le hook d'un autre outil.
+    const CLAUDE_SETTINGS: &str = "{\n  \"theme\": \"dark\",\n  \"hooks\": {\n    \"Stop\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"/opt/autre/notify.sh\"\n          }\n        ]\n      }\n    ]\n  }\n}\n";
+
+    #[test]
+    fn the_claude_code_tab_does_what_capri_hook_does_with_the_same_files() {
+        use capri_chat::settings::claude as tab;
+        use capri_claude::style::{self, StyleState};
+
+        let directory = scratch_dir("claude-code");
+        let settings_file = directory.join("claude").join("settings.json");
+        std::fs::create_dir_all(settings_file.parent().unwrap()).unwrap();
+        std::fs::write(&settings_file, CLAUDE_SETTINGS).unwrap();
+        let mut window = Harness::open(&directory, Arc::new(MemoryKeys::default()));
+        assert!(window.note(tab::HOOK).starts_with("Claude Code n'est pas branché sur Capri."));
+
+        // sans le binaire du hook, rien n'est écrit
+        window.press(tab::PLUG, None);
+        assert!(window.note(tab::HOOK_NOTE).contains("est introuvable"), "{}", window.note(tab::HOOK_NOTE));
+        assert_eq!(std::fs::read_to_string(&settings_file).unwrap(), CLAUDE_SETTINGS);
+
+        // brancher : les mêmes garanties que capri hook install (sauvegarde, fichier relu)
+        let hook = directory.join("bin").join("capri-hook");
+        std::fs::create_dir_all(hook.parent().unwrap()).unwrap();
+        std::fs::write(&hook, "").unwrap();
+        let tasks = window.settings.event(FormEvent::Pressed { id: tab::PLUG.to_owned(), secret: None });
+        let changes: Vec<Change> = tasks.into_iter().filter_map(|task| window.effects.run(task)).collect();
+        window.settle();
+        assert_eq!(changes, [Change::Hook], "l'app doit accorder son menu");
+        let status = hook_setup::status(&settings_file).unwrap();
+        assert!(status.is_complete());
+        assert_eq!(status.commands, [hook.display().to_string()]);
+        assert!(window.note(tab::HOOK).starts_with("Claude Code est branché sur Capri (12 événements"));
+        assert!(window.note(tab::HOOK_NOTE).contains("L'original est sauvegardé à côté"));
+        let backups = std::fs::read_dir(settings_file.parent().unwrap())
+            .unwrap()
+            .flatten()
+            .filter(|entry| entry.file_name().to_string_lossy().starts_with("settings.json.capri-backup-"))
+            .count();
+        assert_eq!(backups, 1);
+
+        // débrancher rend le fichier tel qu'il était, à l'octet près
+        window.press(tab::UNPLUG, None);
+        assert_eq!(std::fs::read_to_string(&settings_file).unwrap(), CLAUDE_SETTINGS);
+        assert_eq!(window.note(tab::HOOK_NOTE).split('.').next(), Some("Claude Code est débranché"));
+
+        // le style : installé, reconnu, retiré, dans le dossier de Claude Code
+        let style_file = directory.join("claude").join("output-styles").join("capri.md");
+        window.press(tab::INSTALL_STYLE, None);
+        assert_eq!(std::fs::read_to_string(&style_file).unwrap(), style::TEXT);
+        assert!(window.note(tab::STYLE).starts_with("Le style Capri est installé"));
+        assert!(
+            matches!(window.control(tab::STYLE_HOW), Control::Text { text } if text == style::HOW_TO_CHOOSE)
+        );
+        window.press(tab::REMOVE_STYLE, None);
+        assert!(!style_file.exists());
+        // un fichier qui n'est pas le nôtre n'est jamais touché
+        std::fs::write(&style_file, "---\nname: Capri\n---\nà moi\n").unwrap();
+        window.act(FormEvent::Closed);
+        let mut window = Harness::open(&directory, Arc::new(MemoryKeys::default()));
+        assert_eq!(style_setup::status(style_file.parent().unwrap()).unwrap().state, StyleState::Foreign);
+        window.press(tab::INSTALL_STYLE, None);
+        window.press(tab::REMOVE_STYLE, None);
+        assert_eq!(std::fs::read_to_string(&style_file).unwrap(), "---\nname: Capri\n---\nà moi\n");
+
+        // le miroir : le fichier que relit capri-hook
+        assert!(matches!(window.control(tab::MIRROR), Control::Check { checked: false, enabled: true, .. }));
+        window.act(FormEvent::Toggled { id: tab::MIRROR.to_owned(), checked: true });
+        assert!(hook_setup::load_mirror(&directory).unwrap().enabled);
+        assert!(window.note(tab::MIRROR_NOTE).starts_with(capri_claude::mirror::TURNED_ON));
+        window.act(FormEvent::Toggled { id: tab::MIRROR.to_owned(), checked: false });
+        assert!(!hook_setup::load_mirror(&directory).unwrap().enabled);
+        // et settings.json n'a pas bougé pour autant
+        assert_eq!(std::fs::read_to_string(&settings_file).unwrap(), CLAUDE_SETTINGS);
         let _ = std::fs::remove_dir_all(directory);
     }
 }

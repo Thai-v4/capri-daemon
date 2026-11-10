@@ -116,6 +116,13 @@ pub fn is_ours(text: &str) -> bool {
     lines.take_while(|line| line.trim_end() != "---").any(|line| line.trim_start().starts_with(MARK))
 }
 
+/// Ce que fait le style, pour qui hésite à l'installer.
+pub const ABOUT: &str = "\
+Le style Capri fait parler Claude Code comme Capri, dans tes propres sessions, sans rien changer à \
+sa façon de travailler, et lui fait finir chaque réponse par une ligne pour elle, qui commence par \
+[Capri]. Capri ne lance jamais Claude Code et ne se sert pas de ton abonnement : c'est toi qui lui \
+parles, comme d'habitude.";
+
 /// Ce qu'il faut taper dans Claude Code pour choisir le style, et ce qu'il faut en savoir. La
 /// même phrase pour la fenêtre de réglages et pour `capri hook` : rien à taper dans un terminal.
 pub const HOW_TO_CHOOSE: &str = "\
@@ -268,6 +275,7 @@ mod tests {
         let file = "/Users/moi/.claude/output-styles/capri.md";
         let said = [
             HOW_TO_CHOOSE.to_owned(),
+            ABOUT.to_owned(),
             describe(StyleState::Absent, file),
             describe(StyleState::Ours { current: true }, file),
             describe(StyleState::Ours { current: false }, file),
@@ -281,6 +289,6 @@ mod tests {
         for text in &said {
             assert!(!text.contains("capri ") && !text.contains("--"), "{text}");
         }
-        assert!(said[2].contains(file) && said[4].starts_with(file));
+        assert!(said[3].contains(file) && said[5].starts_with(file));
     }
 }
