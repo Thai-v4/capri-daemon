@@ -222,18 +222,15 @@ impl Session {
                 }
             }
             Event::NeedsPermission { tool, summary } => {
-                self.set_phase(
-                    Phase::NeedsPermission { tool: tool.clone(), summary: summary.clone() },
-                    now_ms,
-                );
+                self.set_phase(waiting_for_the_user(tool, summary.as_deref()), now_ms);
             }
             Event::Notification { notification_type, .. } => match notification_type.as_str() {
                 // la même demande que `NeedsPermission`, quelques secondes plus tard
                 "permission_prompt" => {
-                    if !matches!(self.phase, Phase::NeedsPermission { .. }) {
+                    if !matches!(self.phase, Phase::NeedsPermission { .. } | Phase::Asking { .. }) {
                         let waiting = self.tools.last().map(|t| (t.tool.clone(), t.summary.clone()));
                         let (tool, summary) = waiting.unwrap_or_default();
-                        self.set_phase(Phase::NeedsPermission { tool, summary }, now_ms);
+                        self.set_phase(waiting_for_the_user(&tool, summary.as_deref()), now_ms);
                     }
                 }
                 "idle_prompt" => self.set_phase(Phase::IdlePrompt, now_ms),
@@ -333,6 +330,16 @@ impl Session {
 /// Les outils qui ouvrent une question à l'utilisateur plutôt qu'un travail.
 fn asks_the_user(tool: &str) -> bool {
     matches!(tool, "AskUserQuestion" | "ExitPlanMode")
+}
+
+/// La phase d'attente qui convient à cet outil. Claude Code signale une question posée à
+/// l'utilisateur comme une demande de permission : ce n'en est pas une.
+fn waiting_for_the_user(tool: &str, summary: Option<&str>) -> Phase {
+    if asks_the_user(tool) {
+        Phase::Asking { tool: tool.to_owned() }
+    } else {
+        Phase::NeedsPermission { tool: tool.to_owned(), summary: summary.map(str::to_owned) }
+    }
 }
 
 fn working_line(tool: &str, summary: Option<&str>) -> String {
@@ -572,6 +579,31 @@ mod tests {
         assert_eq!(s.text(60_000 + IDLE_PROMPT_FOR_MS), None);
         s.at(80_000, Event::Notification { notification_type: "auth_success".into(), message: None });
         assert_eq!(s.text(80_100), None, "les autres notifications ne regardent pas le bandeau");
+    }
+
+    #[test]
+    fn a_question_reported_as_a_permission_request_stays_a_question() {
+        // la suite d'événements que Claude Code envoie vraiment pour AskUserQuestion
+        let mut s = Scenario::new();
+        s.at(0, Event::TurnStart);
+        s.at(1_000, start("AskUserQuestion", "t1", None));
+        s.at(1_010, permission("AskUserQuestion", None));
+        assert_eq!(s.text(1_100).as_deref(), Some("Claude te pose une question"));
+        s.at(7_000, Event::Notification { notification_type: "permission_prompt".into(), message: None });
+        assert_eq!(s.text(7_100).as_deref(), Some("Claude te pose une question"));
+        assert_eq!(s.tone(7_100), Some(Tone::Waiting));
+        s.at(20_000, end("AskUserQuestion", "t1"));
+        assert_eq!(s.text(20_100).as_deref(), Some("Claude réfléchit…"));
+
+        // même chose pour un plan à valider, et si le rappel arrive seul
+        let mut s = Scenario::new();
+        s.at(0, permission("ExitPlanMode", None));
+        assert_eq!(s.text(100).as_deref(), Some("Claude te soumet son plan"));
+        let mut s = Scenario::new();
+        s.at(0, start("AskUserQuestion", "t1", None));
+        s.at(10, end("Read", "ailleurs"));
+        s.at(6_000, Event::Notification { notification_type: "permission_prompt".into(), message: None });
+        assert_eq!(s.text(6_100).as_deref(), Some("Claude te pose une question"));
     }
 
     #[test]
