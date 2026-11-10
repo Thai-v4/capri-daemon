@@ -97,6 +97,27 @@ pub enum Problem {
 }
 
 impl Problem {
+    /// Ce que le journal en garde : la sorte de problème et le code HTTP, jamais le message du
+    /// fournisseur, qui pourrait citer ce qu'on lui a dit (un refus de modération, par exemple).
+    fn for_log(&self) -> String {
+        let kind = match self {
+            Self::KeyRefused { status, .. } => return format!("KeyRefused({status})"),
+            Self::KeyNeeded { status, .. } => return format!("KeyNeeded({status})"),
+            Self::Refused { status, .. } => return format!("Refused({status})"),
+            Self::GaveUp(_) => "GaveUp",
+            Self::NoTls => "NoTls",
+            Self::Unreachable => "Unreachable",
+            Self::Insecure => "Insecure",
+            Self::TimedOut => "TimedOut",
+            Self::NoKey => "NoKey",
+            Self::KeyInClear => "KeyInClear",
+            Self::Cut => "Cut",
+            Self::Unreadable => "Unreadable",
+            Self::Empty => "Empty",
+        };
+        kind.to_owned()
+    }
+
     /// La phrase que Capri dit dans sa bulle, ou qu'affiche la ligne de commande. Elle ne cite
     /// jamais une clé : le message d'un fournisseur y arrive déjà masqué, et celui d'un refus de
     /// clé (401) n'est pas cité du tout.
@@ -240,7 +261,7 @@ impl Client {
             Ok(Outcome::Cancelled) => {}
             Ok(Outcome::Complete) => emit(ReplyEvent::Done),
             Err(problem) => {
-                log::warn!("pas de réponse du cerveau : {problem:?}");
+                log::warn!("pas de réponse du cerveau : {}", problem.for_log());
                 emit(ReplyEvent::Failed(problem.explain(brain.provider(), brain.endpoint(), Some(brain))));
             }
         }
@@ -633,6 +654,21 @@ mod tests {
             refusal(429, body, Provider::OpenRouter, Some(&key)),
             Problem::Refused { status: 429, reason: masked }
         );
+    }
+
+    #[test]
+    fn the_log_never_keeps_what_a_provider_said() {
+        // un refus de modération qui cite ce que l'utilisateur a dit
+        let quoted = Some("Your input « mon secret de famille » was flagged".to_owned());
+        let problems = [
+            Problem::Refused { status: 400, reason: quoted.clone() },
+            Problem::KeyRefused { status: 403, reason: quoted.clone() },
+            Problem::KeyNeeded { status: 401, reason: quoted },
+            Problem::GaveUp("mon secret de famille".to_owned()),
+        ];
+        let logged: Vec<String> = problems.iter().map(Problem::for_log).collect();
+        assert_eq!(logged, ["Refused(400)", "KeyRefused(403)", "KeyNeeded(401)", "GaveUp"]);
+        assert_eq!(Problem::Unreachable.for_log(), "Unreachable");
     }
 
     #[test]

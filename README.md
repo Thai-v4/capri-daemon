@@ -297,7 +297,7 @@ Règle : tout ce qui peut être testé sans écran va dans `capri-core`, `capri-
 
 Vérifié automatiquement :
 
-- formatage, `clippy -D warnings` et 262 tests sur **macOS Apple Silicon** (plus 3 qui ne
+- formatage, `clippy -D warnings` et 263 tests sur **macOS Apple Silicon** (plus 3 qui ne
   tournent qu'à la main : ils écrivent des images, lisent un vrai `settings.json` ou touchent au
   vrai trousseau) : animation, lancer et rebonds, hit-test, clics, bandeau, parole en pages, bulle
   sur plusieurs lignes, conversation, **validation du shader** par le compilateur de wgpu, lecture
