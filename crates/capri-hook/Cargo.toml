@@ -1,0 +1,19 @@
+[package]
+name = "capri-hook"
+description = "Appelé par les hooks de Claude Code : transmet l'événement à Capri, sans jamais gêner la session."
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+
+# Lancé à chaque appel d'outil de Claude Code : pas de dépendance au-delà de ces deux crates.
+[dependencies]
+capri-claude = { path = "../capri-claude" }
+capri-ipc = { path = "../capri-ipc" }
+
+[dev-dependencies]
+capri-claude = { path = "../capri-claude" }
+capri-ipc = { path = "../capri-ipc" }
+
+[lints]
+workspace = true

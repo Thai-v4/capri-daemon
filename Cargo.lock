@@ -369,6 +369,14 @@ name = "capri-core"
 version = "0.1.0"
 
 [[package]]
+name = "capri-hook"
+version = "0.1.0"
+dependencies = [
+ "capri-claude",
+ "capri-ipc",
+]
+
+[[package]]
 name = "capri-ipc"
 version = "0.1.0"
 dependencies = [
