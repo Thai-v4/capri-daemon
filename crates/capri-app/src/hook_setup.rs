@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, anyhow, bail};
+use capri_claude::places;
 use capri_claude::settings::{self, BACKUP_PREFIX, SettingsError, Status};
 
 /// Nombre de sauvegardes gardées à côté du fichier.
@@ -27,18 +28,15 @@ pub struct Outcome {
     pub lines_after: usize,
 }
 
-/// Le `settings.json` de l'utilisateur : dans `CLAUDE_CONFIG_DIR` si elle est définie, sinon dans
-/// `~/.claude` (`%USERPROFILE%\.claude` sous Windows).
+/// Le dossier de Claude Code : `CLAUDE_CONFIG_DIR` si elle est définie, sinon `~/.claude`
+/// (`%USERPROFILE%\.claude` sous Windows).
+pub fn claude_dir() -> Result<PathBuf> {
+    Ok(places::claude_dir(|name| std::env::var_os(name), places::System::CURRENT)?)
+}
+
+/// Le `settings.json` de l'utilisateur, dans le dossier de Claude Code.
 pub fn settings_path() -> Result<PathBuf> {
-    let var = |name: &str| std::env::var_os(name).filter(|value| !value.is_empty()).map(PathBuf::from);
-    let directory = match var("CLAUDE_CONFIG_DIR") {
-        Some(directory) => directory,
-        None => {
-            let home = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
-            var(home).with_context(|| format!("{home} n'est pas définie"))?.join(".claude")
-        }
-    };
-    Ok(directory.join("settings.json"))
+    Ok(claude_dir()?.join("settings.json"))
 }
 
 /// Le binaire `capri-hook`, attendu à côté de l'exécutable courant.

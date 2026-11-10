@@ -28,6 +28,7 @@ use capri_chat::{
     ApiKey, BoundKey, Brain, Endpoint, KeyAccount, KeyJob, KeyNeed, Place, Provider, Reach, ReplyEvent, Role,
     Turn, key, persona,
 };
+use capri_claude::places;
 use capri_net::{Ask, Client, Problem};
 
 use crate::keys::{self, KeyStore, SystemKeychain};
@@ -64,20 +65,10 @@ pub struct Setup {
 }
 
 /// Le dossier des réglages de Capri : `CAPRI_CONFIG_DIR` si elle est définie, sinon le dossier
-/// habituel du système (sur macOS, celui où vit déjà sa socket).
+/// habituel du système (sur macOS, celui où vit déjà sa socket). Le même calcul que celui de
+/// `capri-hook` : `capri_claude::places`.
 pub fn config_dir() -> Result<PathBuf> {
-    let var = |name: &str| std::env::var_os(name).filter(|value| !value.is_empty()).map(PathBuf::from);
-    if let Some(directory) = var("CAPRI_CONFIG_DIR") {
-        return Ok(directory);
-    }
-    let home = || var("HOME").context("HOME n'est pas définie");
-    if cfg!(target_os = "macos") {
-        Ok(home()?.join("Library/Application Support/Capri"))
-    } else if cfg!(windows) {
-        Ok(var("LOCALAPPDATA").context("LOCALAPPDATA n'est pas définie")?.join("Capri"))
-    } else {
-        Ok(var("XDG_CONFIG_HOME").map_or_else(|| home().map(|home| home.join(".config")), Ok)?.join("capri"))
-    }
+    Ok(places::capri_dir(|name| std::env::var_os(name), places::System::CURRENT)?)
 }
 
 /// Lit les réglages du dossier. `None` : aucun cerveau n'a été choisi.
