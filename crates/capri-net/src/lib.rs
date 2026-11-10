@@ -12,10 +12,13 @@
 //!   dans le journal de ce qui a été dit ;
 //! - une réponse s'arrête dès qu'on le demande, et le serveur l'apprend : la connexion est fermée ;
 //! - tout est borné : le temps de connexion, le silence du serveur, la taille d'un événement, la
-//!   longueur d'une réponse.
+//!   longueur d'une réponse ;
+//! - en `https://`, la connexion passe par le TLS du système (Security.framework sur macOS,
+//!   SChannel sur Windows) et son magasin de certificats : un certificat refusé arrête tout avant
+//!   le moindre octet de la conversation, et rien ne repasse jamais en clair.
 //!
-//! Pas encore de connexion chiffrée : une adresse en `https://` est refusée avec un message
-//! clair. Capri ne parle donc, pour l'instant, qu'à cette machine et au réseau privé.
+//! Ailleurs (Linux), pas de TLS du tout : il y faudrait OpenSSL. Une adresse en `https://` y est
+//! refusée avec un message clair, avant toute connexion.
 
 use std::io::Read;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -25,9 +28,13 @@ use capri_chat::openai::{self, End};
 use capri_chat::sse::SseDecoder;
 use capri_chat::{Brain, Endpoint, Provider, ReplyEvent, Turn};
 
-/// Taille maximale lue d'un corps d'erreur, et de la liste des modèles.
+/// Ce système sait-il parler `https://` ?
+pub const TLS: bool = cfg!(any(target_os = "macos", windows));
+
+/// Taille maximale lue d'un corps d'erreur, et de la liste des modèles. Celle d'un fournisseur
+/// distant décrit des centaines de modèles (plus de 800 Ko chez OpenRouter en novembre 2026).
 const MAX_ERROR_BYTES: u64 = 64 * 1024;
-const MAX_LISTING_BYTES: u64 = 1024 * 1024;
+const MAX_LISTING_BYTES: u64 = 8 * 1024 * 1024;
 /// Ce qu'on garde du message d'erreur d'un fournisseur.
 const MAX_REASON_CHARS: usize = 160;
 
@@ -54,10 +61,13 @@ impl Default for Limits {
 /// Pourquoi une réponse n'est pas arrivée, ou pas en entier.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Problem {
-    /// L'adresse est en `https://`, que ce crate ne sait pas encore parler.
+    /// L'adresse est en `https://`, que ce crate ne sait pas parler sur ce système.
     NoTls,
     /// Personne ne répond à cette adresse.
     Unreachable,
+    /// La connexion chiffrée n'a pas pu s'établir : certificat refusé, ou serveur qui ne parle pas
+    /// `https`. Rien n'a été envoyé.
+    Insecure,
     /// Le serveur est resté silencieux trop longtemps.
     TimedOut,
     /// Le serveur a répondu autre chose qu'un succès, avec son explication s'il en donne une.
@@ -77,8 +87,11 @@ impl Problem {
     pub fn explain(&self, provider: Provider, endpoint: &Endpoint) -> String {
         let (name, host) = (provider.name(), endpoint.display_host());
         match self {
-            Self::NoTls => "Je ne sais pas encore me connecter en https.".to_owned(),
+            Self::NoTls => "Je ne sais pas me connecter en https sur ce système.".to_owned(),
             Self::Unreachable => format!("Je n'arrive pas à joindre {name} ({host}). Il est lancé ?"),
+            Self::Insecure => format!(
+                "Je n'ai pas pu établir de connexion sûre avec {name} ({host}) : je ne lui ai rien envoyé."
+            ),
             Self::TimedOut => format!("{name} met trop de temps à répondre."),
             Self::Refused { status, reason: Some(reason) } => {
                 format!("{name} refuse ({status}) : {}", brief(reason))
@@ -135,9 +148,17 @@ impl Client {
             // un refus se lit (il porte l'explication du fournisseur) au lieu de devenir une erreur
             .http_status_as_error(false)
             .timeout_connect(Some(limits.connect))
-            .timeout_per_read(Some(limits.silence))
-            .build();
-        Self { agent: ureq::Agent::new_with_config(config), limits }
+            .timeout_per_read(Some(limits.silence));
+        // le TLS du système, et les certificats racines du système : ceux que l'utilisateur et
+        // son système ont choisi de croire, pas une liste embarquée
+        #[cfg(any(target_os = "macos", windows))]
+        let config = config.tls_config(
+            ureq::tls::TlsConfig::builder()
+                .provider(ureq::tls::TlsProvider::NativeTls)
+                .root_certs(ureq::tls::RootCerts::PlatformVerifier)
+                .build(),
+        );
+        Self { agent: ureq::Agent::new_with_config(config.build()), limits }
     }
 
     /// Demande au cerveau de répondre à la conversation, et rend sa réponse par morceaux : des
@@ -168,7 +189,7 @@ impl Client {
 
     /// Les modèles que le serveur propose (`GET /models`).
     pub fn models(&self, endpoint: &Endpoint) -> Result<Vec<String>, Problem> {
-        if endpoint.secure {
+        if endpoint.secure && !TLS {
             return Err(Problem::NoTls);
         }
         let response = self
@@ -194,7 +215,7 @@ impl Client {
         on_text: &mut dyn FnMut(String),
     ) -> Result<Outcome, Problem> {
         let endpoint = brain.endpoint();
-        if endpoint.secure {
+        if endpoint.secure && !TLS {
             return Err(Problem::NoTls);
         }
         let body = openai::request_body(brain.model(), persona, turns);
@@ -293,6 +314,9 @@ fn before_the_reply(error: ureq::Error) -> Problem {
         ureq::Error::Timeout(_) => Problem::TimedOut,
         ureq::Error::Io(err) if err.kind() == std::io::ErrorKind::TimedOut => Problem::TimedOut,
         ureq::Error::Protocol(_) | ureq::Error::LargeResponseHeader(..) => Problem::Unreadable,
+        ureq::Error::Tls(_) => Problem::Insecure,
+        #[cfg(any(target_os = "macos", windows))]
+        ureq::Error::NativeTls(_) => Problem::Insecure,
         // connexion refusée, hôte introuvable ou injoignable, connexion fermée sans un mot
         _ => Problem::Unreachable,
     }
@@ -324,6 +348,17 @@ mod tests {
         assert_eq!(config.timeout_per_read(), Some(Limits::default().silence));
     }
 
+    #[cfg(any(target_os = "macos", windows))]
+    #[test]
+    fn https_goes_through_the_system_s_tls_and_its_certificates() {
+        let client = Client::new();
+        let tls = client.agent.config().tls_config();
+        assert_eq!(tls.provider(), ureq::tls::TlsProvider::NativeTls);
+        assert!(matches!(tls.root_certs(), ureq::tls::RootCerts::PlatformVerifier));
+        assert!(!tls.disable_verification(), "un certificat est toujours vérifié");
+        assert!(tls.use_sni());
+    }
+
     #[test]
     fn each_problem_is_said_in_one_plain_sentence() {
         let endpoint = Endpoint::parse("http://localhost:11434/v1").expect("valide");
@@ -345,7 +380,11 @@ mod tests {
         assert_eq!(say(Problem::Cut), "La réponse a été coupée.");
         assert_eq!(say(Problem::Unreadable), "Ollama a répondu quelque chose que je n'ai pas compris.");
         assert_eq!(say(Problem::Empty), "Ollama n'a rien répondu.");
-        assert_eq!(say(Problem::NoTls), "Je ne sais pas encore me connecter en https.");
+        assert_eq!(say(Problem::NoTls), "Je ne sais pas me connecter en https sur ce système.");
+        assert_eq!(
+            say(Problem::Insecure),
+            "Je n'ai pas pu établir de connexion sûre avec Ollama (localhost:11434) : je ne lui ai rien envoyé."
+        );
     }
 
     #[test]

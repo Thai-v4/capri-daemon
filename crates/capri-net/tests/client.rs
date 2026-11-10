@@ -359,14 +359,58 @@ fn a_redirect_is_a_refusal_and_is_never_followed() {
     );
 }
 
+/// Sans TLS sur ce système, une adresse en https est refusée avant toute connexion (et même avant
+/// de chercher le nom : `.invalid` ne se résout jamais, mais on ne le demande même pas).
+#[cfg(not(any(target_os = "macos", windows)))]
 #[test]
 fn https_is_refused_before_any_connection() {
     let brain =
         Brain::new(Provider::Ollama, Some("https://example.invalid/v1"), "m").expect("adresse valide");
     let (events, elapsed) = ask(&Client::new(), &brain);
-    assert_eq!(events, [failed("Je ne sais pas encore me connecter en https.")]);
+    assert_eq!(events, [failed("Je ne sais pas me connecter en https sur ce système.")]);
     assert!(elapsed < Duration::from_millis(500), "aucune tentative : {elapsed:?}");
     assert_eq!(Client::new().models(brain.endpoint()), Err(Problem::NoTls));
+}
+
+/// Un serveur qui répond en clair à une adresse en https : la connexion sûre échoue, et rien de
+/// la conversation n'est parti. Le client n'a envoyé que le début d'une négociation TLS.
+#[cfg(any(target_os = "macos", windows))]
+#[test]
+fn https_never_falls_back_to_plain_text() {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("un port libre");
+    let address = listener.local_addr().expect("adresse");
+    let (sender, received) = channel();
+    std::thread::spawn(move || {
+        for _ in 0..2 {
+            let Ok((mut stream, _)) = listener.accept() else { return };
+            let _ = stream.set_read_timeout(Some(Duration::from_millis(500)));
+            let mut bytes = vec![0u8; 16 * 1024];
+            let length = stream.read(&mut bytes).unwrap_or(0);
+            bytes.truncate(length);
+            let _ = stream.write_all(&plain("200 OK", "text/event-stream", "data: [DONE]\n\n"));
+            let _ = sender.send(bytes);
+        }
+    });
+    let brain = Brain::new(Provider::Ollama, Some(&format!("https://{address}/v1")), "modele-de-test")
+        .expect("adresse valide");
+    let (events, elapsed) = ask(&Client::new(), &brain);
+    assert_eq!(
+        events,
+        [failed(&format!(
+            "Je n'ai pas pu établir de connexion sûre avec Ollama ({address}) : je ne lui ai rien envoyé."
+        ))]
+    );
+    assert!(elapsed < Duration::from_secs(5), "{elapsed:?}");
+    assert_eq!(Client::new().models(brain.endpoint()), Err(Problem::Insecure));
+
+    for _ in 0..2 {
+        let bytes = received.recv_timeout(Duration::from_secs(5)).expect("le serveur a été contacté");
+        assert_eq!(bytes.first(), Some(&0x16), "un message de négociation TLS, rien d'autre");
+        let seen = String::from_utf8_lossy(&bytes);
+        for absent in ["POST", "GET", "Salut", "Tu es Capri", "modele-de-test"] {
+            assert!(!seen.contains(absent), "« {absent} » est parti en clair");
+        }
+    }
 }
 
 #[test]

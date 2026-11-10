@@ -66,7 +66,7 @@ fn main() -> Result<()> {
         }
     }
 
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
+    init_log();
     let sprite = assets::load_sprite()?;
 
     let mut builder = EventLoop::builder();
@@ -76,6 +76,48 @@ fn main() -> Result<()> {
     let mut app = App { sprite: Some(sprite), ..App::default() };
     event_loop.run_app(&mut app)?;
     app.fatal.map_or(Ok(()), Err)
+}
+
+/// Le journal, réglé par `RUST_LOG` (par défaut : `info`), sans jamais ce qui passe sur le réseau.
+fn init_log() {
+    let logger = env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).build();
+    log::set_max_level(logger.filter());
+    if let Err(err) = log::set_boxed_logger(Box::new(NoWireLog(logger))) {
+        eprintln!("capri : pas de journal ({err})");
+    }
+}
+
+/// Le journal de l'app, privé de ce qui passe sur le réseau.
+///
+/// Au niveau `trace`, ureq écrit les octets échangés tels quels (« NOT REDACTED », dit sa
+/// documentation) : la conversation, et l'en-tête qui porte la clé d'un fournisseur. Ces lignes ne
+/// sont jamais écrites, quel que soit `RUST_LOG`. Ce que ureq écrit au niveau `debug` (adresse,
+/// état de la connexion, en-têtes d'une liste sûre) reste visible.
+struct NoWireLog(env_logger::Logger);
+
+impl NoWireLog {
+    fn allows(metadata: &log::Metadata<'_>) -> bool {
+        let from_ureq = metadata.target() == "ureq"
+            || metadata.target().starts_with("ureq::")
+            || metadata.target().starts_with("ureq_proto");
+        !(from_ureq && metadata.level() == log::Level::Trace)
+    }
+}
+
+impl log::Log for NoWireLog {
+    fn enabled(&self, metadata: &log::Metadata<'_>) -> bool {
+        Self::allows(metadata) && self.0.enabled(metadata)
+    }
+
+    fn log(&self, record: &log::Record<'_>) {
+        if Self::allows(record.metadata()) {
+            self.0.log(record);
+        }
+    }
+
+    fn flush(&self) {
+        self.0.flush();
+    }
 }
 
 #[derive(Default)]
@@ -567,4 +609,59 @@ fn register_hotkeys() -> Option<Hotkeys> {
     // des lettres qui ne changent pas de place entre AZERTY et QWERTY : voir `ear_setup::SHORTCUT`
     let listen = register(Code::KeyD, ear_setup::SHORTCUT);
     Some(Hotkeys { _manager: manager, toggle, talk, listen })
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::Write;
+    use std::sync::{Arc, Mutex};
+
+    use log::Log;
+
+    use super::*;
+
+    /// Ce que le journal a écrit.
+    #[derive(Clone, Default)]
+    struct Written(Arc<Mutex<Vec<u8>>>);
+
+    impl Write for Written {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().expect("verrou").extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn what_crosses_the_network_is_never_logged_even_at_trace_level() {
+        let written = Written::default();
+        let logger = NoWireLog(
+            env_logger::Builder::new()
+                .parse_filters("trace,ureq_proto::util=trace")
+                .target(env_logger::Target::Pipe(Box::new(written.clone())))
+                .build(),
+        );
+        let log = |target: &str, level: log::Level, text: &str| {
+            logger.log(
+                &log::Record::builder().target(target).level(level).args(format_args!("{text}")).build(),
+            );
+        };
+        for target in ["ureq", "ureq::run", "ureq::tls::native_tls", "ureq_proto", "ureq_proto::util"] {
+            log(target, log::Level::Trace, "Authorization: Bearer secret");
+            assert!(
+                !logger.enabled(&log::Metadata::builder().target(target).level(log::Level::Trace).build())
+            );
+        }
+        assert!(written.0.lock().expect("verrou").is_empty(), "rien du fil n'est écrit");
+
+        // le reste du journal, lui, est bien écrit
+        log("ureq::run", log::Level::Debug, "connexion établie");
+        log("capri_net", log::Level::Trace, "détail de Capri");
+        let text = String::from_utf8(written.0.lock().expect("verrou").clone()).expect("du texte");
+        assert!(text.contains("connexion établie") && text.contains("détail de Capri"), "{text}");
+        assert!(!text.contains("secret"), "{text}");
+    }
 }

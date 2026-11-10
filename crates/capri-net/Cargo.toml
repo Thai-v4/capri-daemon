@@ -9,9 +9,15 @@ rust-version.workspace = true
 [dependencies]
 capri-chat = { path = "../capri-chat" }
 log = "0.4"
-# Sans les fonctions par défaut : ni TLS, ni compression. Les fournisseurs en https arriveront
-# avec leur propre lot ; d'ici là, Capri ne parle qu'à cette machine et au réseau privé.
+# Sans les fonctions par défaut : ni rustls (ring ou aws-lc compilent du C, ce qui casse la
+# compilation croisée), ni compression.
 ureq = { version = "3.5.1", default-features = false }
+
+# Le https : le TLS du système (Security.framework sur macOS, SChannel sur Windows), avec son
+# magasin de certificats. « no-default » : sans la liste de certificats racines embarquée, c'est
+# celle du système qui fait foi. Ailleurs, native-tls demanderait OpenSSL : pas de https du tout.
+[target.'cfg(any(target_os = "macos", windows))'.dependencies]
+ureq = { version = "3.5.1", default-features = false, features = ["native-tls-no-default"] }
 
 [dev-dependencies]
 serde_json = "1.0.154"
