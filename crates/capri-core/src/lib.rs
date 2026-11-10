@@ -10,10 +10,12 @@ pub mod body;
 pub mod geom;
 pub mod input;
 pub mod mask;
+pub mod speech;
 
 pub use anim::{FRAME_RATE, Sheet, frame_at};
-pub use banner::{Banner, BannerPose, place_banner};
+pub use banner::{Banner, BannerPose, place_banner, place_input};
 pub use body::{Capri, Pose, Stance};
 pub use geom::{Rect, Vec2};
 pub use input::{Button, Press, interpret_press};
 pub use mask::AlphaMask;
+pub use speech::{Speech, SpeechView};

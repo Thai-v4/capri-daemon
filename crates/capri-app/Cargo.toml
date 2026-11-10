@@ -12,6 +12,7 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow = "1"
+capri-chat = { path = "../capri-chat" }
 capri-claude = { path = "../capri-claude" }
 capri-core = { path = "../capri-core" }
 capri-ipc = { path = "../capri-ipc" }

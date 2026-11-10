@@ -5,6 +5,8 @@
 //! en cours. winit ne sait créer que des `NSWindow` qui deviennent fenêtre clé au clic ; ici il
 //! ne fournit donc que la boucle d'événements.
 
+mod input;
+
 use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
 use std::ptr::NonNull;
@@ -163,6 +165,8 @@ pub struct Overlay {
     panel: Retained<OverlayPanel>,
     view: Retained<OverlayView>,
     shared: Rc<Shared>,
+    /// Le champ de saisie, fermé tant qu'on ne le demande pas.
+    input: Retained<input::InputPanel>,
 }
 
 impl Overlay {
@@ -229,7 +233,32 @@ impl Overlay {
             );
         }
 
-        Ok(Self { panel, view, shared })
+        // Créé dès maintenant, encore fermé : s'il y a un problème avec ce panneau, autant le
+        // découvrir au lancement qu'à la première question.
+        let input = input::InputPanel::create(mtm, Rc::clone(&shared));
+        Ok(Self { panel, view, shared, input })
+    }
+
+    pub fn show_input(&self, placeholder: &str, place: impl FnOnce(f64, f64) -> (f64, f64)) -> bool {
+        // l'application raisonne en pixels physiques depuis le coin haut gauche de l'overlay ;
+        // AppKit en points depuis le coin bas gauche de l'écran
+        let scale = self.shared.scale.get();
+        let (x, y) = place(input::WIDTH * scale, input::HEIGHT * scale);
+        let frame = self.panel.frame();
+        let origin = NSPoint::new(
+            frame.origin.x + x / scale,
+            frame.origin.y + frame.size.height - y / scale - input::HEIGHT,
+        );
+        self.input.open(origin, placeholder);
+        true
+    }
+
+    pub fn hide_input(&self) {
+        self.input.finish(false);
+    }
+
+    pub fn input_is_open(&self) -> bool {
+        self.input.is_open()
     }
 
     pub fn surface_handle(&self) -> SurfaceHandle {

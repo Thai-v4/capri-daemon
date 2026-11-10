@@ -343,6 +343,7 @@ name = "capri-app"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "capri-chat",
  "capri-claude",
  "capri-core",
  "capri-ipc",
@@ -356,6 +357,10 @@ dependencies = [
  "tray-icon",
  "winit",
 ]
+
+[[package]]
+name = "capri-chat"
+version = "0.1.0"
 
 [[package]]
 name = "capri-claude"

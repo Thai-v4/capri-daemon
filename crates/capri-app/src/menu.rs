@@ -8,6 +8,8 @@ use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Action {
+    /// Ouvrir le champ de saisie pour lui parler.
+    Talk,
     ToggleVisible,
     /// Brancher ou débrancher le hook de Claude Code.
     ToggleClaudeHook,
@@ -17,6 +19,7 @@ pub enum Action {
 pub struct Menus {
     _tray: Option<TrayIcon>,
     context: Menu,
+    talk_ids: Vec<MenuId>,
     toggles: Vec<MenuItem>,
     toggle_ids: Vec<MenuId>,
     hooks: Vec<MenuItem>,
@@ -27,6 +30,7 @@ pub struct Menus {
 /// Les éléments d'un menu dont on a besoin après sa création.
 struct Built {
     menu: Menu,
+    talk: MenuItem,
     toggle: MenuItem,
     hook: MenuItem,
     quit: MenuItem,
@@ -47,6 +51,7 @@ impl Menus {
         Self {
             _tray: tray,
             context: b.menu,
+            talk_ids: vec![a.talk.id().clone(), b.talk.id().clone()],
             toggle_ids: vec![a.toggle.id().clone(), b.toggle.id().clone()],
             hook_ids: vec![a.hook.id().clone(), b.hook.id().clone()],
             quit_ids: vec![a.quit.id().clone(), b.quit.id().clone()],
@@ -59,7 +64,9 @@ impl Menus {
     pub fn pending_actions(&self) -> Vec<Action> {
         let mut actions = Vec::new();
         while let Ok(event) = MenuEvent::receiver().try_recv() {
-            if self.toggle_ids.contains(&event.id) {
+            if self.talk_ids.contains(&event.id) {
+                actions.push(Action::Talk);
+            } else if self.toggle_ids.contains(&event.id) {
                 actions.push(Action::ToggleVisible);
             } else if self.hook_ids.contains(&event.id) {
                 actions.push(Action::ToggleClaudeHook);
@@ -110,16 +117,18 @@ impl Menus {
 
 fn build_menu() -> Built {
     let title = MenuItem::new("Capri — prototype", false, None);
+    let talk_shortcut = Accelerator::new(Modifiers::CONTROL | Modifiers::ALT, Code::KeyP);
+    let talk = MenuItem::new("Parler à Capri", true, Some(talk_shortcut));
     let shortcut = Accelerator::new(Modifiers::CONTROL | Modifiers::ALT, Code::KeyC);
     let toggle = MenuItem::new("Cacher Capri", true, Some(shortcut));
     let hook = MenuItem::new("Brancher Claude Code", true, None);
     let quit = MenuItem::new("Quitter", true, None);
     let menu = Menu::new();
     let (first, second) = (PredefinedMenuItem::separator(), PredefinedMenuItem::separator());
-    if let Err(err) = menu.append_items(&[&title, &first, &toggle, &hook, &second, &quit]) {
+    if let Err(err) = menu.append_items(&[&title, &first, &talk, &toggle, &hook, &second, &quit]) {
         log::warn!("menu incomplet : {err}");
     }
-    Built { menu, toggle, hook, quit }
+    Built { menu, talk, toggle, hook, quit }
 }
 
 /// Un masque stylisé (visage en losange, deux yeux en amande), dessiné à la volée :

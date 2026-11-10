@@ -2,7 +2,8 @@
 
 Compagne de bureau (Capri, *Cyberpunk: Edgerunners* 2) écrite en Rust, 100 % native, pour macOS
 (cible principale, Apple Silicon) et Windows. Projet de fan non commercial. Le README décrit l'état
-du projet et la feuille de route ; jalons 1 (elle flotte) et 2 (le bandeau Claude Code) faits.
+du projet et la feuille de route ; jalons 1 (elle flotte) et 2 (le bandeau Claude Code) faits,
+jalon 4 (lui parler) commencé : saisie et bulle en place, pas encore de modèle.
 
 ## Architecture : où va quoi
 
@@ -11,7 +12,11 @@ du projet et la feuille de route ; jalons 1 (elle flotte) et 2 (le bandeau Claud
 - `capri-claude` : tout ce que Capri sait de Claude Code, lui aussi **sans dépendance système** :
   lecture de l'entrée des hooks, protocole, suivi des sessions, édition de `settings.json` de
   texte à texte. Avec des tests.
-- `capri-render` : wgpu, et le tracé du texte du bandeau (cosmic-text, polices du système).
+- `capri-chat` : la conversation, **sans dépendance système ni réseau** : historique borné,
+  réponses en flux, cerveaux. Avec des tests. Le réseau, quand il viendra, vivra dans un crate à
+  part, le seul à en avoir le droit.
+- `capri-render` : wgpu, et le tracé du texte du bandeau et de la bulle (cosmic-text, polices du
+  système).
   Couleurs prémultipliées de bout en bout.
 - Les appels système et l'`unsafe` lié à l'OS vivent dans **deux crates, et nulle part
   ailleurs** : `capri-platform` (la fenêtre) et `capri-ipc` (le canal local).
@@ -24,7 +29,10 @@ du projet et la feuille de route ; jalons 1 (elle flotte) et 2 (le bandeau Claud
   L'API publique est dans `lib.rs` (le type `Overlay` et ses événements), avec une
   implémentation par plateforme : `macos.rs` (un `NSPanel` non activant, sans fenêtre winit :
   cliquer sur Capri ne doit jamais prendre le focus) et `winit_overlay.rs` (fenêtre winit, réglée
-  par `windows.rs` ou `other.rs`). Toute nouvelle fonction doit exister partout.
+  par `windows.rs` ou `other.rs`). Toute nouvelle fonction doit exister partout, au besoin sous
+  la forme d'un refus explicite (le champ de saisie n'existe encore que sur macOS).
+  Seul le champ de saisie (`macos/input.rs`) prend le clavier, parce qu'on le lui demande, et il
+  le rend à la fenêtre d'avant en se fermant.
 - `capri-app` : assemble le tout. Pas d'appel système direct ici (sauf menus via `tray-icon`).
   La fenêtre passe toujours par `capri_platform::Overlay`, jamais par `winit::window::Window`.
 
@@ -64,6 +72,8 @@ précisément quoi vérifier plutôt que de l'affirmer.
   code de sortie 0, une durée de vie bornée. Les hooks sont déclarés `async`.
 - Le bandeau ne transmet ni n'affiche jamais le texte d'un prompt, le contenu d'un fichier ou la
   sortie d'une commande. Dans le doute, il se tait plutôt que d'affirmer quelque chose de périmé.
+- Au-dessus de sa tête, une seule chose à la fois : sa parole d'abord (on vient de lui parler),
+  puis un message de l'app, puis l'activité de Claude Code.
 - Le `settings.json` de Claude Code appartient à l'utilisateur et à d'autres outils : toute
   modification passe par `capri_claude::settings` (réécriture à l'octet près, vérification) et
   par `hook_setup` (sauvegarde, écriture atomique). Jamais d'édition directe.

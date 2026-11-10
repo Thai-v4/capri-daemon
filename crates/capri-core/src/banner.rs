@@ -73,6 +73,18 @@ impl<T: PartialEq> Banner<T> {
         }
     }
 
+    /// Remplace le contenu sans relancer d'animation s'il est déjà à l'écran : c'est un texte
+    /// qui s'allonge, pas une nouvelle annonce. Sinon, comme [`Banner::set`].
+    pub fn revise(&mut self, content: T, frame: u64) {
+        if !matches!(self.stage, Stage::Shown { .. }) {
+            return self.set(Some(content), frame);
+        }
+        if self.content.as_ref() != Some(&content) {
+            self.content = Some(content);
+            self.generation += 1;
+        }
+    }
+
     /// Le contenu à l'écran, y compris pendant qu'il s'éclipse.
     pub fn content(&self, frame: u64) -> Option<&T> {
         self.pose(frame).and(self.content.as_ref())
@@ -105,21 +117,31 @@ impl<T: PartialEq> Banner<T> {
 /// Où poser le bandeau (son coin haut gauche, en pixels entiers) : centré au-dessus d'elle, à
 /// `gap` de sa tête ; en dessous de ses pieds s'il n'y a pas la place ; toujours dans `bounds`.
 pub fn place_banner(capri: Rect, banner: Vec2, bounds: Rect, gap: f32) -> Vec2 {
+    place_near(capri, banner, bounds, gap, true)
+}
+
+/// Où poser le champ de saisie : centré sous ses pieds, pour laisser sa tête au bandeau ;
+/// au-dessus d'elle s'il n'y a pas la place ; toujours dans `bounds`.
+pub fn place_input(capri: Rect, input: Vec2, bounds: Rect, gap: f32) -> Vec2 {
+    place_near(capri, input, bounds, gap, false)
+}
+
+fn place_near(capri: Rect, size: Vec2, bounds: Rect, gap: f32, prefer_above: bool) -> Vec2 {
     let lowest = |min: f32, max: f32| if max < min { min } else { max };
     let left = bounds.min.x + gap;
-    let right = lowest(left, bounds.max().x - gap - banner.x);
-    let x = (capri.min.x + (capri.size.x - banner.x) / 2.0).clamp(left, right);
+    let right = lowest(left, bounds.max().x - gap - size.x);
+    let x = (capri.min.x + (capri.size.x - size.x) / 2.0).clamp(left, right);
 
     let top = bounds.min.y + gap;
-    let bottom = lowest(top, bounds.max().y - gap - banner.y);
-    let above = capri.min.y - gap - banner.y;
+    let bottom = lowest(top, bounds.max().y - gap - size.y);
+    let above = capri.min.y - gap - size.y;
     let below = capri.max().y + gap;
-    let y = if above >= top {
-        above
-    } else if below <= bottom {
-        below
-    } else {
-        above.clamp(top, bottom)
+    let (above_fits, below_fits) = (above >= top, below <= bottom);
+    let y = match (prefer_above, above_fits, below_fits) {
+        (true, true, _) | (false, true, false) => above,
+        (false, _, true) | (true, false, true) => below,
+        (true, false, false) => above.clamp(top, bottom),
+        (false, false, false) => below.clamp(top, bottom),
     };
     Vec2::new(x.round(), y.round())
 }
@@ -187,6 +209,40 @@ mod tests {
         banner.set(None, 80);
         banner.set(Some("b"), 81);
         assert_eq!(pose(&banner, 81), Some((0.86, 0.7)));
+    }
+
+    #[test]
+    fn a_growing_text_is_revised_without_any_jolt() {
+        let mut banner = Banner::new();
+        banner.revise("Bon", 0);
+        assert_eq!(pose(&banner, 0), Some((0.86, 0.7)), "la première fois, c'est une vraie entrée");
+        let settled = banner.pose(100).unwrap();
+        banner.revise("Bonjour", 100);
+        let revised = banner.pose(100).unwrap();
+        assert_ne!(revised.generation, settled.generation, "le rendu doit retracer le texte");
+        assert_eq!((revised.scale, revised.opacity), (1.0, 1.0), "mais rien ne bouge");
+        assert_eq!(banner.content(100), Some(&"Bonjour"));
+        // le même texte encore : rien à retracer
+        banner.revise("Bonjour", 101);
+        assert_eq!(banner.pose(101).unwrap().generation, revised.generation);
+        // après une sortie, c'est de nouveau une entrée
+        banner.set(None, 200);
+        banner.revise("Encore", 210);
+        assert_eq!(pose(&banner, 210), Some((0.86, 0.7)));
+    }
+
+    #[test]
+    fn the_input_sits_under_her_feet_and_flips_above_when_needed() {
+        let screen = Rect::new(Vec2::ZERO, Vec2::new(3024.0, 1964.0));
+        let input = Vec2::new(640.0, 56.0);
+        let standing = Rect::new(Vec2::new(1000.0, 800.0), Vec2::new(314.0, 600.0));
+        assert_eq!(place_input(standing, input, screen, 16.0), Vec2::new(837.0, 1416.0));
+        // posée tout en bas : plus de place sous ses pieds
+        let low = Rect::new(Vec2::new(1000.0, 1364.0), Vec2::new(314.0, 600.0));
+        assert_eq!(place_input(low, input, screen, 16.0).y, 1364.0 - 16.0 - 56.0);
+        // ni dessous ni dessus : il reste dans l'écran
+        let tall = Rect::new(Vec2::new(1000.0, 0.0), Vec2::new(314.0, 1964.0));
+        assert_eq!(place_input(tall, input, screen, 16.0).y, 1964.0 - 16.0 - 56.0);
     }
 
     #[test]

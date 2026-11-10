@@ -1,5 +1,6 @@
-//! Capri : elle flotte sur ton bureau, on peut l'attraper, la poser et la lancer (jalon 1), et
-//! un bandeau au-dessus d'elle dit ce que fait Claude Code (jalon 2).
+//! Capri : elle flotte sur ton bureau, on peut l'attraper, la poser et la lancer (jalon 1), un
+//! bandeau au-dessus d'elle dit ce que fait Claude Code (jalon 2), et on peut lui parler : elle
+//! répond dans une bulle (jalon 4, pour l'instant sans vrai cerveau).
 //!
 //! Une seule fenêtre transparente, l'overlay de `capri-platform`, couvre l'écran principal. Elle
 //! laisse passer la souris partout, sauf sur Capri elle-même. Le curseur est lu auprès du système
@@ -11,6 +12,7 @@
 
 mod assets;
 mod banner_view;
+mod chat;
 mod claude;
 mod hook_setup;
 #[cfg(any(target_os = "macos", windows))]
@@ -20,7 +22,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use banner_view::BannerView;
-use capri_core::{AlphaMask, Button, Capri, Pose, Press, Rect, Vec2, frame_at, interpret_press};
+use capri_core::{AlphaMask, Button, Capri, Pose, Press, Rect, Vec2, frame_at, interpret_press, place_input};
 use capri_platform::{Overlay, OverlayEvent};
 use capri_render::{Renderer, SpriteDraw, SpriteImage};
 use global_hotkey::hotkey::{Code, HotKey, Modifiers};
@@ -36,6 +38,8 @@ const HEIGHT_POINTS: f64 = 300.0;
 const TICK: Duration = Duration::from_micros(16_667);
 /// Amplitude du « boil », en pixels du sprite d'origine.
 const BOIL: f32 = 1.0;
+/// Écart entre ses pieds et le champ de saisie, en points.
+const INPUT_GAP_POINTS: f32 = 10.0;
 
 fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -67,10 +71,20 @@ struct App {
     sprite: Option<assets::Sprite>,
     running: Option<Running>,
     hidden: bool,
-    hotkey: Option<(GlobalHotKeyManager, u32)>,
+    hotkeys: Option<Hotkeys>,
     #[cfg(any(target_os = "macos", windows))]
     menus: Option<menu::Menus>,
     fatal: Option<anyhow::Error>,
+}
+
+/// Les raccourcis globaux : ils répondent depuis n'importe quelle app.
+struct Hotkeys {
+    /// À garder en vie : les raccourcis disparaissent avec lui.
+    _manager: GlobalHotKeyManager,
+    /// ⌃⌥C : la cacher ou la faire revenir.
+    toggle: Option<u32>,
+    /// ⌃⌥P : lui parler.
+    talk: Option<u32>,
 }
 
 struct Running {
@@ -154,7 +168,7 @@ impl App {
         overlay.set_shown(true);
         overlay.request_redraw();
 
-        self.hotkey = register_hotkey();
+        self.hotkeys = register_hotkeys();
         #[cfg(any(target_os = "macos", windows))]
         {
             self.menus = Some(menu::Menus::new());
@@ -231,7 +245,32 @@ impl App {
                         r.draw();
                     }
                 }
+                OverlayEvent::InputSubmitted(message) => r.banner.say(&message),
+                OverlayEvent::InputCancelled => log::debug!("saisie abandonnée"),
             }
+        }
+    }
+
+    /// Ouvre le champ de saisie sous ses pieds pour lui parler, ou le referme s'il est ouvert.
+    fn talk(&mut self) {
+        if self.hidden {
+            self.toggle_hidden(); // on ne parle pas à quelqu'un qu'on ne voit pas
+        }
+        let Some(r) = self.running.as_mut() else { return };
+        if r.overlay.input_is_open() {
+            return r.overlay.hide_input();
+        }
+        let (width, height) = r.overlay.size();
+        let bounds = Rect::new(Vec2::ZERO, Vec2::new(width as f32, height as f32));
+        let standing = Rect::new(r.capri.position(), r.capri.size());
+        let gap = INPUT_GAP_POINTS * r.overlay.scale_factor() as f32;
+        let opened = r.overlay.show_input("Dis quelque chose à Capri…", |w, h| {
+            let at = place_input(standing, Vec2::new(w as f32, h as f32), bounds, gap);
+            (f64::from(at.x), f64::from(at.y))
+        });
+        if !opened {
+            log::warn!("pas encore de champ de saisie sur ce système");
+            r.banner.notify("Je ne sais pas encore t'écouter sur ce système", capri_claude::Tone::Failed);
         }
     }
 
@@ -241,6 +280,7 @@ impl App {
             let actions = self.menus.as_ref().map(menu::Menus::pending_actions).unwrap_or_default();
             for action in actions {
                 match action {
+                    menu::Action::Talk => self.talk(),
                     menu::Action::ToggleVisible => self.toggle_hidden(),
                     menu::Action::ToggleClaudeHook => self.toggle_claude_hook(),
                     menu::Action::Quit => event_loop.exit(),
@@ -298,11 +338,15 @@ impl App {
     }
 
     fn handle_hotkey(&mut self) {
-        let Some((_, id)) = &self.hotkey else { return };
-        let id = *id;
+        let Some(Hotkeys { toggle, talk, .. }) = self.hotkeys else { return };
         while let Ok(event) = GlobalHotKeyEvent::receiver().try_recv() {
-            if event.id == id && event.state == HotKeyState::Pressed {
+            if event.state != HotKeyState::Pressed {
+                continue;
+            }
+            if Some(event.id) == toggle {
                 self.toggle_hidden();
+            } else if Some(event.id) == talk {
+                self.talk();
             }
         }
     }
@@ -310,6 +354,9 @@ impl App {
     fn toggle_hidden(&mut self) {
         let Some(r) = self.running.as_mut() else { return };
         self.hidden = !self.hidden;
+        if self.hidden {
+            r.overlay.hide_input();
+        }
         r.overlay.set_click_through(true);
         r.click_through = true;
         r.overlay.set_shown(!self.hidden);
@@ -409,12 +456,20 @@ fn display_size((width, height): (u32, u32), scale_factor: f64) -> Vec2 {
     Vec2::new(h * width as f32 / height as f32, h)
 }
 
-/// ⌃⌥C (Ctrl+Alt+C) : la cacher ou la faire revenir, depuis n'importe quelle app.
-fn register_hotkey() -> Option<(GlobalHotKeyManager, u32)> {
+/// ⌃⌥C (Ctrl+Alt+C) la cache ou la fait revenir, ⌃⌥P ouvre le champ pour lui parler, depuis
+/// n'importe quelle app. Un raccourci déjà pris par une autre app n'empêche pas l'autre.
+fn register_hotkeys() -> Option<Hotkeys> {
     let manager = GlobalHotKeyManager::new()
-        .inspect_err(|err| log::warn!("raccourci global indisponible : {err}"))
+        .inspect_err(|err| log::warn!("raccourcis globaux indisponibles : {err}"))
         .ok()?;
-    let hotkey = HotKey::new(Some(Modifiers::CONTROL | Modifiers::ALT), Code::KeyC);
-    manager.register(hotkey).inspect_err(|err| log::warn!("raccourci ⌃⌥C déjà pris : {err}")).ok()?;
-    Some((manager, hotkey.id()))
+    let register = |code: Code, label: &str| {
+        let hotkey = HotKey::new(Some(Modifiers::CONTROL | Modifiers::ALT), code);
+        manager
+            .register(hotkey)
+            .inspect_err(|err| log::warn!("raccourci {label} indisponible : {err}"))
+            .ok()
+            .map(|()| hotkey.id())
+    };
+    let (toggle, talk) = (register(Code::KeyC, "⌃⌥C"), register(Code::KeyP, "⌃⌥P"));
+    Some(Hotkeys { _manager: manager, toggle, talk })
 }

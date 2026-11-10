@@ -1,4 +1,5 @@
-//! L'image du bandeau : un texte sur une ligne, dans une pastille arrondie.
+//! Les images de texte : le bandeau (une ligne dans une pastille) et la bulle de parole
+//! (plusieurs lignes dans un cadre arrondi).
 //!
 //! Le texte est mis en forme et tracé sur le processeur par cosmic-text, avec les polices du
 //! système (aucune police n'est embarquée). L'image obtenue est ensuite dessinée par le même
@@ -14,6 +15,17 @@ const PADDING_Y: f32 = 6.0;
 const BORDER: f32 = 1.5;
 /// Largeur maximale du texte ; au-delà il est coupé.
 const MAX_TEXT_WIDTH: f32 = 420.0;
+
+/// Dimensions de la bulle de parole, en points : un peu plus aérée, elle se lit plus longtemps.
+const SPEECH_FONT_SIZE: f32 = 13.0;
+const SPEECH_LINE_HEIGHT: f32 = 18.0;
+const SPEECH_PADDING_X: f32 = 14.0;
+const SPEECH_PADDING_Y: f32 = 10.0;
+const SPEECH_RADIUS: f32 = 14.0;
+/// Largeur du texte de la bulle : au-delà, il passe à la ligne.
+const SPEECH_TEXT_WIDTH: f32 = 300.0;
+/// Ce qui marque, au bout d'une page, qu'une autre suit.
+const MORE: &str = "  ›";
 
 /// Polices sans empattement préférées, de la plus souhaitable à la moins ; à défaut, celle que
 /// le système désigne.
@@ -75,18 +87,59 @@ impl BannerPainter {
         let line_height = (LINE_HEIGHT * scale).ceil();
         let width = (text_width.ceil() + 2.0 * pad_x) as u32;
         let height = (line_height + 2.0 * pad_y) as u32;
-        let mut image = pill(width, height, BORDER * scale, style);
+        // rayon sans borne : les bouts sont des demi-cercles
+        let mut image = rounded_box(width, height, f32::INFINITY, BORDER * scale, style);
+        self.draw_text(&mut buffer, &mut image, style, pad_x as i32, pad_y as i32);
+        image
+    }
 
+    /// Trace une page de parole sur plusieurs lignes. `more` : une autre page suit celle-ci.
+    pub fn paint_speech(&mut self, text: &str, more: bool, style: &BannerStyle, scale: f32) -> BannerImage {
+        let scale = if scale.is_finite() && scale > 0.0 { scale } else { 1.0 };
+        // les sauts de ligne sont gardés, les autres caractères de contrôle deviennent des espaces
+        let mut shown: String =
+            text.chars().map(|c| if c.is_control() && c != '\n' { ' ' } else { c }).collect();
+        if more {
+            shown.push_str(MORE);
+        }
+        let metrics = Metrics::new(SPEECH_FONT_SIZE * scale, SPEECH_LINE_HEIGHT * scale);
+        let attrs = Attrs::new().family(Family::SansSerif).weight(Weight::MEDIUM);
+        let mut buffer = Buffer::new(&mut self.fonts, metrics);
+        buffer.set_wrap(Wrap::WordOrGlyph);
+        buffer.set_size(Some(SPEECH_TEXT_WIDTH * scale), None);
+        buffer.set_text(&shown, &attrs, Shaping::Advanced, None);
+        buffer.shape_until_scroll(&mut self.fonts, false);
+        let (text_width, text_height) = buffer
+            .layout_runs()
+            .fold((0.0f32, 0.0f32), |(w, h), run| (w.max(run.line_w), h.max(run.line_top + run.line_height)));
+
+        let pad_x = (SPEECH_PADDING_X * scale).round();
+        let pad_y = (SPEECH_PADDING_Y * scale).round();
+        // jamais plus étroite ni plus basse qu'une ligne vide : une bulle reste une bulle
+        let width = (text_width.min(SPEECH_TEXT_WIDTH * scale).ceil() + 2.0 * pad_x) as u32;
+        let height = (text_height.max(SPEECH_LINE_HEIGHT * scale).ceil() + 2.0 * pad_y) as u32;
+        let mut image = rounded_box(width, height, SPEECH_RADIUS * scale, BORDER * scale, style);
+        self.draw_text(&mut buffer, &mut image, style, pad_x as i32, pad_y as i32);
+        image
+    }
+
+    /// Pose le texte déjà mis en forme sur l'image, décalé de la marge intérieure.
+    fn draw_text(
+        &mut self,
+        buffer: &mut Buffer,
+        image: &mut BannerImage,
+        style: &BannerStyle,
+        dx: i32,
+        dy: i32,
+    ) {
         let [r, g, b, a] = style.text;
-        let (offset_x, offset_y) = (pad_x as i32, pad_y as i32);
         buffer.draw(&mut self.fonts, &mut self.cache, Color::rgba(r, g, b, a), |x, y, w, h, color| {
             for py in y..y.saturating_add_unsigned(h) {
                 for px in x..x.saturating_add_unsigned(w) {
-                    image.blend(px.saturating_add(offset_x), py.saturating_add(offset_y), color.as_rgba());
+                    image.blend(px.saturating_add(dx), py.saturating_add(dy), color.as_rgba());
                 }
             }
         });
-        image
     }
 
     /// Met le texte en forme sur une ligne, en le coupant tant qu'il dépasse la largeur maximale.
@@ -135,11 +188,12 @@ impl BannerImage {
     }
 }
 
-/// Une pastille aux bouts ronds, avec son liseré, aux bords lissés.
-fn pill(width: u32, height: u32, border: f32, style: &BannerStyle) -> BannerImage {
+/// Un cadre aux coins arrondis de `radius` pixels (borné à la moitié du petit côté : au-delà, les
+/// bouts sont des demi-cercles), avec son liseré, aux bords lissés.
+fn rounded_box(width: u32, height: u32, radius: f32, border: f32, style: &BannerStyle) -> BannerImage {
     let mut image = BannerImage { width, height, rgba: vec![0; width as usize * height as usize * 4] };
     let (half_w, half_h) = (width as f32 / 2.0, height as f32 / 2.0);
-    let radius = half_h.min(half_w);
+    let radius = radius.min(half_h).min(half_w);
     for y in 0..height {
         for x in 0..width {
             // distance signée au bord de la pastille : négative à l'intérieur
@@ -189,7 +243,7 @@ mod tests {
 
     #[test]
     fn the_pill_is_round_at_the_ends_and_edged() {
-        let image = pill(200, 60, 3.0, &STYLE);
+        let image = rounded_box(200, 60, f32::INFINITY, 3.0, &STYLE);
         assert_eq!(pixel(&image, 0, 0)[3], 0, "coin transparent");
         assert_eq!(pixel(&image, 199, 59)[3], 0);
         assert_eq!(pixel(&image, 100, 30), STYLE.fill, "centre : le fond");
@@ -243,6 +297,53 @@ mod tests {
     }
 
     #[test]
+    fn a_box_keeps_straight_edges_between_its_rounded_corners() {
+        let image = rounded_box(200, 120, 20.0, 3.0, &STYLE);
+        assert_eq!(pixel(&image, 0, 0)[3], 0, "coin transparent");
+        assert_eq!(pixel(&image, 5, 5)[3], 0, "encore dans l'arrondi");
+        assert_eq!(pixel(&image, 1, 60), STYLE.border, "bord gauche droit : le liseré");
+        assert_eq!(pixel(&image, 100, 118), STYLE.border, "bord bas");
+        assert_eq!(pixel(&image, 100, 60), STYLE.fill, "centre : le fond");
+        assert_eq!(pixel(&image, 30, 8), STYLE.fill, "à l'intérieur, près du coin");
+    }
+
+    #[test]
+    fn speech_wraps_onto_several_lines_within_a_fixed_width() {
+        let mut painter = painter();
+        let one_line = painter.paint_speech("Bonjour !", false, &STYLE, 2.0);
+        let long = "Tu as dit : « bonjour ». Je n'ai pas encore de cerveau, alors je répète ce qu'on me dit, \
+                    mot pour mot, jusqu'à ce qu'on m'en donne un.";
+        let several = painter.paint_speech(long, false, &STYLE, 2.0);
+        let line = (SPEECH_LINE_HEIGHT * 2.0) as u32;
+        let padding = 2 * (SPEECH_PADDING_Y * 2.0) as u32;
+        assert_eq!(one_line.height, line + padding);
+        let lines = (several.height - padding) / line;
+        assert!((3..=6).contains(&lines), "{lines} lignes pour {} px de haut", several.height);
+        let max_width = ((SPEECH_TEXT_WIDTH + 2.0 * SPEECH_PADDING_X) * 2.0) as u32;
+        assert!(
+            several.width <= max_width && several.width > max_width * 3 / 4,
+            "{} px de large",
+            several.width
+        );
+        assert!(one_line.width < several.width / 2, "une bulle courte reste étroite");
+        assert_eq!(several.rgba.len(), several.width as usize * several.height as usize * 4);
+    }
+
+    #[test]
+    fn speech_keeps_line_breaks_and_marks_a_page_that_has_a_sequel() {
+        let mut painter = painter();
+        let flat = painter.paint_speech("un deux", false, &STYLE, 2.0);
+        let broken = painter.paint_speech("un\ndeux", false, &STYLE, 2.0);
+        assert!(broken.height > flat.height, "le saut de ligne est respecté");
+        let marked = painter.paint_speech("un deux", true, &STYLE, 2.0);
+        assert!(marked.width > flat.width, "la marque de suite prend de la place");
+        // même vide, une bulle a la taille d'une ligne
+        let empty = painter.paint_speech("", false, &STYLE, 2.0);
+        assert_eq!(empty.height, flat.height);
+        assert!(empty.width > 0);
+    }
+
+    #[test]
     fn odd_inputs_still_give_an_image() {
         let mut painter = painter();
         for text in ["", " ", "a\nb\tc", "日本語のテキスト", "🙂 emoji", "\u{202e}droite à gauche"]
@@ -285,6 +386,29 @@ mod tests {
                 },
             ),
         ];
+        let speech = painter.paint_speech(
+            "Tu as dit : « Ça marche, les accents ? 🙂 ». Je n'ai pas encore de cerveau, alors je répète ce qu'on me dit.",
+            true,
+            &STYLE,
+            2.0,
+        );
+        image::save_buffer(
+            dir.join("parole.png"),
+            &speech.rgba,
+            speech.width,
+            speech.height,
+            image::ExtendedColorType::Rgba8,
+        )
+        .unwrap();
+        let thinking = painter.paint_speech("…", false, &STYLE, 2.0);
+        image::save_buffer(
+            dir.join("reflexion.png"),
+            &thinking.rgba,
+            thinking.width,
+            thinking.height,
+            image::ExtendedColorType::Rgba8,
+        )
+        .unwrap();
         for (name, text, style) in samples {
             let image = painter.paint(text, &style, 2.0);
             image::save_buffer(

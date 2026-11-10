@@ -58,6 +58,18 @@ Limites connues, qui viennent de ce que Claude Code signale ou non :
   jusqu'à la fin de l'outil en question ;
 - dans un dossier que tu n'as pas encore approuvé, Claude Code retient tous les hooks.
 
+## Jalon 4, premier lot : lui parler
+
+**⌃⌥P** (Ctrl+Alt+P), ou « Parler à Capri » dans son menu, ouvre un champ de saisie sous ses
+pieds. Entrée envoie, Échap ou un clic ailleurs referme, et le clavier revient tout seul à la
+fenêtre où tu étais. Elle répond dans une bulle au-dessus d'elle, qui se remplit mot après mot et
+tourne ses pages au rythme de la lecture.
+
+Pour l'instant elle n'a **pas de cerveau** : elle répète ce qu'on lui dit. Ce lot met au point la
+saisie et la bulle ; aucun modèle n'est appelé, rien ne part sur le réseau. Les lots suivants
+brancheront un modèle local, puis des fournisseurs à clé. Le champ de saisie n'existe encore que
+sur macOS.
+
 ## Installer et lancer
 
 Il faut [Rust](https://rustup.rs) 1.90 ou plus récent (`rustup update`).
@@ -85,13 +97,15 @@ Aucune permission système n'est nécessaire. Pour plus de détails dans le term
 
 ```
 crates/
-  capri-core/      logique pure : animation, mouvement, lancer, hit-test, bandeau (testée)
+  capri-core/      logique pure : animation, mouvement, lancer, hit-test, bandeau, parole (testée)
   capri-claude/    logique pure : hooks de Claude Code, protocole, sessions, settings.json (testée)
+  capri-chat/      logique pure : conversation, réponses en flux, cerveau provisoire (testée)
   capri-render/    rendu wgpu : Metal sur macOS, DirectX 12 + DirectComposition sur Windows
     sprite.wgsl    le shader : boil et copie violette
-    banner.rs      le texte du bandeau, tracé avec les polices du système
+    banner.rs      le texte du bandeau et de la bulle, tracé avec les polices du système
   capri-platform/  la fenêtre « Overlay » : première des deux couches qui parlent au système
     macos.rs         AppKit via objc2 : un NSPanel non activant, sans fenêtre winit
+    macos/input.rs   le champ de saisie : le seul panneau qui prend le clavier, sur demande
     winit_overlay.rs fenêtre winit, pour Windows et les autres systèmes
     windows.rs       Win32 via windows-sys
     other.rs         repli (Linux : affichage seul)
@@ -103,14 +117,16 @@ crates/
 tools/             récupération vérifiée des images
 ```
 
-Règle : tout ce qui peut être testé sans écran va dans `capri-core` ou `capri-claude`.
+Règle : tout ce qui peut être testé sans écran va dans `capri-core`, `capri-claude` ou
+`capri-chat`.
 
 ## État de validation
 
 Vérifié automatiquement :
 
-- formatage, `clippy -D warnings` et 106 tests sur **macOS Apple Silicon** : animation, lancer et
-  rebonds, hit-test, clics, bandeau, **validation du shader** par le compilateur de wgpu, lecture
+- formatage, `clippy -D warnings` et 131 tests sur **macOS Apple Silicon** : animation, lancer et
+  rebonds, hit-test, clics, bandeau, parole en pages, bulle sur plusieurs lignes, conversation,
+  **validation du shader** par le compilateur de wgpu, lecture
   des exemples de hooks de la documentation de Claude Code, suivi des sessions, aller-retour sur
   `settings.json`, socket (droits, connexions simultanées), et le binaire `capri-hook` lancé pour
   de vrai (sortie standard vide, code 0, durée bornée) ;
@@ -135,10 +151,13 @@ vérifié avant le passage à la fenêtre « Overlay » ; il n'a pas été revé
    après la fin du tour et accompagne Capri quand on la déplace ;
 9. brancher puis débrancher Claude Code (au terminal et par le menu) : les hooks existants sont
    intacts, et le `settings.json` redevient identique à l'original, à l'octet près ;
-10. Capri fermée, ou binaire `capri-hook` absent : aucune erreur ni ralentissement dans Claude Code.
+10. Capri fermée, ou binaire `capri-hook` absent : aucune erreur ni ralentissement dans Claude Code ;
+11. le champ de saisie prend le clavier (accents et émojis compris) et le rend à la fenêtre
+    d'avant en se fermant ; la bulle répète la phrase, tourne ses pages, et s'affiche même quand
+    Claude Code attend l'utilisateur.
 
 **Pas encore testé sur un vrai PC Windows** : y repasser les points 1 à 5, puis 8 à 10. Le tube
-nommé de `capri-ipc` n'y a jamais tourné.
+nommé de `capri-ipc` n'y a jamais tourné, et le champ de saisie n'y existe pas encore.
 
 Points à surveiller :
 

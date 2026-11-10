@@ -1,0 +1,12 @@
+[package]
+name = "capri-chat"
+description = "La conversation avec Capri : historique, réponses en flux, cerveaux. Aucune dépendance système ni réseau."
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+
+[lints]
+workspace = true

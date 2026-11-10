@@ -1,6 +1,13 @@
-//! Le bandeau de Capri, côté application : ce qu'il dit, son image, où il se dessine.
+//! Ce qui s'affiche au-dessus de Capri, côté application : une ligne de bandeau ou sa bulle de
+//! parole, son image, et où elle se dessine.
 //!
-//! Ce qu'il dit vient du suivi de Claude Code (`claude::Feed`) ou, brièvement, de l'app elle-même.
+//! Trois sources se partagent cette place, de la plus à la moins prioritaire :
+//! 1. ce que Capri est en train de dire (`chat::Chat`) : on vient de lui parler, on attend sa
+//!    réponse, et rien ne doit la masquer — pas même Claude Code qui attend l'utilisateur, ce qui
+//!    peut durer des minutes ;
+//! 2. un message de l'app elle-même, pendant quelques secondes ;
+//! 3. l'activité de Claude Code (`claude::Feed`), qui reprend la place dès qu'elle se tait.
+//!
 //! L'animation et le placement sont dans `capri-core`, le tracé du texte dans `capri-render`.
 
 use std::sync::mpsc::{Receiver, TryRecvError, channel};
@@ -11,27 +18,44 @@ use capri_core::{Banner, Rect, Vec2, place_banner};
 use capri_render::banner::{BannerPainter, BannerStyle};
 use capri_render::{Renderer, SpriteDraw, SpriteImage};
 
+use crate::chat::Chat;
 use crate::claude::Feed;
 
 /// Le suivi de Claude Code est relu à cette cadence (en pas de 60 Hz) même sans nouveau message :
 /// c'est ce qui fait expirer un texte.
 const REFRESH_EVERY: u32 = 15;
 /// Durée d'un message de l'app elle-même.
-#[cfg_attr(not(any(target_os = "macos", windows)), expect(dead_code, reason = "voir BannerView::notify"))]
 const NOTICE_FOR: Duration = Duration::from_secs(5);
 /// Écart entre le bandeau et sa tête, et décalage de sa copie violette, en points.
 const GAP_POINTS: f32 = 8.0;
 const GHOST_POINTS: f32 = 1.5;
 
+const NIGHT: [u8; 4] = [20, 16, 36, 240];
+/// Les couleurs de sa bulle de parole.
+const SPEECH_STYLE: BannerStyle =
+    BannerStyle { text: [250, 246, 255, 255], fill: NIGHT, border: [214, 170, 255, 255] };
+
+/// Ce qui occupe la place au-dessus d'elle.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Shown {
+    /// Une ligne : l'activité de Claude Code, ou un message de l'app.
+    Line(Headline),
+    /// Une page de ce que Capri dit ; `more` : une autre suit.
+    Speech { text: String, more: bool },
+}
+
 pub struct BannerView {
     feed: Option<Feed>,
-    banner: Banner<Headline>,
-    /// Un message de l'app, prioritaire jusqu'à l'instant donné.
+    chat: Chat,
+    banner: Banner<Shown>,
+    /// Un message de l'app, affiché jusqu'à l'instant donné.
     notice: Option<(Headline, Instant)>,
     painter: Painter,
     painted: Option<Painted>,
     ticks: u32,
     refresh: bool,
+    /// Dernier dessin (deux images d'animation) pour lequel sa parole a été relue.
+    spoken_drawing: u64,
 }
 
 /// Le traceur de texte, dont la création (lecture des polices du système) se fait en tâche de fond.
@@ -67,30 +91,38 @@ impl BannerView {
         };
         Self {
             feed: Feed::start(),
+            chat: Chat::new(),
             banner: Banner::new(),
             notice: None,
             painter,
             painted: None,
             ticks: 0,
             refresh: false,
+            spoken_drawing: u64::MAX,
         }
     }
 
-    /// Quand Capri est cachée : continuer à suivre Claude Code, sans rien dessiner.
+    /// Quand Capri est cachée : continuer à suivre Claude Code, sans rien dessiner. Elle ne
+    /// parle pas dans le vide : ce qu'elle disait attend son retour.
     pub fn listen_only(&mut self) {
         if let Some(feed) = &mut self.feed {
             feed.pump();
         }
+        self.chat.pump();
+        self.chat.hold();
         self.refresh = true;
     }
 
     /// Fait dire quelque chose à Capri pendant quelques secondes.
-    #[cfg_attr(
-        not(any(target_os = "macos", windows)),
-        expect(dead_code, reason = "seuls les menus, absents de ce système, s'en servent pour l'instant")
-    )]
     pub fn notify(&mut self, text: impl Into<String>, tone: Tone) {
         self.notice = Some((Headline { text: text.into(), tone }, Instant::now() + NOTICE_FOR));
+        self.refresh = true;
+    }
+
+    /// L'utilisateur lui dit quelque chose : elle répond dans sa bulle.
+    pub fn say(&mut self, message: &str) {
+        log::debug!("message de {} caractères", message.chars().count());
+        self.chat.say(message);
         self.refresh = true;
     }
 
@@ -99,20 +131,17 @@ impl BannerView {
         self.painted = None;
     }
 
-    /// À chaque pas : met à jour ce que dit le bandeau et, s'il a changé, son image.
+    /// À chaque pas : met à jour ce qui s'affiche et, si cela a changé, son image.
     pub fn update(&mut self, frame: u64, scale: f64, renderer: &mut Renderer) {
         let fresh = self.feed.as_mut().is_some_and(Feed::pump);
+        self.chat.pump();
         self.ticks = self.ticks.wrapping_add(1);
-        if fresh || self.refresh || self.ticks.is_multiple_of(REFRESH_EVERY) {
+        // sa parole avance « en deux », comme le reste de l'animation
+        let speaking = self.chat.is_speaking() && frame / 2 != self.spoken_drawing;
+        if fresh || speaking || self.refresh || self.ticks.is_multiple_of(REFRESH_EVERY) {
             self.refresh = false;
-            if self.notice.as_ref().is_some_and(|(_, until)| Instant::now() >= *until) {
-                self.notice = None;
-            }
-            let wanted = match &self.notice {
-                Some((headline, _)) => Some(headline.clone()),
-                None => self.feed.as_mut().and_then(Feed::headline),
-            };
-            self.banner.set(wanted, frame);
+            self.spoken_drawing = frame / 2;
+            self.choose(frame);
         }
 
         if let Painter::Loading(receiver) = &self.painter {
@@ -128,10 +157,17 @@ impl BannerView {
 
         match self.banner.pose(frame) {
             Some(pose) if self.painted.is_none_or(|painted| painted.generation != pose.generation) => {
-                if let (Painter::Ready(painter), Some(headline)) =
+                if let (Painter::Ready(painter), Some(shown)) =
                     (&mut self.painter, self.banner.content(frame))
                 {
-                    let image = painter.paint(&headline.text, &style(headline.tone), scale as f32);
+                    let image = match shown {
+                        Shown::Line(headline) => {
+                            painter.paint(&headline.text, &style(headline.tone), scale as f32)
+                        }
+                        Shown::Speech { text, more } => {
+                            painter.paint_speech(text, *more, &SPEECH_STYLE, scale as f32)
+                        }
+                    };
                     let sprite = SpriteImage { width: image.width, height: image.height, rgba: &image.rgba };
                     match renderer.set_banner(Some(sprite)) {
                         Ok(()) => {
@@ -149,6 +185,28 @@ impl BannerView {
                 }
             }
         }
+    }
+
+    /// Décide de ce qui occupe la place au-dessus d'elle à partir de l'image `frame`.
+    fn choose(&mut self, frame: u64) {
+        if self.notice.as_ref().is_some_and(|(_, until)| Instant::now() >= *until) {
+            self.notice = None;
+        }
+        if let Some((text, more)) = self.chat.page() {
+            let page = Shown::Speech { text, more };
+            // un texte qui s'allonge ou une page qui tourne : pas d'à-coup
+            let already_speaking = matches!(self.banner.content(frame), Some(Shown::Speech { .. }));
+            return if already_speaking {
+                self.banner.revise(page, frame)
+            } else {
+                self.banner.set(Some(page), frame)
+            };
+        }
+        let line = match &self.notice {
+            Some((headline, _)) => Some(headline.clone()),
+            None => self.feed.as_mut().and_then(Feed::headline),
+        };
+        self.banner.set(line.map(Shown::Line), frame);
     }
 
     /// Où et comment dessiner le bandeau à l'image `frame`, s'il y a lieu. `capri` : là où elle
@@ -175,7 +233,6 @@ impl BannerView {
 
 /// Les couleurs du bandeau selon ce qu'il annonce.
 fn style(tone: Tone) -> BannerStyle {
-    const NIGHT: [u8; 4] = [20, 16, 36, 240];
     match tone {
         Tone::Working => BannerStyle { text: [246, 240, 255, 255], fill: NIGHT, border: [115, 41, 224, 255] },
         // le rouge de Capri : c'est le seul cas où elle réclame ton attention

@@ -80,6 +80,17 @@ impl Overlay {
         self.window.pre_present_notify();
     }
 
+    /// Pas encore de champ de saisie avec une fenêtre winit : ni Windows ni Linux n'en ont.
+    pub fn show_input(&self, _placeholder: &str, _place: impl FnOnce(f64, f64) -> (f64, f64)) -> bool {
+        false
+    }
+
+    pub fn hide_input(&self) {}
+
+    pub fn input_is_open(&self) -> bool {
+        false
+    }
+
     pub fn on_window_event(&self, event: &WindowEvent) {
         let translated = match event {
             WindowEvent::CloseRequested => OverlayEvent::CloseRequested,

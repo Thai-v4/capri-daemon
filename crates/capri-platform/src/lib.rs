@@ -54,7 +54,7 @@ pub fn configure_event_loop<T: 'static>(builder: &mut EventLoopBuilder<T>) {
 }
 
 /// Ce que l'overlay rapporte à l'application.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum OverlayEvent {
     /// Un bouton de souris vient d'être enfoncé sur la fenêtre. `ctrl` : la touche Ctrl était
     /// tenue à ce moment-là.
@@ -69,6 +69,10 @@ pub enum OverlayEvent {
     RedrawRequested,
     /// Le système demande la fermeture de la fenêtre.
     CloseRequested,
+    /// Le champ de saisie a été validé (Entrée), avec ce qu'il contenait.
+    InputSubmitted(String),
+    /// Le champ de saisie a été fermé sans valider : Échap, ou un clic ailleurs.
+    InputCancelled,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -129,6 +133,27 @@ impl Overlay {
     /// À appeler juste avant de présenter une image (winit le demande pour bien les caler).
     pub fn pre_present_notify(&self) {
         self.0.pre_present_notify();
+    }
+
+    /// Ouvre un champ de saisie d'une ligne près de Capri et lui donne le clavier : c'est le seul
+    /// moment où Capri le prend, et seulement parce qu'on le lui demande. Le champ se ferme sur
+    /// Entrée ([`OverlayEvent::InputSubmitted`]), sur Échap ou sur un clic ailleurs
+    /// ([`OverlayEvent::InputCancelled`]), et rend alors le clavier à la fenêtre d'avant.
+    ///
+    /// `place` reçoit la taille du champ et rend son coin haut gauche, le tout en pixels
+    /// physiques de l'overlay. Rend `false`, sans rien ouvrir, sur les systèmes qui n'ont pas
+    /// encore de champ de saisie.
+    pub fn show_input(&self, placeholder: &str, place: impl FnOnce(f64, f64) -> (f64, f64)) -> bool {
+        self.0.show_input(placeholder, place)
+    }
+
+    /// Ferme le champ de saisie s'il est ouvert, comme un abandon.
+    pub fn hide_input(&self) {
+        self.0.hide_input();
+    }
+
+    pub fn input_is_open(&self) -> bool {
+        self.0.input_is_open()
     }
 
     /// À appeler pour chaque événement de fenêtre reçu de winit. Sur macOS, la fenêtre n'est pas
