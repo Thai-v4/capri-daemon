@@ -250,7 +250,11 @@ Sur macOS, **« Réglages… »** dans son menu (icône de la barre des menus, o
 ouvre la fenêtre « Réglages de Capri ». Elle prend le clavier, et le rend à la fenêtre où tu
 étais quand tu la fermes (bouton rouge, ⌘W ou Échap) ; Capri continue de flotter pendant ce
 temps. La rouvrir ramène la même fenêtre devant. ⌘V, ⌘C, ⌘X, ⌘A et ⌘Z marchent dans ses champs
-(et désormais dans le champ où on lui parle).
+(et désormais dans le champ où on lui parle). ⌘Q et ⌘H, dans cette fenêtre comme dans le champ où
+on lui parle (⌃⌥P), ne ferment que celui-ci, comme ⌘W ou Échap : Capri ne se quitte que par
+« Quitter » dans son menu. Ce qu'elle dit dans sa bulle, et ce que dit la fenêtre, ne renvoie
+jamais à une commande de terminal : la bulle dit d'ouvrir « Réglages… » dans son menu, la fenêtre
+dit quoi faire sur place (seules les commandes `capri chat` et `capri voice` gardent les leurs).
 
 **Cerveau**
 
@@ -271,7 +275,8 @@ temps. La rouvrir ramène la même fenêtre devant. ⌘V, ⌘C, ⌘X, ⌘A et �
   clé qu'il exige). Chez un fournisseur qui en propose des centaines, un champ de recherche, et
   30 résultats au plus ;
 - **Essayer** lui dit « Présente-toi en une phrase. » avec ce qui est affiché, et montre sa
-  réponse, ou la panne, dans les mots de `capri chat test` ;
+  réponse, ou la panne, dans les mêmes mots que `capri chat test` mais avec le conseil de la
+  fenêtre (« remets-la ci-dessus ») au lieu d'une commande ;
 - **Utiliser ce cerveau** l'écrit dans `chat.json` : elle s'en sert dès ta phrase suivante.
 
 **Voix** : la voix activée ou non, le choix parmi les voix françaises installées (avec leur
@@ -356,7 +361,7 @@ Règle : tout ce qui peut être testé sans écran va dans `capri-core`, `capri-
 
 Vérifié automatiquement :
 
-- formatage, `clippy -D warnings` et 294 tests sur **macOS Apple Silicon** (plus 3 qui ne
+- formatage, `clippy -D warnings` et 303 tests sur **macOS Apple Silicon** (plus 3 qui ne
   tournent qu'à la main : ils écrivent des images, lisent un vrai `settings.json` ou touchent au
   vrai trousseau) : animation, lancer et rebonds, hit-test, clics, bandeau, parole en pages, bulle
   sur plusieurs lignes, conversation, **validation du shader** par le compilateur de wgpu, lecture
@@ -451,47 +456,25 @@ vérifié avant le passage à la fenêtre « Overlay » ; il n'a pas été revé
 14. depuis `Capri.app`, macOS demande le micro et la reconnaissance vocale à la première écoute ;
     en maintenant ⌃⌥D, la bulle bleue montre ce qu'elle comprend, la phrase part au relâchement,
     elle se tait quand on lui coupe la parole, et un appui sans rien dire ne lui envoie rien.
+15. la fenêtre de réglages s'ouvre devant sans figer Capri ; ⌘V colle dans ses champs et dans le
+    champ ⌃⌥P ; une clé enregistrée vide son champ et n'y revient pas avec ⌘Z ; l'avertissement
+    d'envoi apparaît pour un fournisseur distant ; la liste de modèles se filtre ; « Essayer » et
+    « Utiliser ce cerveau » fonctionnent ; le clavier revient à l'app d'avant à la fermeture.
 
 **Pas encore vérifié** : une vraie conversation avec un fournisseur à clé (OpenRouter, DeepSeek,
 ProxyAPI, Ollama en ligne) ; un vrai LM Studio ; la bulle avec un fournisseur distant ; la demande
 d'accès au trousseau quand `Capri.app` lit une clé rangée depuis le terminal.
 
-**À vérifier à la main : la fenêtre de réglages** (rien de ce qui se voit ou se touche n'a été
-vu) :
+**À vérifier à la main : ⌘Q et ⌘H** (le choix du raccourci est testé, pas la fenêtre) :
 
-1. « Réglages… » dans le menu de la barre des menus, puis en clic droit sur Capri : la fenêtre
-   s'ouvre devant, sur le bureau en cours, avec deux onglets, « Cerveau » et « Voix », lisibles en
-   clair comme en sombre ; Capri continue de flotter et de s'animer ;
-2. on peut taper tout de suite dans un champ, sans cliquer d'abord dans la fenêtre (elle a le
-   clavier) ; la refermer (bouton rouge, ⌘W, Échap) rend le clavier à la fenêtre d'avant, sans
-   qu'on ait à cliquer dedans ; rouvrir le menu « Réglages… » quand elle est derrière une autre
-   fenêtre la ramène devant, sans en ouvrir une seconde ;
-3. ⌘V colle dans le champ « Adresse », dans le champ de recherche et dans le champ de la clé ;
-   ⌘A, ⌘C, ⌘X, ⌘Z et ⇧⌘Z marchent dans « Adresse » ; ⌘C ne copie rien du champ de la clé ; et ⌘V
-   colle aussi dans le champ où on lui parle (⌃⌥P) ;
-4. choisir OpenRouter : la phrase orange « Attention : ce que tu lui dis partira chez OpenRouter
-   (openrouter.ai:443)… » paraît avant toute autre action ; puis « Ollama » : « … reste sur cette
-   machine, sauf avec un modèle « cloud »… », et la liste des modèles installés arrive seule ;
-5. coller une clé, « Enregistrer la clé » : rien ne s'affiche dans le champ, qui se vide (et ⌘Z
-   dans ce champ n'y remet rien) ; la note
-   dit « Clé d'OpenRouter rangée dans le trousseau de session, pour openrouter.ai:443
-   seulement… » et l'état « Une clé est rangée pour openrouter.ai:443… » ; `capri chat status`
-   (avec le cerveau OpenRouter) le confirme ; « Retirer la clé » l'enlève. Si macOS demande
-   l'accès au trousseau, la fenêtre attend sans figer Capri ;
-6. « Demander la liste » chez OpenRouter : un champ de recherche, 30 modèles au plus ; taper un
-   mot filtre la liste, la croix du champ la rend entière ;
-7. « Essayer » avec Ollama : la réponse s'écrit dans la fenêtre au fil de l'eau, suivie de
-   « Réponse en … s » ; une panne s'y écrit en rouge, avec le message de `capri chat test` ;
-8. « Utiliser ce cerveau », puis ⌃⌥P : elle répond avec ce cerveau, sans être relancée ;
-   `capri chat use …` en ligne de commande, puis fermer et rouvrir la fenêtre : elle montre le
-   nouveau cerveau ;
-9. onglet « Voix » : la case active ou coupe sa voix (le menu passe de « Activer sa voix » à
-   « Couper sa voix »), la liste montre les voix françaises avec leur qualité, « Écouter » dit
-   la phrase d'essai avec la voix choisie ;
-10. pendant qu'une liste déroulante est ouverte, Capri s'anime-t-elle encore ? (une liste suit
-    sa propre boucle d'événements, comme le menu de Capri : elle peut s'arrêter un instant).
+1. fenêtre de réglages ouverte, ⌘Q : seule la fenêtre se ferme, Capri continue de flotter et le
+   clavier revient à l'app d'avant ; idem pour ⌘H (Capri n'est pas masquée) ;
+2. dans le champ ⌃⌥P, ⌘Q et ⌘H ferment seulement le champ, comme Échap ; Capri reste là ;
+3. sans fenêtre ni champ ouverts, rien ne change : « Quitter » dans son menu quitte Capri ;
+4. un message de panne dans la bulle (clé absente ou refusée) dit d'ouvrir « Réglages… », et le
+   même dans la fenêtre dit « remets-la ci-dessus », sans commande.
 
-**Pas encore testé sur un vrai PC Windows** : y repasser les points 1 à 5, puis 8 à 10. Le tube
+**Pas encore testé sur un vrai PC Windows** : il n'y a pas encore de fenêtre de réglages. Le tube
 nommé de `capri-ipc` n'y a jamais tourné, le champ de saisie et la voix n'y existent pas encore,
 et le chat n'y a jamais été lancé : ni le https (SChannel), ni le Gestionnaire d'identification,
 ni la saisie d'une clé sans écho n'y ont tourné.

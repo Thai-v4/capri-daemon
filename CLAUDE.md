@@ -203,6 +203,19 @@ précisément quoi vérifier plutôt que de l'affirmer.
   sortie d'une commande. Dans le doute, il se tait plutôt que d'affirmer quelque chose de périmé.
 - Au-dessus de sa tête, une seule chose à la fois : ce qu'on lui dit au micro d'abord, puis sa
   parole (on vient de lui parler), puis un message de l'app, puis l'activité de Claude Code.
+- **Ce qui s'affiche dans la bulle ou dans la fenêtre de réglages ne renvoie jamais à une commande
+  de terminal** (`capri chat …`, `capri voice …`) : le but de la fenêtre est que personne n'ait à
+  ouvrir un terminal. La bulle renvoie à « Réglages… » dans son menu, la fenêtre dit quoi faire
+  sur place (« remets-la ci-dessus »). Seul un terminal garde ses commandes. Une phrase s'écrit
+  une fois ; le conseil qui la termine se choisit par `capri_chat::Place` (`Terminal`, `Bubble`,
+  `Window`), jamais en dupliquant la phrase. Là où la fenêtre ne sait pas encore faire la chose
+  (personnalité `persona.md`…), le message peut citer le fichier ou la commande : ne pas promettre
+  une rubrique qui n'existe pas.
+- **⌘Q et ⌘H ne touchent jamais à Capri tant qu'un de ses panneaux est la fenêtre clé** : dans la
+  fenêtre de réglages et dans le champ de saisie, ils ferment seulement ce panneau (comme ⌘W et
+  Échap), parce que `EditKeysView` (`macos/edit_keys.rs`) les prend avant le menu par défaut de
+  winit (Quitter, Masquer). Capri ne se quitte que par « Quitter » dans son propre menu, et ne se
+  masque que par son propre raccourci. Tout nouveau panneau qui prend le clavier porte cette vue.
 - Le `settings.json` de Claude Code appartient à l'utilisateur et à d'autres outils : toute
   modification passe par `capri_claude::settings` (réécriture à l'octet près, vérification) et
   par `hook_setup` (sauvegarde, écriture atomique). Jamais d'édition directe.
