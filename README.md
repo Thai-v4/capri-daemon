@@ -28,20 +28,21 @@ tait dès qu'il n'y a plus rien à dire.
 ```bash
 cargo build --release                      # construit capri et capri-hook
 ./target/release/capri hook install        # branche Claude Code (--dry-run pour simuler)
-./target/release/capri hook status         # où en est le branchement
+./target/release/capri hook status         # où en sont le branchement, le miroir et le style
 ./target/release/capri hook uninstall      # le débranche
 ```
 
-Le menu de Capri propose la même bascule (« Brancher / Débrancher Claude Code »). Les sessions
-déjà ouvertes prennent le changement en compte toutes seules ; `/hooks` dans Claude Code liste
-les entrées `capri-hook`.
+Le menu de Capri propose la même bascule (« Brancher / Débrancher Claude Code »), et sa fenêtre
+de réglages aussi (onglet « Claude Code »). Les sessions déjà ouvertes prennent le changement en
+compte toutes seules ; `/hooks` dans Claude Code liste les entrées `capri-hook`.
 
 - **Aucun modèle n'est appelé, aucune clé n'est nécessaire** : tout vient des
   [hooks](https://code.claude.com/docs/en/hooks) de Claude Code, quel que soit ton abonnement.
 - **Rien ne sort de ta machine** : le hook parle à Capri par une socket locale réservée à ton
   utilisateur. Il ne transmet ni tes prompts, ni le contenu de tes fichiers, ni la sortie de tes
   commandes : seulement le nom de l'outil et un résumé court (le nom d'un fichier, la description
-  d'une commande).
+  d'une commande). Une seule exception, si tu l'actives : le miroir, qui transmet la ligne que
+  Claude écrit pour Capri, et rien d'autre de sa réponse ([plus bas](#capri-dans-claude-code)).
 - **Ton `settings.json` est respecté** : Capri ajoute ses propres groupes après les hooks
   existants, sans en modifier aucun, après une sauvegarde datée à côté du fichier. Elle refuse
   d'y toucher si elle ne sait pas le réécrire à l'identique, et le débranchement le rend tel
@@ -244,6 +245,70 @@ open target/Capri.app                     # quitte d'abord une Capri déjà lanc
 - pas encore de mot d'éveil, ni de détection de fin de phrase : c'est toi qui dis quand tu as
   fini, en relâchant. macOS seulement.
 
+### Capri dans Claude Code
+
+Pour qui a un abonnement Claude : **Capri ne lance jamais Claude Code et ne se sert jamais de ton
+abonnement** (Anthropic n'autorise pas une app tierce à le faire). C'est l'inverse : tu parles à
+Claude Code dans tes propres sessions, comme d'habitude ; il y prend la personnalité de Capri (un
+[style de sortie](https://code.claude.com/docs/en/output-styles)) et finit chaque réponse par une
+ligne pour elle ; Capri, sur ton bureau, la dit dans sa bulle, et à voix haute si sa voix est
+activée (le **miroir**).
+
+```bash
+./target/release/capri hook install          # le bandeau, s'il n'est pas déjà branché
+./target/release/capri hook style install    # le style, dans ~/.claude/output-styles/capri.md
+./target/release/capri hook mirror on        # le miroir, désactivé par défaut
+./target/release/capri hook status           # où en sont les trois
+```
+
+Puis, **dans Claude Code** : `/output-style Capri` (ou `/config`, puis *Output style*). Tout cela
+se fait aussi sans terminal, dans l'onglet « Claude Code » de sa fenêtre de réglages.
+
+**Le style.** Ses consignes sont les nôtres, pas une citation de la série : Claude Code reste un
+outil de travail (`keep-coding-instructions: true` garde ses consignes de développement), tutoie,
+parle comme Capri, et termine chaque réponse par une ligne seule qui commence par `[Capri]`, une
+ou deux phrases courtes en français, faites pour être dites, sans nom de fichier, commande ni
+résultat. Pourquoi `[Capri]` : un mot entre crochets en tête de ligne est simple à écrire pour un
+modèle et n'ouvre jamais par hasard une ligne de prose, de liste ou de titre ; « Capri : »
+pourrait commencer n'importe quelle phrase d'une session qui travaille justement sur Capri.
+
+- Capri n'écrit le style que si tu le demandes, dans le dossier de Claude Code (celui de
+  `CLAUDE_CONFIG_DIR` si tu l'as définie), d'un seul coup. Elle ne touche jamais à un fichier
+  `capri.md` qui n'est pas le sien (le sien porte une ligne `# capri-managed` dans son en-tête ;
+  retire-la pour garder le fichier à toi). `capri hook style uninstall` ne retire que le sien.
+- **Capri ne l'active pas**, et ne touche pas à ton `settings.json` pour cela : c'est toi qui le
+  choisis. D'après la documentation de Claude Code, ce choix vaut pour le projet où tu le fais
+  (il est rangé dans son `.claude/settings.local.json`), `/output-style default` revient au style
+  habituel, et une session ouverte avant l'installation ne voit le style qu'une fois relancée.
+  Pour l'avoir dans tous tes projets, c'est `"outputStyle": "Capri"` dans ton
+  `~/.claude/settings.json`, à écrire toi-même.
+- Un style est une consigne, pas une garantie (la documentation le dit) : si Claude oublie sa
+  ligne, Capri ne dit rien. Ses consignes partent avec chaque requête (le cache des prompts en
+  réduit le coût). `keep-coding-instructions` n'agit qu'avec le prompt système complet de Claude
+  Code ; selon la documentation, `CLAUDE_CODE_SIMPLE_SYSTEM_PROMPT=0` l'impose.
+
+**Le miroir** est désactivé par défaut. Activé, à la fin de chaque réponse de Claude Code (dans la
+session principale, pas dans un sous-agent), le hook cherche la dernière ligne qui commence par
+`[Capri]` (hors des blocs de code) et ne transmet qu'elle, bornée à 240 caractères, par le même
+canal local que le bandeau. C'est la seule exception à « le hook ne transmet rien de ce
+qu'écrit Claude », et elle est étroite :
+
+- activé par toi seulement (`capri hook mirror on`, ou la case de la fenêtre) ; désactivé, le hook
+  ne lit même pas la réponse de Claude, et ce qu'il envoie est exactement ce qu'il envoyait avant ;
+- une seule ligne, aucune autre partie de la réponse ; rien n'est gardé, ni envoyé ailleurs, ni
+  écrit dans le journal (sa longueur seulement) ; elle n'entre pas dans la conversation que Capri
+  envoie à son propre cerveau ;
+- **ce qu'on ne peut pas garantir** : cette ligne est écrite par Claude, qui pourrait y citer un
+  nom de fichier ou un bout de résultat malgré les consignes du style. Elle peut être lue à voix
+  haute.
+
+Capri la dit comme une réponse : dans sa bulle, à voix haute si sa voix est activée, et « La
+faire taire » la coupe. Ce que tu lui dis (au clavier ou au micro) et ce qu'elle te répond passent
+avant : une ligne arrivée pendant qu'elle parle attend qu'elle ait fini. Seule la plus récente
+attend, deux minutes au plus, et elle est oubliée si tu envoies un nouveau prompt dans la même
+session, si tu la fais taire, ou si tu désactives le miroir. Cachée, elle ne la dit pas. Sans
+ligne, le bandeau « Claude a fini » ne change pas.
+
 ## Ses réglages, sans terminal
 
 Sur macOS, **« Réglages… »** dans son menu (icône de la barre des menus, ou clic droit sur elle)
@@ -283,13 +348,20 @@ dit quoi faire sur place (seules les commandes `capri chat` et `capri voice` gar
 qualité ; « Automatique » : la meilleure), et « Écouter ». Mêmes réglages que `capri voice`
 (`voice.json`).
 
+**Claude Code** : où en est le branchement du hook (dans quel `settings.json`, combien
+d'événements, un binaire `capri-hook` introuvable, `disableAllHooks`), avec « Brancher » et
+« Débrancher », qui font exactement ce que font `capri hook install` et `capri hook uninstall`
+(sauvegarde datée, réécriture à l'octet près ou refus) ; le style de sortie, avec « Installer le
+style Capri » et « Retirer », et ce qu'il faut taper dans Claude Code pour le choisir ; la case du
+miroir, avec ce qu'elle fait, dit avant qu'on la coche, et ce qui manque encore pour qu'une ligne
+arrive (le hook pas branché, le style pas installé). Le menu et la fenêtre restent d'accord.
+
 La fenêtre relit les fichiers et le trousseau chaque fois qu'elle s'ouvre : un changement fait
 en ligne de commande s'y voit à la réouverture.
 
-Ce qui reste en ligne de commande (ou dans son menu) : brancher Claude Code (`capri hook`, ou
-« Brancher Claude Code »), `capri ear status`, `capri chat status` (qui interroge aussi le
-serveur), et sa personnalité (`persona.md`). Sous Windows, il n'y a pas encore de fenêtre de
-réglages : « Réglages… » le dit, et tout passe par `capri chat` et `capri voice`.
+Ce qui reste en ligne de commande : `capri ear status`, `capri chat status` (qui interroge aussi
+le serveur), et sa personnalité (`persona.md`). Sous Windows, il n'y a pas encore de fenêtre de
+réglages : « Réglages… » le dit, et tout passe par `capri chat`, `capri voice` et `capri hook`.
 
 ## Installer et lancer
 
@@ -320,11 +392,12 @@ Aucune permission système n'est nécessaire. Pour plus de détails dans le term
 crates/
   capri-core/      logique pure : animation, mouvement, lancer, hit-test, bandeau, parole, et la
                    description d'un formulaire de réglages (testée)
-  capri-claude/    logique pure : hooks de Claude Code, protocole, sessions, settings.json (testée)
+  capri-claude/    logique pure : hooks de Claude Code, protocole, sessions, settings.json, style
+                   de sortie « Capri », miroir, dossiers de Capri et de Claude Code (testée)
   capri-chat/      logique pure : conversation, fournisseurs et format « chat completions », flux
                    de réponse, règles d'adresse et de clé, réglages du cerveau, personnalité,
                    phrases à dire, dictée, et le modèle de la fenêtre de réglages (settings/ :
-                   rubriques « Cerveau » et « Voix ») (testée)
+                   rubriques « Cerveau », « Voix » et « Claude Code ») (testée)
   capri-net/       le seul crate qui parle au réseau : envoyer la conversation (en https par le TLS
                    du système), lire la réponse au fil de l'eau (testé contre un faux serveur local)
   capri-render/    rendu wgpu : Metal sur macOS, DirectX 12 + DirectComposition sur Windows
@@ -346,11 +419,13 @@ crates/
   capri-ipc/       le canal local : seconde couche système, minuscule
     unix.rs          socket Unix dans un dossier réservé à l'utilisateur
     windows.rs       tube nommé au nom aléatoire
-  capri-hook/      le binaire appelé par les hooks de Claude Code
+  capri-hook/      le binaire appelé par les hooks de Claude Code (et qui relit le réglage du
+                   miroir)
   capri-app/       l'application : boucle, souris, menus, raccourci, images, bandeau, bulle,
                    voix, écoute, clés, la fenêtre de réglages (settings_view.rs : le modèle, la
-                   fenêtre, et ses effets), et les commandes `capri hook`, `capri chat`,
-                   `capri voice`, `capri ear`
+                   fenêtre, et ses effets), le style de sortie (style_setup.rs), et les commandes
+                   `capri hook` (branchement, miroir, style), `capri chat`, `capri voice`,
+                   `capri ear`
 tools/             récupération vérifiée des images, fabrication de Capri.app (macOS)
 ```
 
@@ -361,7 +436,7 @@ Règle : tout ce qui peut être testé sans écran va dans `capri-core`, `capri-
 
 Vérifié automatiquement :
 
-- formatage, `clippy -D warnings` et 305 tests sur **macOS Apple Silicon** (plus 3 qui ne
+- formatage, `clippy -D warnings` et 353 tests sur **macOS Apple Silicon** (plus 3 qui ne
   tournent qu'à la main : ils écrivent des images, lisent un vrai `settings.json` ou touchent au
   vrai trousseau) : animation, lancer et rebonds, hit-test, clics, bandeau, parole en pages, bulle
   sur plusieurs lignes, conversation, **validation du shader** par le compilateur de wgpu, lecture
@@ -401,6 +476,19 @@ Vérifié automatiquement :
   `capri chat test`, et la voix activée est celle que lit `capri voice` ;
 - le fournisseur Ollama en ligne, et la phrase qui ne promet plus qu'un modèle « cloud » de
   l'Ollama local reste sur la machine ;
+- Capri dans Claude Code, sans Claude Code : le style (son en-tête, `keep-coding-instructions:
+  true`, sa signature reconnue dans l'en-tête seulement ; installé, mis à jour, retiré, jamais
+  par-dessus un fichier qui n'est pas le nôtre, un dossier ou un lien) ; l'extraction de la ligne
+  `[Capri]` (la dernière, hors des blocs de code, pas un lien `[Capri](…)`, bornée en caractères
+  et en octets sur une frontière de caractère, dans une réponse de plusieurs Mio) ; le hook lancé
+  pour de vrai, miroir désactivé (ligne identique à celle d'avant le miroir), activé (seule la
+  ligne marquée de la session principale part ; ni `SubagentStop`, ni un `Stop` de sous-agent),
+  réglage cassé, trop gros, dossier ou tube nommé à sa place, entrée jamais fermée : toujours
+  muet, code 0, borné ; le protocole lu par une copie de l'ancien, et l'inverse ; la phrase dite
+  sans entrer dans la conversation envoyée à son cerveau (faux serveur local), la plus récente
+  seulement, oubliée quand sa session repart ; l'onglet « Claude Code » de la fenêtre, modèle
+  seul puis avec ses effets (le même `settings.json` que `capri hook`, rendu à l'octet près, la
+  même sauvegarde, le même fichier du miroir) ;
 - `clippy -D warnings` en compilation croisée pour **Windows x64** et **Linux x64** (le code
   compile, il n'est pas exécuté).
 
@@ -426,6 +514,23 @@ fournisseur) :
   le trousseau d'essai pour `openrouter@openrouter.ai:443`, relue (« Une clé est rangée pour
   openrouter.ai:443… »), puis retirée ; elle n'apparaît ni dans le journal ni dans le dossier, et
   le trousseau d'essai est vide après. Le processus quitte de lui-même (code 0).
+
+**Vérifié en ligne de commande sur ce Mac, pour Capri dans Claude Code** (le 10 et le 11 novembre
+2026, avec des dossiers d'essai, sans jamais lancer Claude Code) :
+
+- `capri hook status`, `capri hook style install | uninstall` et `capri hook mirror on | off` :
+  le style écrit puis retiré, un `capri.md` étranger refusé et laissé intact, le miroir écrit dans
+  `claude-code.json` du dossier de Capri, et ce qui manque encore dit ;
+- le binaire livré `target/release/capri-hook`, une fin de tour avec une ligne `[Capri]` sur son
+  entrée : Capri absente, il part en 14 ms ; avec un écouteur d'essai, en 8 à 9 ms, sortie
+  standard vide, code 0 ; la ligne reçue est celle d'avant le miroir quand il est désactivé ou
+  illisible, et ne porte que `"said":"**Tout** passe, on peut souffler."` quand il est activé ;
+- la répétition des réglages (binaire de débogage, `CAPRI_SETTINGS_REHEARSAL=1`, tous les
+  dossiers d'essai) : l'onglet « Claude Code » s'affiche ; « Installer le style Capri »,
+  « Retirer », « Brancher », « Débrancher » et la case du miroir, appuyés dans la vraie fenêtre,
+  font ce qu'ils disent ; une vraie fin de tour envoyée pendant ce temps par `capri-hook` à cette
+  Capri d'essai arrive (« Claude Code lui fait dire 33 caractères ») ; le journal ne contient
+  jamais le texte de la réponse.
 
 Le rendu réel sous Linux avec un GPU logiciel (le sprite s'affiche, flotte et « bout ») avait été
 vérifié avant le passage à la fenêtre « Overlay » ; il n'a pas été revérifié depuis.
@@ -476,12 +581,38 @@ vérifié avant le passage à la fenêtre « Overlay » ; il n'a pas été revé
 
 **Pas encore vérifié** : une vraie conversation avec DeepSeek, ProxyAPI ou Ollama en ligne (ils
 passent par le même code qu'OpenRouter, mais n'ont pas été essayés) ; un vrai LM Studio ; la
-demande d'accès au trousseau quand `Capri.app` lit une clé rangée depuis le terminal.
+demande d'accès au trousseau quand `Capri.app` lit une clé rangée depuis le terminal ; **tout ce
+qui demande une vraie session de Claude Code avec le style Capri** (aucune n'a été lancée) : que
+`/output-style Capri` le trouve, que Claude en prenne le ton, garde sa façon de travailler et
+écrive vraiment sa ligne `[Capri]`, que cette ligne arrive dans `last_assistant_message` comme le
+dit la documentation, et que Capri la dise et l'affiche comme prévu.
+
+**À vérifier à la main, Capri dans Claude Code** (sur ton Mac, `Capri.app` reconstruite) :
+
+1. onglet « Claude Code » de la fenêtre de réglages : « Installer le style Capri » écrit
+   `~/.claude/output-styles/capri.md`, la ligne dit quoi taper ; « Retirer » le retire ; un
+   `capri.md` à toi n'est jamais touché ;
+2. dans une session Claude Code **relancée** : `/output-style` liste « Capri » ;
+   `/output-style Capri` le choisit ; la réponse suivante a le ton de Capri, reste exacte, et
+   finit par une ligne `[Capri] …` ; `/output-style default` revient au style habituel ;
+3. miroir **désactivé** : rien ne change par rapport à avant (le bandeau dit « Claude a fini »,
+   Capri ne dit rien) ;
+4. miroir **activé** (la case de l'onglet) : à la fin d'une réponse, la bulle de Capri dit la
+   ligne, sans `[Capri]` ni Markdown, et sa voix la dit si elle est activée ; « La faire taire »
+   la coupe ;
+5. une réponse dans un sous-agent ne la fait pas parler ; un nouveau prompt envoyé avant qu'elle
+   ait parlé l'empêche de dire une ligne périmée ;
+6. pendant qu'elle répond à ce que tu lui as écrit (⌃⌥P), ou pendant que tu maintiens ⌃⌥D, une
+   fin de tour de Claude Code attend : elle dit sa ligne après, pas en même temps ;
+7. « Brancher » et « Débrancher » de l'onglet, comme ceux du menu : `/hooks` montre les entrées,
+   le menu et l'onglet restent d'accord, et `settings.json` redevient identique à l'octet près.
 
 **Pas encore testé sur un vrai PC Windows** : il n'y a pas encore de fenêtre de réglages. Le tube
 nommé de `capri-ipc` n'y a jamais tourné, le champ de saisie et la voix n'y existent pas encore,
 et le chat n'y a jamais été lancé : ni le https (SChannel), ni le Gestionnaire d'identification,
-ni la saisie d'une clé sans écho n'y ont tourné.
+ni la saisie d'une clé sans écho n'y ont tourné. Le style de sortie (dans
+`%USERPROFILE%\.claude\output-styles`) et le miroir (dans `%LOCALAPPDATA%\Capri`) n'y ont pas
+tourné non plus.
 
 Points à surveiller :
 
@@ -500,10 +631,11 @@ Points à surveiller :
 3. Elle s'assoit sur tes fenêtres (macOS : CoreGraphics + Accessibilité ; Windows : Win32).
 4. Le chat avec un modèle d'IA : ~~la saisie et la bulle~~, ~~un modèle local par Ollama~~,
    ~~les fournisseurs à clé compatibles OpenAI (OpenRouter, DeepSeek, ProxyAPI, Ollama en ligne)
-   avec leurs clés dans le trousseau~~, ~~une fenêtre de réglages (macOS)~~, puis l'API
-   d'Anthropic, et Capri dans Claude Code pour qui a un
-   abonnement. Sa voix : ~~ses réponses dites à voix haute~~, ~~lui parler au micro~~
-   (reconnaissance sur la machine), puis un mot d'éveil.
+   avec leurs clés dans le trousseau~~, ~~une fenêtre de réglages (macOS)~~, ~~Capri dans Claude
+   Code pour qui a un abonnement (un style de sortie et le miroir)~~ (écrit et testé sans Claude
+   Code ; reste à l'essayer dans une vraie session), puis l'API d'Anthropic. Sa voix : ~~ses
+   réponses dites à voix haute~~, ~~lui parler au micro~~ (reconnaissance sur la machine), puis un
+   mot d'éveil.
 5. App signée et notarisée (`.app` / installeur), mises à jour.
 
 ## Licence

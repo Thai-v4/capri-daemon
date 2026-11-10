@@ -5,9 +5,10 @@ Compagne de bureau (Capri, *Cyberpunk: Edgerunners* 2) écrite en Rust, 100 % na
 du projet et la feuille de route ; jalons 1 (elle flotte) et 2 (le bandeau Claude Code) faits,
 jalon 4 (lui parler) en cours : saisie, bulle, modèle local (Ollama, LM Studio), fournisseurs
 compatibles OpenAI avec leur clé dans le trousseau (OpenRouter, DeepSeek, ProxyAPI, Ollama en
-ligne, serveur personnalisé), voix et écoute au micro en place ; API d'Anthropic et mot d'éveil à
-venir. Sur macOS, une fenêtre de réglages (« Réglages… » dans son menu) règle son cerveau et sa
-voix sans terminal.
+ligne, serveur personnalisé), voix et écoute au micro en place ; Capri dans Claude Code (un style
+de sortie, et le miroir qui lui fait dire la ligne que Claude écrit pour elle) en place, pas encore
+essayé dans une vraie session ; API d'Anthropic et mot d'éveil à venir. Sur macOS, une fenêtre de
+réglages (« Réglages… » dans son menu) règle son cerveau, sa voix et Claude Code sans terminal.
 
 ## Architecture : où va quoi
 
@@ -18,14 +19,20 @@ voix sans terminal.
   et que `capri-chat` ne peut pas dépendre de `capri-platform`.
 - `capri-claude` : tout ce que Capri sait de Claude Code, lui aussi **sans dépendance système** :
   lecture de l'entrée des hooks, protocole, suivi des sessions, édition de `settings.json` de
-  texte à texte. Avec des tests.
+  texte à texte, le style de sortie « Capri » (`style` : son texte, la signature qui reconnaît le
+  nôtre), le miroir (`mirror` : son réglage, l'extraction de la ligne `[Capri]`, l'attente d'une
+  ligne arrivée pendant qu'elle parle), et où vivent les réglages (`places` : le dossier de Capri
+  et celui de Claude Code, calculés une seule fois pour le hook et pour l'app, l'environnement
+  passé par l'appelant). Les phrases que disent à la fois `capri hook` et la fenêtre de réglages
+  sur Claude Code y sont écrites une fois. Avec des tests.
 - `capri-chat` : la conversation, **sans dépendance système ni réseau** : historique borné,
   format des fournisseurs (ce qu'on envoie, comment lire le flux), fournisseurs et besoin d'une
   clé (`brain`), règles d'adresse et règles de la clé (`endpoint`, `key` : jamais en clair, et
   liée à son adresse), réglages du cerveau, personnalité, nettoyage du Markdown. Avec des tests.
   Les phrases que disent à la fois `capri chat` et la fenêtre de réglages (où part ce qu'on lui
   dit, clé rangée ou retirée…) sont dans `phrases`, écrites une seule fois. Le modèle de la
-  fenêtre de réglages est dans `settings` (voir plus bas).
+  fenêtre de réglages est dans `settings` (voir plus bas) ; sa rubrique « Claude Code » dépend de
+  `capri-claude` (pur lui aussi) pour ses états et ses phrases.
 - `capri-net` : **le seul crate qui parle au réseau** (ureq). Il se connecte et rien d'autre :
   quoi envoyer et comment lire la réponse est décidé par `capri-chat`. En `https://`, le TLS du
   système (fonction `native-tls-no-default` de ureq, `RootCerts::PlatformVerifier`), sur macOS et
@@ -41,7 +48,9 @@ voix sans terminal.
   `capri-platform` parce que `capri-hook` le charge à chaque événement de Claude Code : ni winit
   ni AppKit ici.
 - `capri-hook` : le binaire que les hooks appellent. Deux dépendances (`capri-claude`,
-  `capri-ipc`), rien d'autre.
+  `capri-ipc`), rien d'autre. À chaque appel, il relit le réglage du miroir dans le dossier de
+  Capri (`capri_claude::places`, le même que l'app) ; désactivé ou douteux, il ne lit pas la
+  réponse de Claude.
 - `capri-platform` : la fenêtre et son `unsafe`.
   L'API publique est dans `lib.rs` (le type `Overlay` et ses événements), avec une
   implémentation par plateforme : `macos.rs` (un `NSPanel` non activant, sans fenêtre winit :
@@ -79,16 +88,19 @@ voix sans terminal.
   qui reçoit son dossier, son trousseau, sa saisie et sa sortie : c'est ce qui les rend testables.
   `settings_view` relie le modèle des réglages à la fenêtre et exécute ses effets avec les
   fonctions de la ligne de commande (`brain_setup::load`, `save`, `list_models`, `talk`,
-  `keys::store`, `keys::forget`, `voice_setup`) : la fenêtre et `capri chat` / `capri voice`
-  restent d'accord parce qu'elles passent par le même code. Trousseau et réseau sur un thread à
-  part, résultats relevés à chaque pas de la boucle.
+  `keys::store`, `keys::forget`, `voice_setup`, `hook_setup::install`, `uninstall`,
+  `load_mirror`, `save_mirror`, `style_setup`) : la fenêtre et `capri chat` / `capri voice` /
+  `capri hook` restent d'accord parce qu'elles passent par le même code. Trousseau et réseau sur
+  un thread à part, résultats relevés à chaque pas de la boucle. `style_setup` écrit le style de
+  sortie dans `output-styles/` du dossier de Claude Code ; `claude::Feed` reçoit la ligne du
+  miroir, que `banner_view` fait dire par `chat::Chat::relay` quand Capri est libre.
 
 ## La fenêtre de réglages : ajouter une rubrique
 
 Le modèle (`capri_chat::settings`) est pur et testé sans écran : à partir des réglages lus, des
 `FormEvent` de l'utilisateur et des `Outcome` des opérations lancées, il produit le `Form` à
 afficher et des `Effect` à exécuter. Chaque onglet est une rubrique, qui implémente le trait
-`Rubric` (`brain.rs` : « Cerveau », `voice.rs` : « Voix »).
+`Rubric` (`brain.rs` : « Cerveau », `voice.rs` : « Voix », `claude.rs` : « Claude Code »).
 
 Pour en ajouter une :
 
@@ -106,7 +118,9 @@ La fenêtre (`capri-platform`) n'a pas à changer tant que les contrôles de `ca
 suffisent. Pour vérifier qu'elle s'ouvre sans planter, en version de débogage :
 `CAPRI_SETTINGS_REHEARSAL=1` (avec `CAPRI_CONFIG_DIR`, `CAPRI_KEYCHAIN_SERVICE` et `CAPRI_SOCKET`
 d'essai) l'ouvre au lancement, y choisit chaque fournisseur, range et retire une clé factice par
-le vrai champ secret, et quitte ; le journal dit ce qu'elle affiche, jamais la clé.
+le vrai champ secret, et quitte ; le journal dit ce qu'elle affiche, jamais la clé. Avec aussi
+`CLAUDE_CONFIG_DIR` d'essai (et seulement alors), elle installe et retire le style, branche et
+débranche Claude Code par les boutons de la vraie fenêtre, puis coche et décoche le miroir.
 
 ## Vérifier avant de dire « c'est fait »
 
@@ -151,7 +165,8 @@ précisément quoi vérifier plutôt que de l'affirmer.
   fenêtre de réglages ne demande d'elle-même la liste des modèles qu'à un serveur de cette
   machine ; à tout autre, seulement quand on appuie sur « Demander la liste ».
 - Le chat : seules la personnalité et la conversation partent vers le modèle, et seulement vers
-  l'adresse que l'utilisateur a choisie. Jamais l'activité de Claude Code. Pas de proxy, aucune
+  l'adresse que l'utilisateur a choisie. Jamais l'activité de Claude Code, ni la ligne du miroir
+  (`Chat::relay` ne l'ajoute pas à la conversation). Pas de proxy, aucune
   redirection suivie. `http://` seulement vers la machine ou un réseau privé : toute adresse
   passe par `capri_chat::Endpoint`. Ce qui se dit n'est jamais écrit dans le journal.
 - Sa voix : des voix existantes (celles du système pour l'instant), **jamais un clone de la voix
@@ -201,17 +216,47 @@ précisément quoi vérifier plutôt que de l'affirmer.
 - Le canal du hook : socket Unix (Windows : named pipe) accessible au seul utilisateur, jamais
   un port TCP sans authentification.
 - `capri-hook` ne doit **jamais gêner Claude Code** : rien sur la sortie standard, toujours le
-  code de sortie 0, une durée de vie bornée. Les hooks sont déclarés `async`.
+  code de sortie 0, une durée de vie bornée, miroir activé ou non, réglage lisible ou non, quelle
+  que soit la taille de la réponse. Les hooks sont déclarés `async`.
+- **Capri n'utilise jamais l'abonnement de l'utilisateur** : elle ne lance jamais Claude Code (ni
+  `claude`, ni `claude -p`, ni une session), et aucun code ne doit le faire. C'est l'utilisateur
+  qui parle à Claude Code dans ses propres sessions ; Capri y prend part par un style de sortie
+  qu'il choisit lui-même, et par le miroir.
+- Le style de sortie (`capri_claude::style`) ne s'écrit **que sur demande** (`capri hook style
+  install`, ou le bouton de la fenêtre), dans `output-styles/` du dossier de Claude Code
+  (`CLAUDE_CONFIG_DIR` respectée), d'un seul coup. On n'écrase ni ne retire jamais un fichier qui
+  ne porte pas notre signature (le commentaire `# capri-managed` de son en-tête), ni un lien, ni
+  ce qui n'est pas un fichier ordinaire. **Capri n'active pas le style** et ne touche pas à
+  `settings.json` pour cela : elle dit quoi taper dans Claude Code (`/output-style Capri`, vérifié
+  dans <https://code.claude.com/docs/en/output-styles>). Son texte est le nôtre, pas une citation
+  de la série, et garde `keep-coding-instructions: true`.
 - Le bandeau ne transmet ni n'affiche jamais le texte d'un prompt, le contenu d'un fichier ou la
   sortie d'une commande. Dans le doute, il se tait plutôt que d'affirmer quelque chose de périmé.
+  **Une seule exception, explicite et étroite : le miroir.** Activé par l'utilisateur seulement
+  (désactivé par défaut), il ne transmet que la ligne que Claude a écrite pour Capri (la dernière
+  qui commence par `[Capri]` dans `last_assistant_message`, sur le `Stop` de la session
+  principale, hors des blocs de code, bornée à 240 caractères), par le canal local réservé à
+  l'utilisateur ; rien n'est gardé ni envoyé ailleurs, et le journal n'en écrit que la longueur
+  (`protocol::Said` masque son `Debug`). Elle n'entre pas dans la conversation envoyée au cerveau
+  de Capri. Ce qu'on ne peut pas garantir : cette ligne est écrite par Claude, qui pourrait y citer
+  un nom de fichier ou un bout de résultat malgré les consignes du style. Miroir désactivé, le hook
+  ne lit même pas la réponse, et la ligne envoyée est la même qu'avant le miroir.
+- Le protocole du hook n'évolue que par des champs facultatifs, sans changer de version : une
+  Capri ancienne et un hook récent, ou l'inverse, se comprennent (testé avec une copie de
+  l'ancien protocole).
 - Au-dessus de sa tête, une seule chose à la fois : ce qu'on lui dit au micro d'abord, puis sa
-  parole (on vient de lui parler), puis un message de l'app, puis l'activité de Claude Code.
+  parole (on vient de lui parler, ou elle dit la ligne que Claude a écrite pour elle), puis un
+  message de l'app, puis l'activité de Claude Code. La ligne de Claude passe après ce que
+  l'utilisateur lui dit et ce qu'elle lui répond : arrivée pendant qu'elle parle, elle attend
+  qu'elle ait fini (voix comprise) ; seule la plus récente attend, deux minutes au plus, et elle
+  est oubliée si sa session repart, si on fait taire Capri, ou si le miroir est désactivé.
 - **Ce qui s'affiche dans la bulle ou dans la fenêtre de réglages ne renvoie jamais à une commande
   de terminal** (`capri chat …`, `capri voice …`) : le but de la fenêtre est que personne n'ait à
   ouvrir un terminal. La bulle renvoie à « Réglages… » dans son menu, la fenêtre dit quoi faire
   sur place (« remets-la ci-dessus »). Seul un terminal garde ses commandes. Une phrase s'écrit
   une fois ; le conseil qui la termine se choisit par `capri_chat::Place` (`Terminal`, `Bubble`,
-  `Window`), jamais en dupliquant la phrase. Là où la fenêtre ne sait pas encore faire la chose
+  `Window`), jamais en dupliquant la phrase. Ce qui se tape **dans Claude Code**
+  (`/output-style Capri`, `/hooks`) n'est pas une commande de terminal : la fenêtre peut le dire. Là où la fenêtre ne sait pas encore faire la chose
   (personnalité `persona.md`…), le message peut citer le fichier ou la commande : ne pas promettre
   une rubrique qui n'existe pas.
 - **⌘Q et ⌘H ne touchent jamais à Capri tant qu'un de ses panneaux est la fenêtre clé** : dans la
