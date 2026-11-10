@@ -97,7 +97,7 @@ struct Hotkeys {
     toggle: Option<u32>,
     /// ⌃⌥P : lui parler.
     talk: Option<u32>,
-    /// ⌃⌥M, maintenu : lui parler au micro.
+    /// ⌃⌥D, maintenu : lui parler au micro.
     listen: Option<u32>,
 }
 
@@ -564,6 +564,7 @@ fn register_hotkeys() -> Option<Hotkeys> {
             .map(|()| hotkey.id())
     };
     let (toggle, talk) = (register(Code::KeyC, "⌃⌥C"), register(Code::KeyP, "⌃⌥P"));
-    let listen = register(Code::KeyM, ear_setup::SHORTCUT);
+    // des lettres qui ne changent pas de place entre AZERTY et QWERTY : voir `ear_setup::SHORTCUT`
+    let listen = register(Code::KeyD, ear_setup::SHORTCUT);
     Some(Hotkeys { _manager: manager, toggle, talk, listen })
 }

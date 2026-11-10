@@ -140,7 +140,7 @@ modèle écrit la suite.
 
 ### Lui parler au micro
 
-Maintiens **⌃⌥M** (Ctrl+Alt+M), parle, relâche : ce que tu as dit lui est envoyé comme si tu
+Maintiens **⌃⌥D** (Ctrl+Alt+D, comme « dicter »), parle, relâche : ce que tu as dit lui est envoyé comme si tu
 l'avais tapé. Pendant que tu parles, une bulle bleue montre ce qu'elle comprend. Le menu propose
 la même chose (« Lui parler au micro » : un clic pour commencer, un autre pour finir).
 
@@ -227,7 +227,7 @@ Règle : tout ce qui peut être testé sans écran va dans `capri-core`, `capri-
 
 Vérifié automatiquement :
 
-- formatage, `clippy -D warnings` et 210 tests sur **macOS Apple Silicon** : animation, lancer et
+- formatage, `clippy -D warnings` et 211 tests sur **macOS Apple Silicon** : animation, lancer et
   rebonds, hit-test, clics, bandeau, parole en pages, bulle sur plusieurs lignes, conversation,
   **validation du shader** par le compilateur de wgpu, lecture
   des exemples de hooks de la documentation de Claude Code, suivi des sessions, aller-retour sur

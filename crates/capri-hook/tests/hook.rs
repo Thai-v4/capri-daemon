@@ -89,6 +89,9 @@ fn forwards_the_event_and_stays_invisible() {
 #[test]
 fn without_capri_it_leaves_quietly_and_fast() {
     let endpoint = endpoint("absente");
+    // Un premier lancement, non chronométré : macOS inspecte un binaire tout juste compilé la
+    // première fois qu'il s'exécute, ce qui peut prendre plus d'une seconde et ne dit rien du hook.
+    run(hook(&endpoint), PRE_TOOL_USE.as_bytes());
     let started = Instant::now();
     let output = run(hook(&endpoint), PRE_TOOL_USE.as_bytes());
     assert_invisible(&output);

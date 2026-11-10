@@ -2,8 +2,18 @@
 
 use capri_platform::{Access, Ear, EarError, Permission};
 
-/// Le raccourci à maintenir pour lui parler, tel qu'on l'écrit à l'utilisateur.
-pub const SHORTCUT: &str = "⌃⌥M";
+/// Le raccourci à maintenir pour lui parler, tel qu'on l'écrit à l'utilisateur : D comme
+/// « dicter ».
+///
+/// Un raccourci global désigne une touche par sa place sur le clavier, pas par la lettre gravée
+/// dessus. Sa lettre doit donc être à la même place en AZERTY et en QWERTY, sinon le raccourci
+/// affiché n'est pas celui qui répond : c'est ce qui est arrivé avec « M », qui change de place
+/// d'un clavier à l'autre.
+pub const SHORTCUT: &str = "⌃⌥D";
+
+/// Les lettres qui sont à la même place en AZERTY, en QWERTY et en QWERTZ.
+#[cfg(test)]
+const SAME_PLACE_EVERYWHERE: &str = "BCDEFGHIJKLNOPRSTUVX";
 
 /// Ce que Capri dit quand l'écoute ne démarre pas.
 pub fn explain(error: &EarError) -> &'static str {
@@ -61,6 +71,18 @@ pub fn run_cli(args: &[String]) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_shortcut_letter_sits_at_the_same_place_on_french_and_american_keyboards() {
+        // les trois raccourcis de Capri : la cacher, lui écrire, lui parler
+        for shortcut in ["⌃⌥C", "⌃⌥P", SHORTCUT] {
+            let letter = shortcut.chars().last().expect("une lettre");
+            assert!(SAME_PLACE_EVERYWHERE.contains(letter), "{shortcut} ne répondrait pas partout");
+        }
+        for moved in ['A', 'Q', 'W', 'Z', 'M', 'Y'] {
+            assert!(!SAME_PLACE_EVERYWHERE.contains(moved), "{moved} change de place");
+        }
+    }
 
     #[test]
     fn every_reason_not_to_listen_fits_in_her_banner() {

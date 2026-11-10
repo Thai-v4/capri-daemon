@@ -85,6 +85,8 @@ précisément quoi vérifier plutôt que de l'affirmer.
   transcription est **exigée sur l'appareil** (`setRequiresOnDeviceRecognition(true)` : jamais
   de repli sur un serveur), rien n'est enregistré. Capri ne demande une permission que si son
   `Info.plist` l'explique (`tools/macos/Info.plist`) : sinon macOS tue le processus.
+- Raccourcis globaux : une touche y est désignée par sa place, pas par sa lettre. Ne choisir que
+  des lettres à la même place en AZERTY et en QWERTY (ni A, Q, W, Z, M, ni la ponctuation).
 - Aucun nom de modèle écrit en dur : il vient de l'utilisateur ou de la liste que donne le
   serveur. Même règle que pour les API : format et adresses d'un fournisseur se vérifient dans sa
   documentation, pas de mémoire.

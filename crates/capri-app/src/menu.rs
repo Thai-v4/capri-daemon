@@ -125,8 +125,8 @@ fn build_menu() -> Built {
     let title = MenuItem::new("Capri — prototype", false, None);
     let talk_shortcut = Accelerator::new(Modifiers::CONTROL | Modifiers::ALT, Code::KeyP);
     let talk = MenuItem::new("Parler à Capri", true, Some(talk_shortcut));
-    let listen_shortcut = Accelerator::new(Modifiers::CONTROL | Modifiers::ALT, Code::KeyM);
-    let listen = MenuItem::new("Lui parler au micro (maintenir)", true, Some(listen_shortcut));
+    let listen_shortcut = Accelerator::new(Modifiers::CONTROL | Modifiers::ALT, Code::KeyD);
+    let listen = MenuItem::new("Lui parler au micro", true, Some(listen_shortcut));
     let hush = MenuItem::new("La faire taire", true, None);
     let forget = MenuItem::new("Nouvelle conversation", true, None);
     let voice = MenuItem::new("Activer sa voix", true, None);
