@@ -235,9 +235,14 @@ vérifié avant le passage à la fenêtre « Overlay » ; il n'a pas été revé
 11. le champ de saisie prend le clavier (accents et émojis compris) et le rend à la fenêtre
     d'avant en se fermant ; la bulle répète la phrase, tourne ses pages, et s'affiche même quand
     Claude Code attend l'utilisateur.
+12. avec un modèle local (Ollama), elle répond en français dans sa bulle, se souvient de la
+    conversation, l'oublie avec « Nouvelle conversation », et « La faire taire » coupe sa réponse ;
+13. sa voix dit la réponse phrase par phrase, se coupe net avec « La faire taire », se met en
+    pause quand on cache Capri et reprend à son retour ; « Couper sa voix » la rend muette.
 
 **Pas encore testé sur un vrai PC Windows** : y repasser les points 1 à 5, puis 8 à 10. Le tube
-nommé de `capri-ipc` n'y a jamais tourné, et le champ de saisie n'y existe pas encore.
+nommé de `capri-ipc` n'y a jamais tourné, le champ de saisie et la voix n'y existent pas encore,
+et le chat n'y a jamais été lancé.
 
 Points à surveiller :
 
