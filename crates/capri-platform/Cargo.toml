@@ -58,6 +58,7 @@ objc2-foundation = { version = "0.3.2", default-features = false, features = [
     "NSNotification",
     "NSRunLoop",
     "NSString",
+    "NSUndoManager", # oublier ce qu'on pourrait annuler dans un champ secret vidé
 ] }
 objc2-app-kit = { version = "0.3.2", default-features = false, features = [
     "std",

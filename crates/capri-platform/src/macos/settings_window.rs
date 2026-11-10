@@ -126,6 +126,10 @@ impl Shared {
         // l'éditeur de texte du champ garde sa copie tant que la saisie n'est pas abandonnée
         field.abortEditing();
         field.setStringValue(&NSString::from_str(""));
+        // et ⌘Z ne doit pas pouvoir remettre la clé dans le champ
+        if let Some(undo) = field.window().and_then(|window| window.undoManager()) {
+            undo.removeAllActions();
+        }
         Some(secret)
     }
 

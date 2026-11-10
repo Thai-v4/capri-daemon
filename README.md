@@ -262,7 +262,9 @@ temps. La rouvrir ramène la même fenêtre devant. ⌘V, ⌘C, ⌘X, ⌘A et �
 - la **clé** : la fenêtre dit s'il y en a une pour l'adresse affichée (« Une clé est rangée pour
   openrouter.ai:443 », « Aucune clé pour cette adresse »), sans jamais la montrer. Colle-la dans
   le champ (rien ne s'affiche), puis « Enregistrer la clé » (ou Entrée) : elle va dans le
-  trousseau, pour cette adresse seulement, et le champ se vide. « Retirer la clé » l'en retire.
+  trousseau, pour cette adresse seulement, et le champ se vide, avec ce que ⌘Z
+  pourrait y remettre. « Retirer la clé » l'en retire. La clé reste dans ton presse-papiers, d'où tu l'as collée : Capri n'y touche
+  pas.
   Mêmes règles qu'en ligne de commande : jamais en clair, jamais vers une autre adresse ;
 - le **modèle** : la liste vient du serveur. Celle d'un serveur de ta machine est demandée
   d'elle-même ; ailleurs, seulement quand tu appuies sur « Demander la liste » (et jamais sans la
@@ -413,7 +415,7 @@ fournisseur) :
   une clé d'OpenRouter ne suit pas `--url` vers un autre serveur (refus, personne contacté) ;
 - le test qui touche au vrai trousseau, lancé une fois à la main ;
 - la fenêtre de réglages, sans la voir (binaire de débogage, `CAPRI_SETTINGS_REHEARSAL=1`, avec
-  un dossier, un service de trousseau et une socket d'essai, trois lancements de quelques
+  un dossier, un service de trousseau et une socket d'essai, quatre lancements de quelques
   secondes) : elle s'ouvre, elle est fenêtre clé, se refait pour chacun des sept fournisseurs et
   pour « Aucun » sans planter ; une clé factice collée dans son vrai champ secret est rangée dans
   le trousseau d'essai pour `openrouter@openrouter.ai:443`, relue (« Une clé est rangée pour
@@ -470,7 +472,8 @@ vu) :
 4. choisir OpenRouter : la phrase orange « Attention : ce que tu lui dis partira chez OpenRouter
    (openrouter.ai:443)… » paraît avant toute autre action ; puis « Ollama » : « … reste sur cette
    machine, sauf avec un modèle « cloud »… », et la liste des modèles installés arrive seule ;
-5. coller une clé, « Enregistrer la clé » : rien ne s'affiche dans le champ, qui se vide ; la note
+5. coller une clé, « Enregistrer la clé » : rien ne s'affiche dans le champ, qui se vide (et ⌘Z
+   dans ce champ n'y remet rien) ; la note
    dit « Clé d'OpenRouter rangée dans le trousseau de session, pour openrouter.ai:443
    seulement… » et l'état « Une clé est rangée pour openrouter.ai:443… » ; `capri chat status`
    (avec le cerveau OpenRouter) le confirme ; « Retirer la clé » l'enlève. Si macOS demande
