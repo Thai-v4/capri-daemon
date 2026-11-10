@@ -468,19 +468,19 @@ vérifié avant le passage à la fenêtre « Overlay » ; il n'a pas été revé
     liste des modèles a été reçue : elle est publique, ce qui ne prouve pas que la clé est
     acceptée.
 
-**Pas encore vérifié** : une vraie conversation avec DeepSeek, ProxyAPI ou Ollama en ligne ; un
-vrai LM Studio ; la bulle (et la voix) avec un fournisseur distant ; la demande d'accès au
-trousseau quand `Capri.app` lit une clé rangée depuis le terminal.
+17. avec OpenRouter choisi comme cerveau, elle répond dans sa bulle ; fenêtre de réglages
+    ouverte, ⌘Q et ⌘H ne ferment que la fenêtre, et Capri reste là.
 
-**À vérifier à la main : ⌘Q et ⌘H** (le choix du raccourci est testé, pas la fenêtre) :
+**Pas encore vérifié** : une vraie conversation avec DeepSeek, ProxyAPI ou Ollama en ligne (ils
+passent par le même code qu'OpenRouter, mais n'ont pas été essayés) ; un vrai LM Studio ; la
+demande d'accès au trousseau quand `Capri.app` lit une clé rangée depuis le terminal.
 
-1. fenêtre de réglages ouverte, ⌘Q : seule la fenêtre se ferme, Capri continue de flotter et le
-   clavier revient à l'app d'avant ; idem pour ⌘H (Capri n'est pas masquée) ;
-2. dans le champ ⌃⌥P, ⌘Q et ⌘H ferment seulement le champ, comme Échap ; Capri reste là ;
-3. sans fenêtre ni champ ouverts, rien ne change : « Quitter » dans son menu quitte Capri ;
-4. un message de panne dans la bulle (clé absente ou refusée) dit d'ouvrir « Réglages… », et le
+**Encore à vérifier à la main** :
+
+1. dans le champ ⌃⌥P, ⌘Q et ⌘H ferment seulement le champ, comme Échap ; Capri reste là ;
+2. un message de panne dans la bulle (clé absente ou refusée) dit d'ouvrir « Réglages… », et le
    même dans la fenêtre dit « remets-la ci-dessus », sans commande ;
-5. une clé refusée (401) cite la raison que donne le fournisseur (« User not found », par
+3. une clé refusée (401) cite la raison que donne le fournisseur (« User not found », par
    exemple), sans rien de la clé.
 
 **Pas encore testé sur un vrai PC Windows** : il n'y a pas encore de fenêtre de réglages. Le tube
