@@ -4,13 +4,18 @@ Compagne de bureau (Capri, *Cyberpunk: Edgerunners* 2) écrite en Rust, 100 % na
 (cible principale, Apple Silicon) et Windows. Projet de fan non commercial. Le README décrit l'état
 du projet et la feuille de route ; jalons 1 (elle flotte) et 2 (le bandeau Claude Code) faits,
 jalon 4 (lui parler) en cours : saisie, bulle, modèle local (Ollama, LM Studio), fournisseurs
-compatibles OpenAI avec leur clé dans le trousseau (OpenRouter, DeepSeek, ProxyAPI, serveur
-personnalisé), voix et écoute au micro en place ; API d'Anthropic et mot d'éveil à venir.
+compatibles OpenAI avec leur clé dans le trousseau (OpenRouter, DeepSeek, ProxyAPI, Ollama en
+ligne, serveur personnalisé), voix et écoute au micro en place ; API d'Anthropic et mot d'éveil à
+venir. Sur macOS, une fenêtre de réglages (« Réglages… » dans son menu) règle son cerveau et sa
+voix sans terminal.
 
 ## Architecture : où va quoi
 
 - `capri-core` : logique pure, **aucune dépendance système ni GPU**. Tout ce qui peut être testé
-  sans écran va ici, avec des tests.
+  sans écran va ici, avec des tests. Dont `form` : la description d'un formulaire de réglages
+  (rubriques, lignes, événements, `Secret` au `Debug` masqué), que le modèle des réglages produit
+  et que la fenêtre de `capri-platform` affiche ; elle est ici parce que les deux doivent la voir
+  et que `capri-chat` ne peut pas dépendre de `capri-platform`.
 - `capri-claude` : tout ce que Capri sait de Claude Code, lui aussi **sans dépendance système** :
   lecture de l'entrée des hooks, protocole, suivi des sessions, édition de `settings.json` de
   texte à texte. Avec des tests.
@@ -18,6 +23,9 @@ personnalisé), voix et écoute au micro en place ; API d'Anthropic et mot d'év
   format des fournisseurs (ce qu'on envoie, comment lire le flux), fournisseurs et besoin d'une
   clé (`brain`), règles d'adresse et règles de la clé (`endpoint`, `key` : jamais en clair, et
   liée à son adresse), réglages du cerveau, personnalité, nettoyage du Markdown. Avec des tests.
+  Les phrases que disent à la fois `capri chat` et la fenêtre de réglages (où part ce qu'on lui
+  dit, clé rangée ou retirée…) sont dans `phrases`, écrites une seule fois. Le modèle de la
+  fenêtre de réglages est dans `settings` (voir plus bas).
 - `capri-net` : **le seul crate qui parle au réseau** (ureq). Il se connecte et rien d'autre :
   quoi envoyer et comment lire la réponse est décidé par `capri-chat`. En `https://`, le TLS du
   système (fonction `native-tls-no-default` de ureq, `RootCerts::PlatformVerifier`), sur macOS et
@@ -40,8 +48,21 @@ personnalisé), voix et écoute au micro en place ; API d'Anthropic et mot d'év
   cliquer sur Capri ne doit jamais prendre le focus) et `winit_overlay.rs` (fenêtre winit, réglée
   par `windows.rs` ou `other.rs`). Toute nouvelle fonction doit exister partout, au besoin sous
   la forme d'un refus explicite (le champ de saisie n'existe encore que sur macOS).
-  Seul le champ de saisie (`macos/input.rs`) prend le clavier, parce qu'on le lui demande, et il
-  le rend à la fenêtre d'avant en se fermant.
+  **Deux fenêtres seulement prennent le clavier**, parce qu'on le leur demande, et elles le
+  rendent à la fenêtre d'avant en se fermant : le champ de saisie (`macos/input.rs`) et la
+  fenêtre de réglages (`settings_window.rs`, `macos/settings_window.rs`). Ce sont les seules
+  exceptions voulues à « Capri ne prend jamais le focus » : toutes deux sont des `NSPanel` non
+  activants (elles deviennent fenêtre clé sans faire passer l'app au premier plan), et aucune ne
+  s'ouvre toute seule. Pas de boucle modale.
+  Capri n'a ni barre des menus ni menu Édition (app « accessoire ») : ⌘X, ⌘C, ⌘V, ⌘A, ⌘Z et ⇧⌘Z
+  ne passeraient pas aux champs. La vue de contenu de ces deux panneaux (`macos/edit_keys.rs`)
+  les reconnaît dans `performKeyEquivalent:` et envoie l'action d'édition au premier répondeur.
+  Toute nouvelle fenêtre avec des champs doit l'utiliser.
+  La fenêtre de réglages affiche un `capri_core::form::Form` et ne sait rien de Capri ; elle
+  garde d'un formulaire à l'autre les contrôles de même identifiant et de même sorte, ne réécrit
+  jamais un champ en cours de saisie, valide la saisie en cours avant toute action, et ne lit un
+  champ secret qu'au moment de l'appui qui l'emporte, avant de le vider. Ailleurs que sur macOS :
+  refus explicite (`SettingsWindowError::Unavailable`).
   Sa voix vit ici aussi (`voice.rs`, `macos/voice.rs` : `AVSpeechSynthesizer`) ; ce qu'elle dit
   et avec quelle voix est décidé par `capri_chat::voice`, qui est pur.
   Son oreille de même (`ear.rs`, `macos/ear.rs` : `AVAudioEngine` et le framework Speech) ; le
@@ -56,6 +77,36 @@ personnalisé), voix et écoute au micro en place ; API d'Anthropic et mot d'év
   Les clés passent par `keys` (le trait `KeyStore` : le trousseau du système, ou un trousseau en
   mémoire pour les tests) ; les commandes `capri chat` par la structure `Cli` de `brain_setup`,
   qui reçoit son dossier, son trousseau, sa saisie et sa sortie : c'est ce qui les rend testables.
+  `settings_view` relie le modèle des réglages à la fenêtre et exécute ses effets avec les
+  fonctions de la ligne de commande (`brain_setup::load`, `save`, `list_models`, `talk`,
+  `keys::store`, `keys::forget`, `voice_setup`) : la fenêtre et `capri chat` / `capri voice`
+  restent d'accord parce qu'elles passent par le même code. Trousseau et réseau sur un thread à
+  part, résultats relevés à chaque pas de la boucle.
+
+## La fenêtre de réglages : ajouter une rubrique
+
+Le modèle (`capri_chat::settings`) est pur et testé sans écran : à partir des réglages lus, des
+`FormEvent` de l'utilisateur et des `Outcome` des opérations lancées, il produit le `Form` à
+afficher et des `Effect` à exécuter. Chaque onglet est une rubrique, qui implémente le trait
+`Rubric` (`brain.rs` : « Cerveau », `voice.rs` : « Voix »).
+
+Pour en ajouter une :
+
+1. un module pur dans `crates/capri-chat/src/settings/` qui implémente `Rubric` : son
+   identifiant (qui commence celui de chacune de ses lignes : `micro.status`), son titre, ses
+   lignes, ce qu'elle relit à l'ouverture (`open`), ce qu'elle fait d'un événement et d'un
+   résultat ; les règles et les textes vivent là, avec ses tests, et réutilisent les phrases et
+   les règles de la ligne de commande plutôt que de les réécrire ;
+2. son inscription dans `Settings::new` ;
+3. seulement si elle demande au système quelque chose qu'aucun `Effect` ne sait faire : la
+   variante d'`Effect` et son `Outcome`, et leur exécution dans `capri-app/src/settings_view.rs`
+   (`Effects::run`), en passant par les mêmes fonctions que la commande correspondante.
+
+La fenêtre (`capri-platform`) n'a pas à changer tant que les contrôles de `capri_core::form`
+suffisent. Pour vérifier qu'elle s'ouvre sans planter, en version de débogage :
+`CAPRI_SETTINGS_REHEARSAL=1` (avec `CAPRI_CONFIG_DIR`, `CAPRI_KEYCHAIN_SERVICE` et `CAPRI_SOCKET`
+d'essai) l'ouvre au lancement, y choisit chaque fournisseur, range et retire une clé factice par
+le vrai champ secret, et quitte ; le journal dit ce qu'elle affiche, jamais la clé.
 
 ## Vérifier avant de dire « c'est fait »
 
@@ -96,7 +147,9 @@ précisément quoi vérifier plutôt que de l'affirmer.
 - **Images** : jamais commitées (`assets/capri/` est ignoré). Elles viennent de
   `tools/fetch-assets.sh`, qui vérifie leurs empreintes. Le code les charge au lancement.
   Dans un worktree sans images, utiliser `CAPRI_ASSETS=/chemin/vers/assets`.
-- Aucune télémétrie, rien n'envoyé sur le réseau sans action explicite de l'utilisateur.
+- Aucune télémétrie, rien n'envoyé sur le réseau sans action explicite de l'utilisateur. La
+  fenêtre de réglages ne demande d'elle-même la liste des modèles qu'à un serveur de cette
+  machine ; à tout autre, seulement quand on appuie sur « Demander la liste ».
 - Le chat : seules la personnalité et la conversation partent vers le modèle, et seulement vers
   l'adresse que l'utilisateur a choisie. Jamais l'activité de Claude Code. Pas de proxy, aucune
   redirection suivie. `http://` seulement vers la machine ou un réseau privé : toute adresse
@@ -126,7 +179,10 @@ précisément quoi vérifier plutôt que de l'affirmer.
 - **Les clés d'API** : uniquement dans le trousseau du système (service `Capri`, un compte par
   fournisseur et par adresse), par `capri_platform::keychain` et `keys`. Jamais dans `chat.json`
   ni aucun fichier, jamais dans le journal, jamais dans un message d'erreur ou une sortie de
-  commande, jamais en argument de ligne de commande. `capri_chat::ApiKey` n'a pas de `Display`
+  commande, jamais en argument de ligne de commande, jamais dans un champ de la fenêtre de
+  réglages (son champ secret n'est jamais prérempli ; elle dit seulement s'il y a une clé pour
+  l'adresse affichée). Ce qui y est tapé n'en sort que dans un `capri_core::form::Secret`, aussi
+  masqué que `ApiKey`. `capri_chat::ApiKey` n'a pas de `Display`
   et son `Debug` la masque ; son texte ne sort que pour le trousseau et pour l'en-tête
   `Authorization`.
   Une clé ne part qu'en `https://`, ou en `http://` vers cette machine même

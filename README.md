@@ -68,7 +68,9 @@ tourne ses pages au rythme de la lecture. Le champ de saisie n'existe encore que
 ### Lui donner un cerveau
 
 Sans réglage, elle n'a **pas de cerveau** : elle répète ce qu'on lui dit, et rien ne part sur le
-réseau. Pour qu'elle réponde vraiment, donne-lui un modèle.
+réseau. Pour qu'elle réponde vraiment, donne-lui un modèle. Sur macOS, tout ce qui suit se règle
+aussi sans terminal, dans sa [fenêtre de réglages](#ses-réglages-sans-terminal) ; les commandes
+restent, et les deux disent et font la même chose.
 
 **Sur ta machine**, servi par [Ollama](https://ollama.com) ou [LM Studio](https://lmstudio.ai) :
 ni compte, ni clé, et la conversation ne quitte pas ta machine (sauf avec un modèle « cloud »
@@ -242,6 +244,46 @@ open target/Capri.app                     # quitte d'abord une Capri déjà lanc
 - pas encore de mot d'éveil, ni de détection de fin de phrase : c'est toi qui dis quand tu as
   fini, en relâchant. macOS seulement.
 
+## Ses réglages, sans terminal
+
+Sur macOS, **« Réglages… »** dans son menu (icône de la barre des menus, ou clic droit sur elle)
+ouvre la fenêtre « Réglages de Capri ». Elle prend le clavier, et le rend à la fenêtre où tu
+étais quand tu la fermes (bouton rouge, ⌘W ou Échap) ; Capri continue de flotter pendant ce
+temps. La rouvrir ramène la même fenêtre devant. ⌘V, ⌘C, ⌘X, ⌘A et ⌘Z marchent dans ses champs
+(et désormais dans le champ où on lui parle).
+
+**Cerveau**
+
+- le **fournisseur**, dans une liste (« Aucun » : elle répète ce qu'on lui dit), et son
+  **adresse**, préremplie, modifiable (Entrée la valide) ;
+- dès qu'un fournisseur est choisi dans la liste, avant qu'il devienne son cerveau, la phrase qui
+  dit **où part ce que tu lui dis** (la même que `capri chat use`), en orange quand c'est sur
+  Internet ;
+- la **clé** : la fenêtre dit s'il y en a une pour l'adresse affichée (« Une clé est rangée pour
+  openrouter.ai:443 », « Aucune clé pour cette adresse »), sans jamais la montrer. Colle-la dans
+  le champ (rien ne s'affiche), puis « Enregistrer la clé » (ou Entrée) : elle va dans le
+  trousseau, pour cette adresse seulement, et le champ se vide. « Retirer la clé » l'en retire.
+  Mêmes règles qu'en ligne de commande : jamais en clair, jamais vers une autre adresse ;
+- le **modèle** : la liste vient du serveur. Celle d'un serveur de ta machine est demandée
+  d'elle-même ; ailleurs, seulement quand tu appuies sur « Demander la liste » (et jamais sans la
+  clé qu'il exige). Chez un fournisseur qui en propose des centaines, un champ de recherche, et
+  30 résultats au plus ;
+- **Essayer** lui dit « Présente-toi en une phrase. » avec ce qui est affiché, et montre sa
+  réponse, ou la panne, dans les mots de `capri chat test` ;
+- **Utiliser ce cerveau** l'écrit dans `chat.json` : elle s'en sert dès ta phrase suivante.
+
+**Voix** : la voix activée ou non, le choix parmi les voix françaises installées (avec leur
+qualité ; « Automatique » : la meilleure), et « Écouter ». Mêmes réglages que `capri voice`
+(`voice.json`).
+
+La fenêtre relit les fichiers et le trousseau chaque fois qu'elle s'ouvre : un changement fait
+en ligne de commande s'y voit à la réouverture.
+
+Ce qui reste en ligne de commande (ou dans son menu) : brancher Claude Code (`capri hook`, ou
+« Brancher Claude Code »), `capri ear status`, `capri chat status` (qui interroge aussi le
+serveur), et sa personnalité (`persona.md`). Sous Windows, il n'y a pas encore de fenêtre de
+réglages : « Réglages… » le dit, et tout passe par `capri chat` et `capri voice`.
+
 ## Installer et lancer
 
 Il faut [Rust](https://rustup.rs) 1.90 ou plus récent (`rustup update`).
@@ -269,11 +311,13 @@ Aucune permission système n'est nécessaire. Pour plus de détails dans le term
 
 ```
 crates/
-  capri-core/      logique pure : animation, mouvement, lancer, hit-test, bandeau, parole (testée)
+  capri-core/      logique pure : animation, mouvement, lancer, hit-test, bandeau, parole, et la
+                   description d'un formulaire de réglages (testée)
   capri-claude/    logique pure : hooks de Claude Code, protocole, sessions, settings.json (testée)
   capri-chat/      logique pure : conversation, fournisseurs et format « chat completions », flux
                    de réponse, règles d'adresse et de clé, réglages du cerveau, personnalité,
-                   phrases à dire, dictée (testée)
+                   phrases à dire, dictée, et le modèle de la fenêtre de réglages (settings/ :
+                   rubriques « Cerveau » et « Voix ») (testée)
   capri-net/       le seul crate qui parle au réseau : envoyer la conversation (en https par le TLS
                    du système), lire la réponse au fil de l'eau (testé contre un faux serveur local)
   capri-render/    rendu wgpu : Metal sur macOS, DirectX 12 + DirectComposition sur Windows
@@ -281,7 +325,10 @@ crates/
     banner.rs      le texte du bandeau et de la bulle, tracé avec les polices du système
   capri-platform/  la fenêtre « Overlay » : première des deux couches qui parlent au système
     macos.rs         AppKit via objc2 : un NSPanel non activant, sans fenêtre winit
-    macos/input.rs   le champ de saisie : le seul panneau qui prend le clavier, sur demande
+    macos/input.rs   le champ de saisie : un des deux panneaux qui prennent le clavier, sur demande
+    settings_window.rs la fenêtre de réglages, qui affiche un formulaire de capri-core ;
+                     macos/settings_window.rs : un NSPanel à onglets (refus ailleurs)
+    macos/edit_keys.rs ⌘X, ⌘C, ⌘V, ⌘A, ⌘Z dans les champs d'une app sans menu Édition
     voice.rs         sa voix ; macos/voice.rs : la synthèse vocale du système
     ear.rs           son oreille ; macos/ear.rs : le micro et la reconnaissance sur l'appareil
     keychain.rs      le trousseau des clés d'API ; macos/keychain.rs, windows/keychain.rs
@@ -294,8 +341,9 @@ crates/
     windows.rs       tube nommé au nom aléatoire
   capri-hook/      le binaire appelé par les hooks de Claude Code
   capri-app/       l'application : boucle, souris, menus, raccourci, images, bandeau, bulle,
-                   voix, écoute, clés, et les commandes `capri hook`, `capri chat`, `capri voice`,
-                   `capri ear`
+                   voix, écoute, clés, la fenêtre de réglages (settings_view.rs : le modèle, la
+                   fenêtre, et ses effets), et les commandes `capri hook`, `capri chat`,
+                   `capri voice`, `capri ear`
 tools/             récupération vérifiée des images, fabrication de Capri.app (macOS)
 ```
 
@@ -306,7 +354,7 @@ Règle : tout ce qui peut être testé sans écran va dans `capri-core`, `capri-
 
 Vérifié automatiquement :
 
-- formatage, `clippy -D warnings` et 263 tests sur **macOS Apple Silicon** (plus 3 qui ne
+- formatage, `clippy -D warnings` et 294 tests sur **macOS Apple Silicon** (plus 3 qui ne
   tournent qu'à la main : ils écrivent des images, lisent un vrai `settings.json` ou touchent au
   vrai trousseau) : animation, lancer et rebonds, hit-test, clics, bandeau, parole en pages, bulle
   sur plusieurs lignes, conversation, **validation du shader** par le compilateur de wgpu, lecture
@@ -334,6 +382,18 @@ Vérifié automatiquement :
   rythme d'arrivée du texte, ce qui se prononce ou non, et le choix de la voix ;
 - l'écoute, pour ce qui se teste sans micro : le déroulé d'une prise de parole (texte provisoire,
   dernier mot attendu puis abandonné, silence, abandon) ;
+- la fenêtre de réglages, sans fenêtre : son modèle seul (la destination dite dès qu'un
+  fournisseur est choisi dans la liste, le champ secret jamais rempli, la clé ni dans le
+  formulaire ni dans un effet affichable, liée à l'adresse affichée, jamais rangée pour une
+  adresse jointe en clair ; aucun contact sans la clé exigée ; la liste demandée d'elle-même
+  seulement à un serveur de cette machine ; des centaines de modèles cherchés et bornés à 30 ;
+  un modèle « cloud » d'Ollama signalé ; les résultats périmés ignorés ; la voix), puis le modèle
+  avec ce qui exécute ses effets, un trousseau en mémoire et un faux serveur local : une clé
+  donnée dans la fenêtre est rangée pour l'adresse affichée et dans aucun fichier, ne part que
+  vers elle, le cerveau choisi est celui que lit `capri chat`, l'essai dit les pannes de
+  `capri chat test`, et la voix activée est celle que lit `capri voice` ;
+- le fournisseur Ollama en ligne, et la phrase qui ne promet plus qu'un modèle « cloud » de
+  l'Ollama local reste sur la machine ;
 - `clippy -D warnings` en compilation croisée pour **Windows x64** et **Linux x64** (le code
   compile, il n'est pas exécuté).
 
@@ -351,7 +411,14 @@ fournisseur) :
   `models`, `test`, `status`) ; son compte s'appelle bien `custom@127.0.0.1:<port>` ; une clé
   rangée à l'ancienne, sans adresse, est signalée, jamais envoyée, et retirée par `--forget` ;
   une clé d'OpenRouter ne suit pas `--url` vers un autre serveur (refus, personne contacté) ;
-- le test qui touche au vrai trousseau, lancé une fois à la main.
+- le test qui touche au vrai trousseau, lancé une fois à la main ;
+- la fenêtre de réglages, sans la voir (binaire de débogage, `CAPRI_SETTINGS_REHEARSAL=1`, avec
+  un dossier, un service de trousseau et une socket d'essai, trois lancements de quelques
+  secondes) : elle s'ouvre, elle est fenêtre clé, se refait pour chacun des sept fournisseurs et
+  pour « Aucun » sans planter ; une clé factice collée dans son vrai champ secret est rangée dans
+  le trousseau d'essai pour `openrouter@openrouter.ai:443`, relue (« Une clé est rangée pour
+  openrouter.ai:443… »), puis retirée ; elle n'apparaît ni dans le journal ni dans le dossier, et
+  le trousseau d'essai est vide après. Le processus quitte de lui-même (code 0).
 
 Le rendu réel sous Linux avec un GPU logiciel (le sprite s'affiche, flotte et « bout ») avait été
 vérifié avant le passage à la fenêtre « Overlay » ; il n'a pas été revérifié depuis.
@@ -384,8 +451,42 @@ vérifié avant le passage à la fenêtre « Overlay » ; il n'a pas été revé
     elle se tait quand on lui coupe la parole, et un appui sans rien dire ne lui envoie rien.
 
 **Pas encore vérifié** : une vraie conversation avec un fournisseur à clé (OpenRouter, DeepSeek,
-ProxyAPI) ; un vrai LM Studio ; la bulle avec un fournisseur distant ; la demande d'accès au
-trousseau quand `Capri.app` lit une clé rangée depuis le terminal.
+ProxyAPI, Ollama en ligne) ; un vrai LM Studio ; la bulle avec un fournisseur distant ; la demande
+d'accès au trousseau quand `Capri.app` lit une clé rangée depuis le terminal.
+
+**À vérifier à la main : la fenêtre de réglages** (rien de ce qui se voit ou se touche n'a été
+vu) :
+
+1. « Réglages… » dans le menu de la barre des menus, puis en clic droit sur Capri : la fenêtre
+   s'ouvre devant, sur le bureau en cours, avec deux onglets, « Cerveau » et « Voix », lisibles en
+   clair comme en sombre ; Capri continue de flotter et de s'animer ;
+2. on peut taper tout de suite dans un champ, sans cliquer d'abord dans la fenêtre (elle a le
+   clavier) ; la refermer (bouton rouge, ⌘W, Échap) rend le clavier à la fenêtre d'avant, sans
+   qu'on ait à cliquer dedans ; rouvrir le menu « Réglages… » quand elle est derrière une autre
+   fenêtre la ramène devant, sans en ouvrir une seconde ;
+3. ⌘V colle dans le champ « Adresse », dans le champ de recherche et dans le champ de la clé ;
+   ⌘A, ⌘C, ⌘X, ⌘Z et ⇧⌘Z marchent dans « Adresse » ; ⌘C ne copie rien du champ de la clé ; et ⌘V
+   colle aussi dans le champ où on lui parle (⌃⌥P) ;
+4. choisir OpenRouter : la phrase orange « Attention : ce que tu lui dis partira chez OpenRouter
+   (openrouter.ai:443)… » paraît avant toute autre action ; puis « Ollama » : « … reste sur cette
+   machine, sauf avec un modèle « cloud »… », et la liste des modèles installés arrive seule ;
+5. coller une clé, « Enregistrer la clé » : rien ne s'affiche dans le champ, qui se vide ; la note
+   dit « Clé d'OpenRouter rangée dans le trousseau de session, pour openrouter.ai:443
+   seulement… » et l'état « Une clé est rangée pour openrouter.ai:443… » ; `capri chat status`
+   (avec le cerveau OpenRouter) le confirme ; « Retirer la clé » l'enlève. Si macOS demande
+   l'accès au trousseau, la fenêtre attend sans figer Capri ;
+6. « Demander la liste » chez OpenRouter : un champ de recherche, 30 modèles au plus ; taper un
+   mot filtre la liste, la croix du champ la rend entière ;
+7. « Essayer » avec Ollama : la réponse s'écrit dans la fenêtre au fil de l'eau, suivie de
+   « Réponse en … s » ; une panne s'y écrit en rouge, avec le message de `capri chat test` ;
+8. « Utiliser ce cerveau », puis ⌃⌥P : elle répond avec ce cerveau, sans être relancée ;
+   `capri chat use …` en ligne de commande, puis fermer et rouvrir la fenêtre : elle montre le
+   nouveau cerveau ;
+9. onglet « Voix » : la case active ou coupe sa voix (le menu passe de « Activer sa voix » à
+   « Couper sa voix »), la liste montre les voix françaises avec leur qualité, « Écouter » dit
+   la phrase d'essai avec la voix choisie ;
+10. pendant qu'une liste déroulante est ouverte, Capri s'anime-t-elle encore ? (une liste suit
+    sa propre boucle d'événements, comme le menu de Capri : elle peut s'arrêter un instant).
 
 **Pas encore testé sur un vrai PC Windows** : y repasser les points 1 à 5, puis 8 à 10. Le tube
 nommé de `capri-ipc` n'y a jamais tourné, le champ de saisie et la voix n'y existent pas encore,
@@ -408,8 +509,9 @@ Points à surveiller :
    un bandeau qui affiche ce que fait Claude~~ ← jalon 2
 3. Elle s'assoit sur tes fenêtres (macOS : CoreGraphics + Accessibilité ; Windows : Win32).
 4. Le chat avec un modèle d'IA : ~~la saisie et la bulle~~, ~~un modèle local par Ollama~~,
-   ~~les fournisseurs à clé compatibles OpenAI (OpenRouter, DeepSeek, ProxyAPI) avec leurs clés
-   dans le trousseau~~, puis l'API d'Anthropic, et Capri dans Claude Code pour qui a un
+   ~~les fournisseurs à clé compatibles OpenAI (OpenRouter, DeepSeek, ProxyAPI, Ollama en ligne)
+   avec leurs clés dans le trousseau~~, ~~une fenêtre de réglages (macOS)~~, puis l'API
+   d'Anthropic, et Capri dans Claude Code pour qui a un
    abonnement. Sa voix : ~~ses réponses dites à voix haute~~, ~~lui parler au micro~~
    (reconnaissance sur la machine), puis un mot d'éveil.
 5. App signée et notarisée (`.app` / installeur), mises à jour.
