@@ -10,9 +10,12 @@ du projet et la feuille de route ; jalon suivant : le hook Claude Code (jalon 2)
   sans écran va ici, avec des tests.
 - `capri-render` : wgpu uniquement. Couleurs prémultipliées de bout en bout.
 - `capri-platform` : **seul endroit** pour les appels système et l'`unsafe` lié à l'OS.
-  Une fonction publique dans `lib.rs`, une implémentation par plateforme (`macos.rs`,
-  `windows.rs`, `other.rs`). Toute nouvelle fonction doit exister dans les trois.
+  L'API publique est dans `lib.rs` (le type `Overlay` et ses événements), avec une
+  implémentation par plateforme : `macos.rs` (un `NSPanel` non activant, sans fenêtre winit :
+  cliquer sur Capri ne doit jamais prendre le focus) et `winit_overlay.rs` (fenêtre winit, réglée
+  par `windows.rs` ou `other.rs`). Toute nouvelle fonction doit exister partout.
 - `capri-app` : assemble le tout. Pas d'appel système direct ici (sauf menus via `tray-icon`).
+  La fenêtre passe toujours par `capri_platform::Overlay`, jamais par `winit::window::Window`.
 
 ## Vérifier avant de dire « c'est fait »
 

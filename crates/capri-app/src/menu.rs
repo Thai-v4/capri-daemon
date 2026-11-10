@@ -5,7 +5,6 @@ use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use tray_icon::menu::accelerator::{Accelerator, Code, Modifiers};
 use tray_icon::menu::{ContextMenu as _, Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem};
 use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
-use winit::window::Window;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Action {
@@ -63,7 +62,7 @@ impl Menus {
     }
 
     /// Le menu en clic droit, sous le curseur.
-    pub fn show_context(&self, window: &Window) {
+    pub fn show_context(&self, window: &impl HasWindowHandle) {
         let Ok(handle) = window.window_handle() else { return };
         match handle.as_raw() {
             #[cfg(target_os = "macos")]

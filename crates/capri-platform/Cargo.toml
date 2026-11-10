@@ -9,16 +9,28 @@ rust-version.workspace = true
 [dependencies]
 log = "0.4"
 raw-window-handle = "0.6.2"
+thiserror = "2"
 winit = "0.30.13"
 
 [target.'cfg(target_os = "macos")'.dependencies]
+dispatch2 = "0.3.1" # MainThreadBound : confier la vue à wgpu sans mentir sur les threads
 objc2 = "0.6.5"
-objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSGeometry"] }
+objc2-foundation = { version = "0.3.2", default-features = false, features = [
+    "std",
+    "NSArray",
+    "NSGeometry",
+    "NSNotification",
+    "NSString",
+] }
 objc2-app-kit = { version = "0.3.2", default-features = false, features = [
     "std",
+    "NSApplication", # NSApplicationDidChangeScreenParametersNotification
+    "NSColor",
     "NSEvent",
     "NSGraphics",
+    "NSPanel",
     "NSResponder",
+    "NSScreen",
     "NSView",
     "NSWindow",
     "objc2-core-foundation", # CGFloat, pour backingScaleFactor

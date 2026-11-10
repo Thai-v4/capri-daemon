@@ -1,27 +1,26 @@
 //! Capri, jalon 1 : elle flotte sur ton bureau, on peut l'attraper, la poser et la lancer.
 //!
-//! Une seule fenêtre transparente couvre l'écran principal. Elle laisse passer la souris
-//! partout, sauf sur Capri elle-même. Le curseur est lu auprès du système 60 fois par seconde
-//! (la fenêtre ne reçoit pas les mouvements quand elle se laisse traverser), mais on ne
-//! redessine que quand sa pose change : environ 12 fois par seconde au repos.
+//! Une seule fenêtre transparente, l'overlay de `capri-platform`, couvre l'écran principal. Elle
+//! laisse passer la souris partout, sauf sur Capri elle-même. Le curseur est lu auprès du système
+//! 60 fois par seconde (la fenêtre ne reçoit pas les mouvements quand elle se laisse traverser),
+//! mais on ne redessine que quand sa pose change : environ 12 fois par seconde au repos.
 
 mod assets;
 #[cfg(any(target_os = "macos", windows))]
 mod menu;
 
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use capri_core::{AlphaMask, Button, Capri, Pose, Press, Rect, Vec2, frame_at, interpret_press};
+use capri_platform::{Overlay, OverlayEvent};
 use capri_render::{Renderer, SpriteDraw, SpriteImage};
 use global_hotkey::hotkey::{Code, HotKey, Modifiers};
 use global_hotkey::{GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState};
 use winit::application::ApplicationHandler;
-use winit::event::{ElementState, MouseButton, WindowEvent};
+use winit::event::{MouseButton, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
-use winit::keyboard::ModifiersState;
-use winit::window::{Window, WindowId, WindowLevel};
+use winit::window::WindowId;
 
 /// Sa hauteur à l'écran, en points (pixels logiques).
 const HEIGHT_POINTS: f64 = 300.0;
@@ -48,8 +47,6 @@ struct App {
     sprite: Option<assets::Sprite>,
     running: Option<Running>,
     hidden: bool,
-    /// Touches modificatrices enfoncées, telles que la fenêtre les a vues en dernier.
-    modifiers: ModifiersState,
     hotkey: Option<(GlobalHotKeyManager, u32)>,
     #[cfg(any(target_os = "macos", windows))]
     menus: Option<menu::Menus>,
@@ -57,7 +54,7 @@ struct App {
 }
 
 struct Running {
-    window: Arc<Window>,
+    overlay: Overlay,
     renderer: Renderer,
     capri: Capri,
     mask: AlphaMask,
@@ -83,72 +80,24 @@ impl ApplicationHandler for App {
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
-        let Some(r) = self.running.as_mut() else { return };
-        match event {
-            WindowEvent::CloseRequested => event_loop.exit(),
-            WindowEvent::Resized(size) => {
-                r.renderer.resize(size.width, size.height);
-                r.capri.set_bounds(Rect::new(Vec2::ZERO, Vec2::new(size.width as f32, size.height as f32)));
-                r.window.request_redraw();
-            }
-            WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
-                r.capri.set_size(display_size(r.mask.size(), scale_factor));
-            }
-            WindowEvent::CursorMoved { position, .. } => {
-                r.cursor = Some(Vec2::new(position.x as f32, position.y as f32));
-            }
-            // winit met cet état à jour à chaque clic, juste avant `MouseInput`, même quand la
-            // fenêtre n'a pas le clavier : il est donc fiable pour reconnaître Ctrl + clic.
-            WindowEvent::ModifiersChanged(modifiers) => self.modifiers = modifiers.state(),
-            WindowEvent::MouseInput { state, button, .. } => {
-                // le curseur le plus frais, même si aucun mouvement n'est arrivé depuis
-                r.read_cursor();
-                let now = r.seconds();
-                match state {
-                    ElementState::Pressed => {
-                        let on_her = r.cursor.filter(|&c| r.is_over(c));
-                        let ctrl = self.modifiers.control_key();
-                        let press = interpret_press(
-                            core_button(button),
-                            ctrl,
-                            capri_platform::CTRL_CLICK_IS_SECONDARY,
-                        );
-                        log::debug!(
-                            "appui {button:?} (Ctrl : {ctrl}, sur elle : {}) → {press:?}",
-                            on_her.is_some()
-                        );
-                        match (press, on_her) {
-                            (Press::Grab, Some(c)) => r.capri.grab(c, now),
-                            (Press::Menu, Some(_)) =>
-                            {
-                                #[cfg(any(target_os = "macos", windows))]
-                                if let Some(menus) = &self.menus {
-                                    menus.show_context(&r.window);
-                                }
-                            }
-                            _ => {}
-                        }
-                    }
-                    ElementState::Released => {
-                        if button == MouseButton::Left {
-                            r.capri.release(now);
-                        }
-                    }
-                }
-            }
-            WindowEvent::RedrawRequested => r.draw(),
-            _ => {}
+        // Là où l'overlay est une fenêtre winit (Windows, Linux), ses événements passent par ici.
+        if let Some(r) = &self.running {
+            r.overlay.on_window_event(&event);
         }
+        self.handle_overlay(event_loop);
     }
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
         self.handle_menus(event_loop);
         self.handle_hotkey();
+        self.handle_overlay(event_loop);
         if !self.hidden
             && let Some(r) = self.running.as_mut()
         {
             r.tick();
         }
+        // sur macOS, le redessin que `tick` vient de demander se fait ici, sans attendre un tour
+        self.handle_overlay(event_loop);
         event_loop.set_control_flow(ControlFlow::WaitUntil(Instant::now() + TICK));
     }
 }
@@ -156,44 +105,28 @@ impl ApplicationHandler for App {
 impl App {
     fn start(&mut self, event_loop: &ActiveEventLoop) -> Result<Running> {
         let sprite = self.sprite.take().context("démarrage déjà fait")?;
-        let monitor = event_loop
-            .primary_monitor()
-            .or_else(|| event_loop.available_monitors().next())
-            .context("aucun écran détecté")?;
+        let overlay = Overlay::new(event_loop)?;
 
-        let attrs = Window::default_attributes()
-            .with_title("Capri")
-            .with_transparent(true)
-            .with_decorations(false)
-            .with_resizable(false)
-            .with_window_level(WindowLevel::AlwaysOnTop)
-            .with_active(false)
-            .with_visible(false)
-            .with_position(monitor.position())
-            .with_inner_size(monitor.size());
-        let window = Arc::new(event_loop.create_window(capri_platform::overlay_attributes(attrs))?);
-        capri_platform::prepare_overlay(&window);
-
-        let size = window.inner_size();
+        let (width, height) = overlay.size();
         let renderer = Renderer::new(
-            window.clone(),
-            size.width,
-            size.height,
+            overlay.surface_handle(),
+            width,
+            height,
             SpriteImage { width: sprite.width, height: sprite.height, rgba: &sprite.rgba },
         )?;
         if !renderer.is_transparent() {
             log::warn!("la fenêtre ne peut pas être transparente sur cette machine");
         }
 
-        let bounds = Rect::new(Vec2::ZERO, Vec2::new(size.width as f32, size.height as f32));
-        let body = display_size(sprite.mask.size(), window.scale_factor());
+        let bounds = Rect::new(Vec2::ZERO, Vec2::new(width as f32, height as f32));
+        let body = display_size(sprite.mask.size(), overlay.scale_factor());
         // en bas à droite, au-dessus du Dock ou de la barre des tâches
         let start_at = Vec2::new(bounds.size.x - body.x * 1.8, bounds.size.y - body.y * 1.3);
         let capri = Capri::new(body, bounds, start_at);
 
-        capri_platform::set_click_through(&window, true);
-        capri_platform::set_shown(&window, true);
-        window.request_redraw();
+        overlay.set_click_through(true);
+        overlay.set_shown(true);
+        overlay.request_redraw();
 
         self.hotkey = register_hotkey();
         #[cfg(any(target_os = "macos", windows))]
@@ -206,7 +139,7 @@ impl App {
 
         let now = Instant::now();
         Ok(Running {
-            window,
+            overlay,
             renderer,
             capri,
             mask: sprite.mask,
@@ -216,6 +149,60 @@ impl App {
             click_through: true,
             drawn: None,
         })
+    }
+
+    /// Traite ce que l'overlay a rapporté : clics, changements d'écran, redessin.
+    fn handle_overlay(&mut self, event_loop: &ActiveEventLoop) {
+        let hidden = self.hidden;
+        let Some(r) = self.running.as_mut() else { return };
+        for event in r.overlay.drain_events() {
+            match event {
+                OverlayEvent::CloseRequested => event_loop.exit(),
+                OverlayEvent::Resized { width, height } => {
+                    log::debug!("overlay : {width}×{height} px");
+                    r.renderer.resize(width, height);
+                    r.capri.set_bounds(Rect::new(Vec2::ZERO, Vec2::new(width as f32, height as f32)));
+                    r.overlay.request_redraw();
+                }
+                OverlayEvent::ScaleFactorChanged(scale) => {
+                    log::debug!("overlay : densité {scale}");
+                    r.capri.set_size(display_size(r.mask.size(), scale));
+                }
+                OverlayEvent::Pressed { button, ctrl } => {
+                    // le curseur le plus frais, même si aucun mouvement n'est arrivé depuis
+                    r.read_cursor();
+                    let on_her = r.cursor.filter(|&c| r.is_over(c));
+                    let press =
+                        interpret_press(core_button(button), ctrl, capri_platform::CTRL_CLICK_IS_SECONDARY);
+                    log::debug!(
+                        "appui {button:?} (Ctrl : {ctrl}, sur elle : {}) → {press:?}",
+                        on_her.is_some()
+                    );
+                    match (press, on_her) {
+                        (Press::Grab, Some(c)) => r.capri.grab(c, r.seconds()),
+                        (Press::Menu, Some(_)) =>
+                        {
+                            #[cfg(any(target_os = "macos", windows))]
+                            if let Some(menus) = &self.menus {
+                                menus.show_context(&r.overlay);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                OverlayEvent::Released { button } => {
+                    if button == MouseButton::Left {
+                        r.read_cursor();
+                        r.capri.release(r.seconds());
+                    }
+                }
+                OverlayEvent::RedrawRequested => {
+                    if !hidden {
+                        r.draw();
+                    }
+                }
+            }
+        }
     }
 
     fn handle_menus(&mut self, event_loop: &ActiveEventLoop) {
@@ -246,9 +233,9 @@ impl App {
     fn toggle_hidden(&mut self) {
         let Some(r) = self.running.as_mut() else { return };
         self.hidden = !self.hidden;
-        capri_platform::set_click_through(&r.window, true);
+        r.overlay.set_click_through(true);
         r.click_through = true;
-        capri_platform::set_shown(&r.window, !self.hidden);
+        r.overlay.set_shown(!self.hidden);
         if !self.hidden {
             r.drawn = None; // redessiner en revenant
             r.last_step = Instant::now();
@@ -266,7 +253,7 @@ impl Running {
     }
 
     fn read_cursor(&mut self) {
-        if let Some((x, y)) = capri_platform::cursor_in_window(&self.window) {
+        if let Some((x, y)) = self.overlay.cursor() {
             self.cursor = Some(Vec2::new(x as f32, y as f32));
         }
     }
@@ -293,12 +280,12 @@ impl Running {
         let over = self.cursor.is_some_and(|c| self.is_over(c));
         let through = !capri_platform::INTERACTIVE || !(over || self.capri.is_held());
         if through != self.click_through {
-            capri_platform::set_click_through(&self.window, through);
+            self.overlay.set_click_through(through);
             self.click_through = through;
         }
 
         if self.drawn != Some(self.capri.pose()) {
-            self.window.request_redraw();
+            self.overlay.request_redraw();
         }
     }
 
@@ -313,8 +300,8 @@ impl Running {
             boil: BOIL * unit,
             opacity: 1.0,
         };
-        let window = Arc::clone(&self.window);
-        self.renderer.render(&draw, || window.pre_present_notify());
+        let overlay = &self.overlay;
+        self.renderer.render(&draw, || overlay.pre_present_notify());
         self.drawn = Some(pose);
     }
 }
