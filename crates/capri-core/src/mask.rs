@@ -21,7 +21,7 @@ impl AlphaMask {
     pub fn from_rgba(width: u32, height: u32, rgba: &[u8], threshold: u8, grow: u32) -> Self {
         let (w, h) = (width as usize, height as usize);
         assert_eq!(rgba.len(), w * h * 4, "taille RGBA incohérente");
-        let base: Vec<bool> = rgba.chunks_exact(4).map(|p| p[3] > threshold).collect();
+        let base: Vec<bool> = rgba.as_chunks::<4>().0.iter().map(|p| p[3] > threshold).collect();
         let solid = if grow == 0 { base } else { dilate(&base, w, h, grow as usize) };
         Self { width, height, solid }
     }

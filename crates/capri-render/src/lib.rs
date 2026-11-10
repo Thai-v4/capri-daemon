@@ -351,7 +351,7 @@ fn upload_sprite(device: &wgpu::Device, queue: &wgpu::Queue, sprite: SpriteImage
 
 fn premultiply(rgba: &[u8]) -> Vec<u8> {
     let mut out = rgba.to_vec();
-    for px in out.chunks_exact_mut(4) {
+    for px in out.as_chunks_mut::<4>().0 {
         let a = u16::from(px[3]);
         for c in &mut px[..3] {
             *c = ((u16::from(*c) * a + 127) / 255) as u8;
