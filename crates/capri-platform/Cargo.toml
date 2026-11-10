@@ -15,11 +15,15 @@ winit = "0.30.13"
 [target.'cfg(target_os = "macos")'.dependencies]
 dispatch2 = "0.3.1" # MainThreadBound : confier la vue à wgpu sans mentir sur les threads
 objc2 = "0.6.5"
+# La voix : la synthèse vocale du système (AVSpeechSynthesizer).
+objc2-avf-audio = { version = "0.3.2", default-features = false, features = ["std", "AVSpeechSynthesis"] }
 objc2-foundation = { version = "0.3.2", default-features = false, features = [
     "std",
     "NSArray",
+    "NSDate", # avec NSRunLoop : laisser la voix finir, en ligne de commande
     "NSGeometry",
     "NSNotification",
+    "NSRunLoop",
     "NSString",
 ] }
 objc2-app-kit = { version = "0.3.2", default-features = false, features = [

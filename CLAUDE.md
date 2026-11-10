@@ -3,8 +3,8 @@
 Compagne de bureau (Capri, *Cyberpunk: Edgerunners* 2) écrite en Rust, 100 % native, pour macOS
 (cible principale, Apple Silicon) et Windows. Projet de fan non commercial. Le README décrit l'état
 du projet et la feuille de route ; jalons 1 (elle flotte) et 2 (le bandeau Claude Code) faits,
-jalon 4 (lui parler) en cours : saisie, bulle et modèle local (Ollama) en place ; fournisseurs à
-clé, puis voix, à venir.
+jalon 4 (lui parler) en cours : saisie, bulle, modèle local (Ollama) et voix de sortie en place ;
+fournisseurs à clé et écoute au micro à venir.
 
 ## Architecture : où va quoi
 
@@ -37,6 +37,8 @@ clé, puis voix, à venir.
   la forme d'un refus explicite (le champ de saisie n'existe encore que sur macOS).
   Seul le champ de saisie (`macos/input.rs`) prend le clavier, parce qu'on le lui demande, et il
   le rend à la fenêtre d'avant en se fermant.
+  Sa voix vit ici aussi (`voice.rs`, `macos/voice.rs` : `AVSpeechSynthesizer`) ; ce qu'elle dit
+  et avec quelle voix est décidé par `capri_chat::voice`, qui est pur.
 - `capri-app` : assemble le tout. Pas d'appel système direct ici (sauf menus via `tray-icon`).
   La fenêtre passe toujours par `capri_platform::Overlay`, jamais par `winit::window::Window`.
 
@@ -54,8 +56,8 @@ précisément quoi vérifier plutôt que de l'affirmer.
 
 ## Règles
 
-- **API des crates** : wgpu 30, winit 0.30, objc2 0.6 / objc2-app-kit 0.3, windows-sys 0.61,
-  tray-icon 0.26, cosmic-text 0.19, ureq 3.5 (sans TLS pour l'instant). Ces API changent souvent : vérifier dans les sources
+- **API des crates** : wgpu 30, winit 0.30, objc2 0.6 / objc2-app-kit 0.3 / objc2-avf-audio 0.3,
+  windows-sys 0.61, tray-icon 0.26, cosmic-text 0.19, ureq 3.5 (sans TLS pour l'instant). Ces API changent souvent : vérifier dans les sources
   (`~/.cargo/registry/src`) ou docs.rs, pas de mémoire. Même règle pour Claude Code : le format
   des hooks se vérifie dans sa documentation (<https://code.claude.com/docs/en/hooks>).
 - Chaque bloc `unsafe` a un commentaire `// SAFETY:` qui justifie pourquoi il est sûr.
@@ -74,6 +76,9 @@ précisément quoi vérifier plutôt que de l'affirmer.
   l'adresse que l'utilisateur a choisie. Jamais l'activité de Claude Code. Pas de proxy, aucune
   redirection suivie. `http://` seulement vers la machine ou un réseau privé : toute adresse
   passe par `capri_chat::Endpoint`. Ce qui se dit n'est jamais écrit dans le journal.
+- Sa voix : des voix existantes (celles du système pour l'instant), **jamais un clone de la voix
+  de la comédienne de la série**. Rien n'est enregistré ni envoyé. Désactivée par défaut. Les
+  tests ne font aucun bruit : pas de test qui crée une vraie voix.
 - Aucun nom de modèle écrit en dur : il vient de l'utilisateur ou de la liste que donne le
   serveur. Même règle que pour les API : format et adresses d'un fournisseur se vérifient dans sa
   documentation, pas de mémoire.

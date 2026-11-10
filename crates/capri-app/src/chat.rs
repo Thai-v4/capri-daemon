@@ -9,6 +9,9 @@
 //!
 //! Seules la personnalité de Capri et la conversation partent vers le modèle : jamais ce que
 //! fait Claude Code, que cette partie de l'app ne connaît même pas.
+//!
+//! Si sa voix est activée (`voice_setup`), chaque phrase terminée est aussi dite à voix haute par
+//! le système, pendant que le modèle écrit la suite.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -17,11 +20,13 @@ use std::sync::mpsc::{Receiver, Sender, TryRecvError, channel};
 use std::time::{Duration, Instant};
 
 use capri_chat::plain::PlainStream;
+use capri_chat::voice::{Sentences, speakable};
 use capri_chat::{Conversation, ReplyEvent, Role, Turn, echo, reply};
 use capri_core::Speech;
 use capri_net::Client;
+use capri_platform::Voice;
 
-use crate::brain_setup;
+use crate::{brain_setup, voice_setup};
 
 /// Nombre de prises de parole gardées en mémoire, et envoyées au modèle avec chaque message.
 const MAX_TURNS: usize = 24;
@@ -38,12 +43,33 @@ pub struct Chat {
     /// Le dossier où lire quel cerveau utiliser. `None` : toujours le cerveau de secours.
     settings: Option<PathBuf>,
     client: Arc<Client>,
+    /// Sa voix, créée la première fois qu'elle doit parler à voix haute.
+    voice: Option<Voice>,
+    /// Ce qu'il faut pour dire la réponse en cours à voix haute, si sa voix est activée.
+    aloud: Option<Aloud>,
+    /// Sa voix est suspendue parce que Capri est cachée.
+    voice_held: bool,
 }
 
 /// Une réponse en train d'arriver.
 struct Reply {
-    events: Receiver<ReplyEvent>,
+    events: Receiver<Thought>,
     cancelled: Arc<AtomicBool>,
+}
+
+/// Ce que le thread du cerveau envoie.
+enum Thought {
+    /// Cette réponse se dit aussi à voix haute, avec cette voix (`None` : celle du système).
+    /// Envoyé avant le premier mot, et seulement si sa voix est activée.
+    Aloud(Option<String>),
+    Reply(ReplyEvent),
+}
+
+/// La réponse en cours, côté voix.
+struct Aloud {
+    voice_id: Option<String>,
+    /// Le texte reçu, découpé en phrases : une phrase n'est dite qu'une fois entière.
+    sentences: Sentences,
 }
 
 struct SpeechClock {
@@ -79,6 +105,9 @@ impl Chat {
             clock: SpeechClock { origin: Instant::now(), held_since: None, held_total: Duration::ZERO },
             settings,
             client: Arc::new(Client::new()),
+            voice: None,
+            aloud: None,
+            voice_held: false,
         }
     }
 
@@ -110,13 +139,23 @@ impl Chat {
         }
     }
 
-    /// Fait taire Capri : la réponse en cours est abandonnée (le modèle cesse d'écrire) et sa
-    /// bulle s'efface.
+    /// Fait taire Capri : la réponse en cours est abandonnée (le modèle cesse d'écrire), sa
+    /// bulle s'efface et sa voix s'arrête.
     pub fn hush(&mut self) {
         if let Some(reply) = self.reply.take() {
             reply.cancelled.store(true, Ordering::Relaxed);
         }
         self.speech = None;
+        self.silence();
+    }
+
+    /// Arrête sa voix tout de suite, sans toucher à sa bulle.
+    pub fn silence(&mut self) {
+        if let Some(voice) = &self.voice {
+            voice.stop();
+        }
+        self.aloud = None;
+        self.voice_held = false;
     }
 
     /// Repart de zéro : elle se tait et oublie ce qui s'est dit.
@@ -133,19 +172,52 @@ impl Chat {
 
     /// Prend en compte ce que le cerveau a envoyé depuis le dernier appel.
     pub fn pump(&mut self) {
-        let Some(reply) = &self.reply else { return };
         loop {
+            let Some(reply) = &self.reply else { return };
             match reply.events.try_recv() {
-                Ok(ReplyEvent::Delta(piece)) => {
+                Ok(Thought::Aloud(voice_id)) => {
+                    if self.voice.is_none() {
+                        self.voice = Voice::new();
+                    }
+                    self.aloud = Some(Aloud { voice_id, sentences: Sentences::new() });
+                }
+                Ok(Thought::Reply(ReplyEvent::Delta(piece))) => {
                     if let Some(speech) = &mut self.speech {
                         speech.push(&piece);
                     }
+                    self.say_aloud(&piece, false);
                 }
-                Ok(ReplyEvent::Done) => return self.end_reply(None),
-                Ok(ReplyEvent::Failed(reason)) => return self.end_reply(Some(&reason)),
+                Ok(Thought::Reply(ReplyEvent::Done)) => {
+                    self.say_aloud("", true);
+                    return self.end_reply(None);
+                }
+                Ok(Thought::Reply(ReplyEvent::Failed(reason))) => {
+                    // ce qu'elle avait commencé à dire est dit ; la panne, elle, reste écrite
+                    self.say_aloud("", true);
+                    return self.end_reply(Some(&reason));
+                }
                 Err(TryRecvError::Empty) => return,
                 // le cerveau s'est arrêté sans prévenir : on garde ce qui est arrivé
-                Err(TryRecvError::Disconnected) => return self.end_reply(None),
+                Err(TryRecvError::Disconnected) => {
+                    self.say_aloud("", true);
+                    return self.end_reply(None);
+                }
+            }
+        }
+    }
+
+    /// Confie à sa voix les phrases que `text` vient de terminer. `last` : la réponse est finie,
+    /// ce qui reste se dit aussi, même sans point final.
+    fn say_aloud(&mut self, text: &str, last: bool) {
+        let (Some(voice), Some(aloud)) = (&self.voice, &mut self.aloud) else { return };
+        let mut ready = aloud.sentences.push(text);
+        if last {
+            ready.extend(aloud.sentences.finish());
+        }
+        for sentence in ready {
+            let spoken = speakable(&sentence);
+            if !spoken.is_empty() {
+                voice.say(&spoken, aloud.voice_id.as_deref());
             }
         }
     }
@@ -172,6 +244,11 @@ impl Chat {
     /// avance à chaque appel.
     pub fn page(&mut self) -> Option<(String, bool)> {
         self.clock.resume();
+        if std::mem::take(&mut self.voice_held)
+            && let Some(voice) = &self.voice
+        {
+            voice.resume();
+        }
         let now_ms = self.clock.now_ms();
         let page = self.speech.as_mut()?.view(now_ms).map(|view| (view.text.to_owned(), view.more));
         if page.is_none() {
@@ -184,6 +261,12 @@ impl Chat {
     pub fn hold(&mut self) {
         if self.speech.is_some() {
             self.clock.hold();
+        }
+        if !self.voice_held
+            && let Some(voice) = self.voice.as_ref().filter(|voice| voice.is_speaking())
+        {
+            voice.pause();
+            self.voice_held = true;
         }
     }
 
@@ -201,40 +284,48 @@ fn think(
     client: &Client,
     turns: &[Turn],
     cancelled: &AtomicBool,
-    sender: &Sender<ReplyEvent>,
+    sender: &Sender<Thought>,
 ) {
+    // si personne n'écoute plus, `cancelled` est déjà levé : la réponse va s'arrêter d'elle-même
+    let mut emit = |event: ReplyEvent| {
+        let _ = sender.send(Thought::Reply(event));
+    };
+    // sa voix d'abord : elle doit être connue avant le premier mot
+    match settings.map(voice_setup::load) {
+        Some(Ok(voice)) if voice.enabled => {
+            let _ = sender.send(Thought::Aloud(voice_setup::chosen_voice(&voice)));
+        }
+        Some(Err(err)) => log::warn!("pas de voix : {err:#}"),
+        _ => {}
+    }
     let setup = match settings.map(brain_setup::load).transpose() {
         Ok(setup) => setup.flatten(),
         Err(err) => {
             log::error!("cerveau : {err:#}");
             let problem = "Mes réglages sont illisibles : capri chat status te dira pourquoi.";
-            let _ = sender.send(ReplyEvent::Failed(problem.to_owned()));
-            return;
+            return emit(ReplyEvent::Failed(problem.to_owned()));
         }
     };
-    let Some(setup) = setup else { return repeat(turns, cancelled, sender) };
+    let Some(setup) = setup else { return repeat(turns, cancelled, &mut emit) };
     log::debug!("réponse demandée à {} ({})", setup.brain.model(), setup.brain.provider().name());
-    // un modèle écrit volontiers du Markdown, qui n'a aucun sens dans une bulle
+    // un modèle écrit volontiers du Markdown, qui n'a aucun sens dans une bulle ni à voix haute
     let mut plain = PlainStream::new();
-    client.answer(&setup.brain, &setup.persona, turns, cancelled, &mut |event| {
-        plain.filter(event, &mut |event| {
-            // si personne n'écoute plus, `cancelled` est déjà levé : la réponse va s'arrêter
-            let _ = sender.send(event);
-        });
-    });
+    client
+        .answer(&setup.brain, &setup.persona, turns, cancelled, &mut |event| plain.filter(event, &mut emit));
 }
 
 /// Le cerveau de secours : il répète le dernier message, mot à mot.
-fn repeat(turns: &[Turn], cancelled: &AtomicBool, sender: &Sender<ReplyEvent>) {
+fn repeat(turns: &[Turn], cancelled: &AtomicBool, emit: &mut dyn FnMut(ReplyEvent)) {
     let message = turns.last().map_or("", |turn| turn.text.as_str());
     let answer = echo::reply_to(message);
     for piece in reply::chunks(&answer) {
-        if cancelled.load(Ordering::Relaxed) || sender.send(ReplyEvent::Delta(piece.to_owned())).is_err() {
+        if cancelled.load(Ordering::Relaxed) {
             return;
         }
+        emit(ReplyEvent::Delta(piece.to_owned()));
         std::thread::sleep(ECHO_PACE);
     }
-    let _ = sender.send(ReplyEvent::Done);
+    emit(ReplyEvent::Done);
 }
 
 #[cfg(test)]

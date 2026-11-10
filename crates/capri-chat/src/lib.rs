@@ -9,6 +9,8 @@
 //! - [`openai`] : le format « chat completions », ce qu'on envoie et ce qu'on lit ;
 //! - [`plain`] : du texte brut à partir de ce qu'écrit un modèle, Markdown retiré ;
 //! - [`sse`] : le décodeur du flux dans lequel la réponse arrive ;
+//! - [`voice`] : de quoi dire ses réponses à voix haute (phrases, texte prononçable, choix de la
+//!   voix, réglages) ;
 //! - [`echo`] : le cerveau de secours, qui répète ce qu'on lui dit tant qu'aucun modèle n'est
 //!   choisi.
 //!
@@ -23,6 +25,7 @@ pub mod persona;
 pub mod plain;
 pub mod reply;
 pub mod sse;
+pub mod voice;
 
 pub use brain::{Brain, BrainError, Provider};
 pub use conversation::{Conversation, Role, Turn};

@@ -14,6 +14,8 @@ pub enum Action {
     Hush,
     /// Repartir de zéro : elle oublie la conversation.
     Forget,
+    /// Lui donner ou lui retirer la parole à voix haute.
+    ToggleVoice,
     ToggleVisible,
     /// Brancher ou débrancher le hook de Claude Code.
     ToggleClaudeHook,
@@ -28,6 +30,7 @@ pub struct Menus {
     /// Les éléments dont le texte change.
     toggles: Vec<MenuItem>,
     hooks: Vec<MenuItem>,
+    voices: Vec<MenuItem>,
 }
 
 /// Un menu et ses éléments, avec ce que chacun déclenche.
@@ -58,6 +61,7 @@ impl Menus {
             actions: items.iter().map(|(action, item)| (item.id().clone(), *action)).collect(),
             toggles: items_for(Action::ToggleVisible),
             hooks: items_for(Action::ToggleClaudeHook),
+            voices: items_for(Action::ToggleVoice),
         }
     }
 
@@ -73,6 +77,13 @@ impl Menus {
     pub fn set_visible(&self, visible: bool) {
         for item in &self.toggles {
             item.set_text(if visible { "Cacher Capri" } else { "Montrer Capri" });
+        }
+    }
+
+    /// Sa voix est-elle activée ?
+    pub fn set_voice_enabled(&self, enabled: bool) {
+        for item in &self.voices {
+            item.set_text(if enabled { "Couper sa voix" } else { "Activer sa voix" });
         }
     }
 
@@ -114,6 +125,7 @@ fn build_menu() -> Built {
     let talk = MenuItem::new("Parler à Capri", true, Some(talk_shortcut));
     let hush = MenuItem::new("La faire taire", true, None);
     let forget = MenuItem::new("Nouvelle conversation", true, None);
+    let voice = MenuItem::new("Activer sa voix", true, None);
     let shortcut = Accelerator::new(Modifiers::CONTROL | Modifiers::ALT, Code::KeyC);
     let toggle = MenuItem::new("Cacher Capri", true, Some(shortcut));
     let hook = MenuItem::new("Brancher Claude Code", true, None);
@@ -121,15 +133,16 @@ fn build_menu() -> Built {
     let menu = Menu::new();
     let separator = PredefinedMenuItem::separator;
     let (first, second, third) = (separator(), separator(), separator());
-    if let Err(err) =
-        menu.append_items(&[&title, &first, &talk, &hush, &forget, &second, &toggle, &hook, &third, &quit])
-    {
+    if let Err(err) = menu.append_items(&[
+        &title, &first, &talk, &hush, &forget, &voice, &second, &toggle, &hook, &third, &quit,
+    ]) {
         log::warn!("menu incomplet : {err}");
     }
     let items = vec![
         (Action::Talk, talk),
         (Action::Hush, hush),
         (Action::Forget, forget),
+        (Action::ToggleVoice, voice),
         (Action::ToggleVisible, toggle),
         (Action::ToggleClaudeHook, hook),
         (Action::Quit, quit),

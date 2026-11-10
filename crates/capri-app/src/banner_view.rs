@@ -137,6 +137,12 @@ impl BannerView {
         self.refresh = true;
     }
 
+    /// Arrête sa voix tout de suite, sans toucher à sa bulle.
+    #[cfg(any(target_os = "macos", windows))]
+    pub fn silence(&mut self) {
+        self.chat.silence();
+    }
+
     /// Repart de zéro : elle se tait et oublie la conversation.
     #[cfg(any(target_os = "macos", windows))]
     pub fn forget(&mut self) {

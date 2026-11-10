@@ -8,8 +8,9 @@
 //! mais on ne redessine que quand sa pose ou son bandeau change : environ 12 fois par seconde au
 //! repos.
 //!
-//! `capri hook install | uninstall | status` branche Claude Code sur Capri, et
-//! `capri chat use | status | test | off` lui choisit un cerveau, sans lancer la fenêtre.
+//! `capri hook install | uninstall | status` branche Claude Code sur Capri,
+//! `capri chat use | status | test | off` lui choisit un cerveau et
+//! `capri voice on | off | status | list | use | test` lui donne une voix, sans lancer la fenêtre.
 
 mod assets;
 mod banner_view;
@@ -19,6 +20,7 @@ mod claude;
 mod hook_setup;
 #[cfg(any(target_os = "macos", windows))]
 mod menu;
+mod voice_setup;
 
 use std::time::{Duration, Instant};
 
@@ -49,11 +51,13 @@ fn main() -> Result<()> {
         None => {}
         Some("hook") => std::process::exit(hook_setup::run_cli(&args[1..])),
         Some("chat") => std::process::exit(brain_setup::run_cli(&args[1..])),
+        Some("voice") => std::process::exit(voice_setup::run_cli(&args[1..])),
         Some(_) => {
             eprintln!(
                 "usage : capri                  lancer Capri\n\
                  \x20       capri hook <action>    brancher Claude Code (voir capri hook)\n\
-                 \x20       capri chat <action>    lui choisir un cerveau (voir capri chat)"
+                 \x20       capri chat <action>    lui choisir un cerveau (voir capri chat)\n\
+                 \x20       capri voice <action>   lui donner une voix (voir capri voice)"
             );
             std::process::exit(2);
         }
@@ -178,6 +182,7 @@ impl App {
         {
             self.menus = Some(menu::Menus::new());
             self.refresh_hook_menu();
+            self.refresh_voice_menu();
         }
         if !capri_platform::INTERACTIVE {
             log::warn!("système pas encore pris en charge : Capri s'affiche mais ne peut pas être attrapée");
@@ -288,6 +293,7 @@ impl App {
                     menu::Action::Talk => self.talk(),
                     menu::Action::Hush => self.with_banner(BannerView::hush),
                     menu::Action::Forget => self.with_banner(BannerView::forget),
+                    menu::Action::ToggleVoice => self.toggle_voice(),
                     menu::Action::ToggleVisible => self.toggle_hidden(),
                     menu::Action::ToggleClaudeHook => self.toggle_claude_hook(),
                     menu::Action::Quit => event_loop.exit(),
@@ -303,6 +309,48 @@ impl App {
     fn with_banner(&mut self, act: impl FnOnce(&mut BannerView)) {
         if let Some(r) = self.running.as_mut() {
             act(&mut r.banner);
+        }
+    }
+
+    /// Lui donne la parole à voix haute, ou la lui retire.
+    #[cfg(any(target_os = "macos", windows))]
+    fn toggle_voice(&mut self) {
+        let done = (|| -> Result<bool> {
+            let directory = brain_setup::config_dir()?;
+            let settings = voice_setup::load(&directory)?;
+            let enabled = !settings.enabled;
+            if enabled && capri_platform::Voice::new().is_none() {
+                anyhow::bail!("pas encore de voix sur ce système");
+            }
+            voice_setup::save(&directory, &capri_chat::voice::VoiceSettings { enabled, ..settings })?;
+            Ok(enabled)
+        })();
+        let (text, tone) = match &done {
+            Ok(true) => ("Je te répondrai à voix haute", capri_claude::Tone::Done),
+            Ok(false) => ("Je ne réponds plus que par écrit", capri_claude::Tone::Done),
+            Err(err) => {
+                log::error!("voix : {err:#}");
+                ("Je n'ai pas pu changer ma voix, détails dans le journal", capri_claude::Tone::Failed)
+            }
+        };
+        self.with_banner(|banner| {
+            if matches!(done, Ok(false)) {
+                banner.silence();
+            }
+            banner.notify(text, tone);
+        });
+        self.refresh_voice_menu();
+    }
+
+    /// Accorde le menu à ce que disent les réglages de la voix.
+    #[cfg(any(target_os = "macos", windows))]
+    fn refresh_voice_menu(&self) {
+        let enabled = brain_setup::config_dir()
+            .and_then(|directory| voice_setup::load(&directory))
+            .inspect_err(|err| log::warn!("réglages de la voix illisibles : {err:#}"))
+            .is_ok_and(|settings| settings.enabled);
+        if let Some(menus) = &self.menus {
+            menus.set_voice_enabled(enabled);
         }
     }
 

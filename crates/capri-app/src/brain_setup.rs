@@ -85,7 +85,7 @@ fn custom_persona(directory: &Path) -> Result<Option<String>> {
 }
 
 /// Le texte d'un fichier, ou `None` s'il n'existe pas.
-fn read_text(file: &Path) -> Result<Option<String>> {
+pub fn read_text(file: &Path) -> Result<Option<String>> {
     match std::fs::read(file) {
         Ok(bytes) => {
             String::from_utf8(bytes).map(Some).map_err(|_| anyhow!("{} n'est pas de l'UTF-8", file.display()))
@@ -95,14 +95,20 @@ fn read_text(file: &Path) -> Result<Option<String>> {
     }
 }
 
-/// Écrit le cerveau choisi, d'un seul coup : un fichier temporaire, puis un renommage.
+/// Écrit le cerveau choisi.
 pub fn save(directory: &Path, brain: &Brain) -> Result<PathBuf> {
+    write_file(directory, BRAIN_FILE, &brain.to_json())
+}
+
+/// Écrit un fichier de réglages d'un seul coup : un fichier temporaire, puis un renommage. Le
+/// dossier est créé s'il manque.
+pub fn write_file(directory: &Path, name: &str, contents: &str) -> Result<PathBuf> {
     create_private_dir(directory).with_context(|| format!("création de {}", directory.display()))?;
-    let file = directory.join(BRAIN_FILE);
-    let temporary = directory.join(format!(".{BRAIN_FILE}.tmp-{}", std::process::id()));
+    let file = directory.join(name);
+    let temporary = directory.join(format!(".{name}.tmp-{}", std::process::id()));
     let written = (|| -> std::io::Result<()> {
         let mut handle = std::fs::File::create(&temporary)?;
-        handle.write_all(brain.to_json().as_bytes())?;
+        handle.write_all(contents.as_bytes())?;
         handle.sync_all()?;
         drop(handle);
         std::fs::rename(&temporary, &file)

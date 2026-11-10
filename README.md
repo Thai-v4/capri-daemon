@@ -113,6 +113,31 @@ Ce qu'il faut savoir :
   serveur ;
 - un modèle écrit volontiers du Markdown : les signes sont retirés à l'affichage, les mots restent.
 
+### Sa voix
+
+Capri peut dire ses réponses à voix haute, avec une voix du système : rien n'est téléchargé, et
+rien n'est envoyé nulle part. Chaque phrase est dite dès qu'elle est complète, pendant que le
+modèle écrit la suite.
+
+```bash
+./target/release/capri voice on           # ou « Activer sa voix » dans son menu
+./target/release/capri voice test         # l'écouter depuis le terminal
+./target/release/capri voice list         # les voix françaises installées
+./target/release/capri voice use <nom>    # en choisir une (auto : la meilleure installée)
+./target/release/capri voice off
+```
+
+- « La faire taire », ou une nouvelle phrase, coupe sa voix en même temps que sa réponse ; la
+  cacher (⌃⌥C) la met en pause ;
+- les émojis ne sont pas lus, et une panne (modèle injoignable) reste écrite dans sa bulle ;
+- par défaut, elle prend la meilleure voix française de femme installée. Un Mac n'est livré
+  qu'avec des voix de base, assez synthétiques : de meilleures se téléchargent dans Réglages
+  Système > Accessibilité > Lire et énoncer > Voix système (libellés de macOS 27) ;
+- ce n'est **pas** la voix de la série, et ça ne le sera pas : pas de clonage de la voix d'une
+  comédienne ;
+- macOS seulement pour l'instant. La bulle et la voix avancent chacune à son rythme, sa bouche
+  ne bouge pas, et on ne peut pas encore lui parler au micro.
+
 ## Installer et lancer
 
 Il faut [Rust](https://rustup.rs) 1.90 ou plus récent (`rustup update`).
@@ -143,7 +168,7 @@ crates/
   capri-core/      logique pure : animation, mouvement, lancer, hit-test, bandeau, parole (testée)
   capri-claude/    logique pure : hooks de Claude Code, protocole, sessions, settings.json (testée)
   capri-chat/      logique pure : conversation, format des fournisseurs, flux de réponse, règles
-                   d'adresse, réglages du cerveau, personnalité (testée)
+                   d'adresse, réglages du cerveau, personnalité, phrases à dire (testée)
   capri-net/       le seul crate qui parle au réseau : envoyer la conversation, lire la réponse
                    au fil de l'eau (testé contre un faux serveur local)
   capri-render/    rendu wgpu : Metal sur macOS, DirectX 12 + DirectComposition sur Windows
@@ -152,6 +177,7 @@ crates/
   capri-platform/  la fenêtre « Overlay » : première des deux couches qui parlent au système
     macos.rs         AppKit via objc2 : un NSPanel non activant, sans fenêtre winit
     macos/input.rs   le champ de saisie : le seul panneau qui prend le clavier, sur demande
+    voice.rs         sa voix ; macos/voice.rs : la synthèse vocale du système
     winit_overlay.rs fenêtre winit, pour Windows et les autres systèmes
     windows.rs       Win32 via windows-sys
     other.rs         repli (Linux : affichage seul)
@@ -160,7 +186,7 @@ crates/
     windows.rs       tube nommé au nom aléatoire
   capri-hook/      le binaire appelé par les hooks de Claude Code
   capri-app/       l'application : boucle, souris, menus, raccourci, images, bandeau, bulle,
-                   et les commandes `capri hook` et `capri chat`
+                   voix, et les commandes `capri hook`, `capri chat` et `capri voice`
 tools/             récupération vérifiée des images
 ```
 
@@ -171,7 +197,7 @@ Règle : tout ce qui peut être testé sans écran va dans `capri-core`, `capri-
 
 Vérifié automatiquement :
 
-- formatage, `clippy -D warnings` et 196 tests sur **macOS Apple Silicon** : animation, lancer et
+- formatage, `clippy -D warnings` et 205 tests sur **macOS Apple Silicon** : animation, lancer et
   rebonds, hit-test, clics, bandeau, parole en pages, bulle sur plusieurs lignes, conversation,
   **validation du shader** par le compilateur de wgpu, lecture
   des exemples de hooks de la documentation de Claude Code, suivi des sessions, aller-retour sur
@@ -182,6 +208,8 @@ Vérifié automatiquement :
   qui est montré n'est jamais repris), et le client réseau contre un faux serveur local (requête
   envoyée, arrêt en cours de réponse, refus, redirection jamais suivie, serveur muet, réponse
   coupée ou sans fin) ;
+- la voix, pour ce qui se teste sans haut-parleur : le découpage en phrases quel que soit le
+  rythme d'arrivée du texte, ce qui se prononce ou non, et le choix de la voix ;
 - `clippy -D warnings` en compilation croisée pour **Windows x64** et **Linux x64** (le code
   compile, il n'est pas exécuté).
 
@@ -228,8 +256,9 @@ Points à surveiller :
 3. Elle s'assoit sur tes fenêtres (macOS : CoreGraphics + Accessibilité ; Windows : Win32).
 4. Le chat avec un modèle d'IA : ~~la saisie et la bulle~~, ~~un modèle local par Ollama~~, puis
    les fournisseurs à clé (OpenRouter, DeepSeek, ProxyAPI, Anthropic) avec leurs clés dans le
-   trousseau, et Capri dans Claude Code pour qui a un abonnement. Ensuite sa voix : ses réponses
-   lues à voix haute, puis lui parler au micro.
+   trousseau, et Capri dans Claude Code pour qui a un abonnement. Sa voix : ~~ses réponses
+   dites à voix haute~~, puis lui parler au micro (reconnaissance sur la machine), puis un mot
+   d'éveil.
 5. App signée et notarisée (`.app` / installeur), mises à jour.
 
 ## Licence
