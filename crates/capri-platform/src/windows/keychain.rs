@@ -1,8 +1,9 @@
 //! Windows : le Gestionnaire d'identification, par les fonctions `Cred…W` d'advapi32.
 //!
 //! Des identifiants génériques (`CRED_TYPE_GENERIC`), nommés `<service>:<compte>`, gardés pour
-//! cette session d'utilisateur sur cette machine (`CRED_PERSIST_LOCAL_MACHINE` : ils ne suivent pas
-//! un profil itinérant). Le secret est rangé tel quel, en UTF-8.
+//! cet utilisateur sur cette machine, d'une session à l'autre (`CRED_PERSIST_LOCAL_MACHINE` : ils
+//! ne suivent pas un profil itinérant). Windows ne tient pas compte de la casse de ces noms ; les
+//! comptes de Capri sont de toute façon en minuscules. Le secret est rangé tel quel, en UTF-8.
 
 use std::ffi::c_void;
 

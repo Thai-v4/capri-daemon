@@ -9,8 +9,9 @@ rust-version.workspace = true
 [dependencies]
 capri-chat = { path = "../capri-chat" }
 log = "0.4"
-# Sans les fonctions par défaut : ni rustls (ring ou aws-lc compilent du C, ce qui casse la
-# compilation croisée), ni compression.
+# Sans les fonctions par défaut : ni compression, ni rustls, dont le fournisseur par défaut dans
+# ureq, ring, compile du C (cc en dépendance de construction) : vers Windows, depuis un Mac, son
+# script de construction échoue faute des en-têtes C de la cible (essayé avec ring 0.17.14).
 ureq = { version = "3.5.1", default-features = false }
 
 # Le https : le TLS du système (Security.framework sur macOS, SChannel sur Windows), avec son

@@ -96,15 +96,28 @@ pub fn delete(service: &str, account: &str) -> Result<bool, KeychainError> {
 mod tests {
     use super::*;
 
-    /// Touche au vrai trousseau de l'utilisateur, sous un service réservé aux tests, et nettoie
-    /// derrière lui. À lancer à la main : `cargo test -p capri-platform -- --ignored`.
+    /// Retire ce qu'un test a rangé, même s'il échoue en route.
+    struct Cleanup<'a>(&'a str, &'a [&'a str]);
+
+    impl Drop for Cleanup<'_> {
+        fn drop(&mut self) {
+            for account in self.1 {
+                let _ = delete(self.0, account);
+            }
+        }
+    }
+
+    /// Touche au vrai trousseau de l'utilisateur, sous un service réservé aux tests (jamais
+    /// `Capri`), et nettoie derrière lui, même en cas d'échec. À lancer à la main :
+    /// `cargo test -p capri-platform -- --ignored`.
     #[test]
     #[ignore = "touche au vrai trousseau du système"]
     fn a_secret_is_saved_read_replaced_and_deleted() {
         let service = format!("Capri (test {})", std::process::id());
-        let account = "compte-de-test";
-        // si un essai précédent a été interrompu
-        let _ = delete(&service, account);
+        // des noms de compte comme ceux de Capri : fournisseur et adresse
+        let account = "custom@127.0.0.1:1";
+        let other = "custom@127.0.0.1:2";
+        let _cleanup = Cleanup(&service, &[account, other]);
 
         assert_eq!(contains(&service, account), Ok(false));
         assert_eq!(load(&service, account), Ok(None));
@@ -113,7 +126,8 @@ mod tests {
         save(&service, account, "premier-secret-de-test").expect("rangé");
         assert_eq!(contains(&service, account), Ok(true));
         assert_eq!(load(&service, account), Ok(Some("premier-secret-de-test".to_owned())));
-        assert_eq!(load(&service, "autre-compte"), Ok(None), "un autre compte n'en voit rien");
+        assert_eq!(load(&service, other), Ok(None), "un autre compte n'en voit rien");
+        assert_eq!(contains(&service, "custom"), Ok(false), "ni un nom qui n'en est qu'un début");
 
         save(&service, account, "second-secret-de-test").expect("remplacé");
         assert_eq!(load(&service, account), Ok(Some("second-secret-de-test".to_owned())));

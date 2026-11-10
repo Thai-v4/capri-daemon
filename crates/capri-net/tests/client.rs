@@ -579,6 +579,10 @@ fn the_key_travels_as_a_bearer_token_in_its_header_and_nowhere_else() {
     for absent in ["http-referer", "referer", "x-title", "x-openrouter-title"] {
         assert_eq!(header(&head, absent), None, "{head}");
     }
+    // le seul qui nomme un logiciel : celui de ureq, la bibliothèque HTTP, que ureq ajoute de
+    // lui-même (`ureq/<version>`) ; il ne dit rien de Capri
+    let agent = header(&head, "user-agent").unwrap_or_default();
+    assert!(agent.starts_with("ureq/") && !agent.to_lowercase().contains("capri"), "{head}");
 }
 
 #[test]

@@ -677,7 +677,7 @@ impl Cli<'_> {
         if self.keys.available() {
             writeln!(
                 self.out,
-                "Les clés d'API restent dans {} ; pour en retirer une : capri chat key <fournisseur> --forget",
+                "Les clés d'API restent dans {} ; pour en retirer une : capri chat key <fournisseur> [--url <adresse>] --forget",
                 self.keys.name()
             )?;
         }
@@ -1504,7 +1504,7 @@ mod tests {
         assert_eq!(
             ran.out,
             "Capri n'a plus de cerveau : elle répète ce qu'on lui dit, et rien ne sort de ta machine.\n\
-             Les clés d'API restent dans le trousseau de test ; pour en retirer une : capri chat key <fournisseur> --forget\n"
+             Les clés d'API restent dans le trousseau de test ; pour en retirer une : capri chat key <fournisseur> [--url <adresse>] --forget\n"
         );
         assert_eq!(
             stored(&keys, Provider::OpenRouter, OPENROUTER).as_deref(),
