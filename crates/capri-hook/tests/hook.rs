@@ -43,7 +43,6 @@ fn hook(endpoint: &Endpoint) -> Command {
         .arg("--capri-managed")
         .env("CAPRI_SOCKET", endpoint.path())
         .env("CAPRI_CONFIG_DIR", capri_dir(endpoint))
-        .env_remove("CAPRI_CHAT")
         .env_remove("CAPRI_HOOK_DEBUG")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -167,17 +166,6 @@ fn garbage_unknown_events_and_empty_input_are_not_errors() {
     // rien de tout cela n'a été transmis : la prochaine ligne reçue est celle-ci
     assert_invisible(&run(hook(&endpoint), br#"{"session_id":"s","hook_event_name":"Stop"}"#));
     assert_eq!(Message::decode(&listener.next_line().unwrap()).unwrap().event, Event::TurnEnd { said: None });
-}
-
-#[test]
-fn sessions_started_by_capri_herself_are_ignored() {
-    let endpoint = endpoint("chat");
-    let mut listener = Listener::bind(&endpoint, MAX_LINE_BYTES).unwrap();
-    let mut own = hook(&endpoint);
-    own.env("CAPRI_CHAT", "1");
-    assert_invisible(&run(own, PRE_TOOL_USE.as_bytes()));
-    assert_invisible(&run(hook(&endpoint), br#"{"session_id":"autre","hook_event_name":"Stop"}"#));
-    assert_eq!(Message::decode(&listener.next_line().unwrap()).unwrap().session, "autre");
 }
 
 #[test]

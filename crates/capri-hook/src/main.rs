@@ -30,9 +30,6 @@ use capri_ipc::{Endpoint, IpcError};
 const SEND_TIMEOUT: Duration = Duration::from_millis(150);
 /// Passé ce délai, le processus s'arrête quoi qu'il soit en train d'attendre.
 const LIFETIME: Duration = Duration::from_secs(2);
-/// Définie dans les sessions Claude Code que Capri lance elle-même : leurs événements ne doivent
-/// pas revenir dans son bandeau.
-const OWN_SESSION_ENV: &str = "CAPRI_CHAT";
 const DEBUG_ENV: &str = "CAPRI_HOOK_DEBUG";
 
 fn main() {
@@ -56,9 +53,6 @@ fn main() {
 }
 
 fn run() -> Result<&'static str, String> {
-    if std::env::var_os(OWN_SESSION_ENV).is_some() {
-        return Ok("session lancée par Capri, ignorée");
-    }
     let at_ms = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |since| since.as_millis() as u64);
     let stdin = std::io::stdin().lock();
     let message = if mirror_enabled() {

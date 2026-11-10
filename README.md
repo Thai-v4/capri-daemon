@@ -436,7 +436,7 @@ Règle : tout ce qui peut être testé sans écran va dans `capri-core`, `capri-
 
 Vérifié automatiquement :
 
-- formatage, `clippy -D warnings` et 353 tests sur **macOS Apple Silicon** (plus 3 qui ne
+- formatage, `clippy -D warnings` et 352 tests sur **macOS Apple Silicon** (plus 3 qui ne
   tournent qu'à la main : ils écrivent des images, lisent un vrai `settings.json` ou touchent au
   vrai trousseau) : animation, lancer et rebonds, hit-test, clics, bandeau, parole en pages, bulle
   sur plusieurs lignes, conversation, **validation du shader** par le compilateur de wgpu, lecture
@@ -579,6 +579,10 @@ vérifié avant le passage à la fenêtre « Overlay » ; il n'a pas été revé
 18. sans clé, la bulle le dit et renvoie à « Réglages… », sans commande de terminal ; une clé
     refusée (401) cite la raison que donne le fournisseur.
 
+19. Capri dans Claude Code, dans une vraie session : le style s'installe depuis l'onglet
+    « Claude Code », Claude Code le propose et, une fois choisi, répond avec son ton et termine
+    par la ligne `[Capri] …` ; miroir activé, Capri dit cette ligne sur le bureau.
+
 **Pas encore vérifié** : une vraie conversation avec DeepSeek, ProxyAPI ou Ollama en ligne (ils
 passent par le même code qu'OpenRouter, mais n'ont pas été essayés) ; un vrai LM Studio ; la
 demande d'accès au trousseau quand `Capri.app` lit une clé rangée depuis le terminal ; **tout ce
@@ -587,25 +591,15 @@ qui demande une vraie session de Claude Code avec le style Capri** (aucune n'a �
 écrive vraiment sa ligne `[Capri]`, que cette ligne arrive dans `last_assistant_message` comme le
 dit la documentation, et que Capri la dise et l'affiche comme prévu.
 
-**À vérifier à la main, Capri dans Claude Code** (sur ton Mac, `Capri.app` reconstruite) :
+**Capri dans Claude Code, cas plus fins pas encore regardés un par un** :
 
-1. onglet « Claude Code » de la fenêtre de réglages : « Installer le style Capri » écrit
-   `~/.claude/output-styles/capri.md`, la ligne dit quoi taper ; « Retirer » le retire ; un
-   `capri.md` à toi n'est jamais touché ;
-2. dans une session Claude Code **relancée** : `/output-style` liste « Capri » ;
-   `/output-style Capri` le choisit ; la réponse suivante a le ton de Capri, reste exacte, et
-   finit par une ligne `[Capri] …` ; `/output-style default` revient au style habituel ;
-3. miroir **désactivé** : rien ne change par rapport à avant (le bandeau dit « Claude a fini »,
-   Capri ne dit rien) ;
-4. miroir **activé** (la case de l'onglet) : à la fin d'une réponse, la bulle de Capri dit la
-   ligne, sans `[Capri]` ni Markdown, et sa voix la dit si elle est activée ; « La faire taire »
-   la coupe ;
-5. une réponse dans un sous-agent ne la fait pas parler ; un nouveau prompt envoyé avant qu'elle
+1. une réponse dans un sous-agent ne la fait pas parler ; un nouveau prompt envoyé avant qu'elle
    ait parlé l'empêche de dire une ligne périmée ;
-6. pendant qu'elle répond à ce que tu lui as écrit (⌃⌥P), ou pendant que tu maintiens ⌃⌥D, une
+2. pendant qu'elle répond à ce que tu lui as écrit (⌃⌥P), ou pendant que tu maintiens ⌃⌥D, une
    fin de tour de Claude Code attend : elle dit sa ligne après, pas en même temps ;
-7. « Brancher » et « Débrancher » de l'onglet, comme ceux du menu : `/hooks` montre les entrées,
-   le menu et l'onglet restent d'accord, et `settings.json` redevient identique à l'octet près.
+3. « Brancher » et « Débrancher » de l'onglet, comme ceux du menu : `/hooks` montre les entrées,
+   le menu et l'onglet restent d'accord, et `settings.json` redevient identique à l'octet près ;
+4. un `capri.md` à toi dans `output-styles/` n'est jamais touché.
 
 **Pas encore testé sur un vrai PC Windows** : il n'y a pas encore de fenêtre de réglages. Le tube
 nommé de `capri-ipc` n'y a jamais tourné, le champ de saisie et la voix n'y existent pas encore,
