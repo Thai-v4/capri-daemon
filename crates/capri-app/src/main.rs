@@ -1,6 +1,6 @@
 //! Capri : elle flotte sur ton bureau, on peut l'attraper, la poser et la lancer (jalon 1), un
 //! bandeau au-dessus d'elle dit ce que fait Claude Code (jalon 2), et on peut lui parler : elle
-//! répond dans une bulle, avec le modèle local qu'on lui a donné (jalon 4).
+//! répond dans une bulle, avec le modèle qu'on lui a donné, local ou chez un fournisseur (jalon 4).
 //!
 //! Une seule fenêtre transparente, l'overlay de `capri-platform`, couvre l'écran principal. Elle
 //! laisse passer la souris partout, sauf sur Capri elle-même. Le curseur est lu auprès du système
@@ -9,7 +9,8 @@
 //! repos.
 //!
 //! `capri hook install | uninstall | status` branche Claude Code sur Capri,
-//! `capri chat use | status | test | off` lui choisit un cerveau et
+//! `capri chat use | key | models | status | test | off` lui choisit un cerveau (et range la clé
+//! d'un fournisseur dans le trousseau du système), et
 //! `capri voice on | off | status | list | use | test` lui donne une voix, sans lancer la fenêtre.
 
 mod assets;
@@ -18,7 +19,10 @@ mod brain_setup;
 mod chat;
 mod claude;
 mod ear_setup;
+#[cfg(test)]
+mod fake_server;
 mod hook_setup;
+mod keys;
 #[cfg(any(target_os = "macos", windows))]
 mod menu;
 mod voice_setup;

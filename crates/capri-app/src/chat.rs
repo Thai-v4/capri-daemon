@@ -8,7 +8,9 @@
 //! `capri_chat::echo`, qui répète ce qu'on lui dit et n'envoie rien nulle part.
 //!
 //! Seules la personnalité de Capri et la conversation partent vers le modèle : jamais ce que
-//! fait Claude Code, que cette partie de l'app ne connaît même pas.
+//! fait Claude Code, que cette partie de l'app ne connaît même pas. S'il faut une clé, elle est
+//! lue dans le trousseau (`keys`) à chaque message, et confiée à `capri-net` pour l'en-tête de la
+//! requête : elle ne passe par rien d'autre.
 //!
 //! Si sa voix est activée (`voice_setup`), chaque phrase terminée est aussi dite à voix haute par
 //! le système, pendant que le modèle écrit la suite.
@@ -26,6 +28,7 @@ use capri_core::Speech;
 use capri_net::Client;
 use capri_platform::Voice;
 
+use crate::keys::{self, KeyStore};
 use crate::{brain_setup, voice_setup};
 
 /// Nombre de prises de parole gardées en mémoire, et envoyées au modèle avec chaque message.
@@ -42,6 +45,8 @@ pub struct Chat {
     clock: SpeechClock,
     /// Le dossier où lire quel cerveau utiliser. `None` : toujours le cerveau de secours.
     settings: Option<PathBuf>,
+    /// Là où sont rangées les clés des fournisseurs.
+    keys: Arc<dyn KeyStore>,
     client: Arc<Client>,
     /// Sa voix, créée la première fois qu'elle doit parler à voix haute.
     voice: Option<Voice>,
@@ -96,14 +101,21 @@ impl SpeechClock {
 }
 
 impl Chat {
-    /// `settings` : le dossier des réglages de Capri, où un cerveau a pu être choisi.
+    /// `settings` : le dossier des réglages de Capri, où un cerveau a pu être choisi. Les clés
+    /// sont lues dans le trousseau du système.
     pub fn new(settings: Option<PathBuf>) -> Self {
+        Self::with_keys(settings, keys::SystemKeychain::shared())
+    }
+
+    /// Comme [`Chat::new`], avec les clés rangées dans `keys`.
+    pub fn with_keys(settings: Option<PathBuf>, keys: Arc<dyn KeyStore>) -> Self {
         Self {
             conversation: Conversation::new(MAX_TURNS),
             reply: None,
             speech: None,
             clock: SpeechClock { origin: Instant::now(), held_since: None, held_total: Duration::ZERO },
             settings,
+            keys,
             client: Arc::new(Client::new()),
             voice: None,
             aloud: None,
@@ -125,8 +137,9 @@ impl Chat {
         let cancelled = Arc::new(AtomicBool::new(false));
         let brain = {
             let (settings, client) = (self.settings.clone(), Arc::clone(&self.client));
+            let keys = Arc::clone(&self.keys);
             let (turns, cancelled) = (self.conversation.turns().to_vec(), Arc::clone(&cancelled));
-            move || think(settings.as_deref(), &client, &turns, &cancelled, &sender)
+            move || think(settings.as_deref(), &*keys, &client, &turns, &cancelled, &sender)
         };
         self.clock.resume();
         self.speech = Some(Speech::new(self.clock.now_ms()));
@@ -281,6 +294,7 @@ impl Chat {
 /// à la conversation `turns` (qui finit par le message de l'utilisateur).
 fn think(
     settings: Option<&Path>,
+    keys: &dyn KeyStore,
     client: &Client,
     turns: &[Turn],
     cancelled: &AtomicBool,
@@ -307,10 +321,27 @@ fn think(
         }
     };
     let Some(setup) = setup else { return repeat(turns, cancelled, &mut emit) };
-    log::debug!("réponse demandée à {} ({})", setup.brain.model(), setup.brain.provider().name());
+    let provider = setup.brain.provider();
+    let key = match keys::key_for(keys, provider) {
+        Ok(key) => key,
+        Err(err) => {
+            log::error!("clé de {} : {err:#}", provider.name());
+            let problem = format!(
+                "Je n'ai pas pu lire ma clé dans {} : capri chat status te dira pourquoi.",
+                keys.name()
+            );
+            return emit(ReplyEvent::Failed(problem));
+        }
+    };
+    log::debug!(
+        "réponse demandée à {} ({}, {})",
+        setup.brain.model(),
+        provider.name(),
+        if key.is_some() { "avec sa clé" } else { "sans clé" }
+    );
     // un modèle écrit volontiers du Markdown, qui n'a aucun sens dans une bulle ni à voix haute
     let mut plain = PlainStream::new();
-    client.answer(&setup.brain, None, &setup.persona, turns, cancelled, &mut |event| {
+    client.answer(&setup.brain, key.as_ref(), &setup.persona, turns, cancelled, &mut |event| {
         plain.filter(event, &mut emit)
     });
 }
@@ -347,58 +378,31 @@ mod tests {
     /// Un dossier de réglages propre à ce test (le nom ne doit servir à aucun autre, ici ou dans
     /// `brain_setup`), où un cerveau est choisi à cette adresse.
     fn settings_with_a_brain_at(name: &str, address: std::net::SocketAddr) -> PathBuf {
+        settings_with(name, capri_chat::Provider::Ollama, address)
+    }
+
+    /// Pareil, avec ce fournisseur.
+    fn settings_with(name: &str, provider: capri_chat::Provider, address: std::net::SocketAddr) -> PathBuf {
         let directory = std::env::temp_dir().join(format!("capri-test-chat-{}-{name}", std::process::id()));
         let _ = std::fs::remove_dir_all(&directory);
-        let brain = capri_chat::Brain::new(
-            capri_chat::Provider::Ollama,
-            Some(&format!("http://{address}/v1")),
-            "modele-de-test",
-        )
-        .expect("adresse locale");
+        let brain = capri_chat::Brain::new(provider, Some(&format!("http://{address}/v1")), "modele-de-test")
+            .expect("adresse locale");
         brain_setup::save(&directory, &brain).expect("réglages écrits");
         directory
     }
 
-    /// Un faux fournisseur, sur cette machine : il répond « Réponse 1 », « Réponse 2 »… à chaque
-    /// requête, et rend le corps de ce qu'il a reçu.
-    fn fake_provider(replies: usize) -> (std::net::SocketAddr, Receiver<serde_json::Value>) {
-        use std::io::{Read, Write};
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("un port libre");
-        let address = listener.local_addr().expect("adresse");
-        let (sender, requests) = channel();
-        std::thread::spawn(move || {
-            for (number, stream) in listener.incoming().take(replies).enumerate() {
-                let Ok(mut stream) = stream else { return };
-                let (mut bytes, mut buffer) = (Vec::new(), [0u8; 4096]);
-                // la requête entière : ses en-têtes, puis le corps qu'ils annoncent
-                let body = loop {
-                    if let Some(head_end) = bytes.windows(4).position(|window| window == b"\r\n\r\n") {
-                        let length = String::from_utf8_lossy(&bytes[..head_end])
-                            .lines()
-                            .filter_map(|line| line.split_once(':'))
-                            .find(|(name, _)| name.eq_ignore_ascii_case("content-length"))
-                            .and_then(|(_, value)| value.trim().parse::<usize>().ok())
-                            .unwrap_or(0);
-                        if bytes.len() >= head_end + 4 + length {
-                            break String::from_utf8_lossy(&bytes[head_end + 4..]).into_owned();
-                        }
-                    }
-                    match stream.read(&mut buffer) {
-                        Ok(received) if received > 0 => bytes.extend_from_slice(&buffer[..received]),
-                        _ => return,
-                    }
-                };
-                let _ = sender.send(serde_json::from_str(&body).expect("une requête en JSON"));
-                let event = serde_json::json!({ "choices": [{ "delta": { "content": format!("Réponse {}", number + 1) } }] });
-                let stream_body = format!("data: {event}\n\ndata: [DONE]\n\n");
-                let _ = write!(
-                    stream,
-                    "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{stream_body}",
-                    stream_body.len()
-                );
-            }
-        });
-        (address, requests)
+    use crate::fake_server::{self, header};
+
+    /// Un faux fournisseur : il répond « Réponse 1 », « Réponse 2 »… à chaque requête.
+    fn fake_provider(replies: usize) -> (std::net::SocketAddr, Receiver<fake_server::Request>) {
+        fake_server::serve(
+            (1..=replies).map(|number| fake_server::reply(&format!("Réponse {number}"))).collect(),
+        )
+    }
+
+    /// Le corps d'une requête reçue, en JSON.
+    fn body_of(request: fake_server::Request) -> serde_json::Value {
+        serde_json::from_str(&request.1).expect("une requête en JSON")
     }
 
     #[test]
@@ -413,13 +417,13 @@ mod tests {
         assert_eq!(listen(&mut chat), "Réponse 2");
         assert_eq!(chat.turns(), 4);
 
-        let first = requests.recv_timeout(Duration::from_secs(5)).expect("première requête");
+        let first = body_of(requests.recv_timeout(Duration::from_secs(5)).expect("première requête"));
         assert_eq!(first["model"], "modele-de-test");
         assert_eq!(first["messages"][0]["role"], "system");
         assert_eq!(first["messages"][0]["content"], capri_chat::persona::DEFAULT);
         assert_eq!(first["messages"][1], serde_json::json!({ "role": "user", "content": "Bonjour" }));
         assert_eq!(first["messages"].as_array().map(Vec::len), Some(2));
-        let second = requests.recv_timeout(Duration::from_secs(5)).expect("seconde requête");
+        let second = body_of(requests.recv_timeout(Duration::from_secs(5)).expect("seconde requête"));
         assert_eq!(
             second["messages"].as_array().expect("des messages")[1..],
             [
@@ -450,6 +454,62 @@ mod tests {
         chat.say("Et maintenant ?");
         let answer = listen(&mut chat);
         assert!(answer.contains("réglages sont illisibles"), "{answer}");
+        let _ = std::fs::remove_dir_all(directory);
+    }
+
+    /// Une clé qui n'existe nulle part ailleurs que dans ces tests.
+    const KEY: &str = "sk-test-capri-chat-0123456789";
+
+    #[test]
+    fn with_a_key_she_sends_it_and_a_refused_key_says_how_to_put_it_back() {
+        let refusal = format!(r#"{{"error":{{"message":"bad key {KEY}"}}}}"#);
+        // une réponse, puis un refus de la clé
+        let (address, requests) = fake_server::serve(vec![
+            fake_server::reply("Oui."),
+            fake_server::response("401 Unauthorized", "application/json", &refusal),
+        ]);
+        let directory = settings_with("cle-envoyee", capri_chat::Provider::Custom, address);
+        let keys = Arc::new(keys::memory::MemoryKeys::with(capri_chat::Provider::Custom, KEY));
+        let mut chat = Chat::with_keys(Some(directory.clone()), keys);
+
+        chat.say("Tu m'entends ?");
+        assert_eq!(listen(&mut chat), "Oui.");
+        let (head, body) = requests.recv_timeout(Duration::from_secs(5)).expect("une requête");
+        assert_eq!(header(&head, "authorization"), Some(format!("Bearer {KEY}")));
+        assert!(!body.contains(KEY), "la clé ne part que dans son en-tête");
+
+        chat.say("Et maintenant ?");
+        let answer = listen(&mut chat);
+        assert_eq!(
+            answer,
+            format!("{address} refuse ma clé (401). Pour la remettre : capri chat key custom")
+        );
+        assert!(!answer.contains(KEY));
+        let _ = std::fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn without_its_key_she_says_so_and_contacts_nobody() {
+        let (address, requests) = fake_provider(1);
+        // aucune clé pour OpenRouter
+        let directory = settings_with("cle-absente", capri_chat::Provider::OpenRouter, address);
+        let mut chat =
+            Chat::with_keys(Some(directory.clone()), Arc::new(keys::memory::MemoryKeys::default()));
+        chat.say("Coucou");
+        assert_eq!(
+            listen(&mut chat),
+            "OpenRouter demande une clé, et je n'en ai pas. Pour me la donner : capri chat key openrouter"
+        );
+
+        // un trousseau qui refuse l'accès
+        let denied = keys::memory::MemoryKeys::denied();
+        let mut chat = Chat::with_keys(Some(directory.clone()), Arc::new(denied));
+        chat.say("Coucou");
+        assert_eq!(
+            listen(&mut chat),
+            "Je n'ai pas pu lire ma clé dans le trousseau de test : capri chat status te dira pourquoi."
+        );
+        assert!(requests.recv_timeout(Duration::from_millis(100)).is_err(), "personne n'a été contacté");
         let _ = std::fs::remove_dir_all(directory);
     }
 
