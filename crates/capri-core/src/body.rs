@@ -7,7 +7,7 @@ use std::collections::VecDeque;
 
 use crate::anim::Sheet;
 use crate::geom::{Rect, Vec2};
-use crate::perch::{Perch, Spot, Stature};
+use crate::perch::{Perch, Spot};
 
 /// Ce qu'elle est en train de faire.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -19,8 +19,8 @@ pub enum Stance {
     /// Lancée : elle file, ralentit et rebondit sur les bords de l'écran.
     Thrown { vel: Vec2 },
     /// Posée sur le bord supérieur d'une fenêtre (`spot` dit laquelle et où, voir
-    /// [`crate::perch`]) : elle ne flotte plus, et suit le bord.
-    Perched { spot: Spot },
+    /// [`crate::perch`]), le point posé sur le bord en `seat` : elle ne flotte plus, et suit le bord.
+    Perched { spot: Spot, seat: Vec2 },
 }
 
 /// Ce que le rendu doit dessiner à une image donnée.
@@ -34,10 +34,26 @@ pub struct Pose {
     pub ghost: Vec2,
 }
 
-/// Flottement au repos : huit dessins tenus six images chacun (2 s par cycle), en fraction
-/// de sa hauteur. Pas une sinusoïde : des poses clés, comme en anime.
-const FLOAT: [(f32, u32); 8] =
-    [(0.0, 6), (-0.004, 6), (-0.010, 6), (-0.016, 6), (-0.019, 6), (-0.016, 6), (-0.010, 6), (-0.004, 6)];
+/// Flottement au repos : dix positions tenues six images chacune, en fraction de sa hauteur
+/// (négatif : plus haut). Pas une sinusoïde qui glisse : des poses clés, comme en anime.
+///
+/// Un tour dure 60 images (2,5 s), comme la boucle de sa pose debout (`sheets::stand`), dont les
+/// cheveux montent et retombent sans qu'elle bouge. Les deux tournent sur la même image
+/// d'animation : elle est au plus bas (images 24 à 29) quand ses cheveux sont le plus bas (dessins
+/// 24 à 30, poussés vers le bas quand elle remonte), et au plus haut (images 54 à 59) quand ils
+/// sont relevés (dessins 54 à 8).
+const FLOAT: [(f32, u32); 10] = [
+    (-0.0172, 6),
+    (-0.0124, 6),
+    (-0.0066, 6),
+    (-0.0018, 6),
+    (0.0, 6),
+    (-0.0018, 6),
+    (-0.0066, 6),
+    (-0.0124, 6),
+    (-0.0172, 6),
+    (-0.019, 6),
+];
 
 /// Combien de dessins de « boil » tournent (un nouveau toutes les deux images).
 const BOIL_DRAWINGS: u64 = 3;
@@ -87,6 +103,9 @@ pub struct Capri {
     /// Où sont ses pieds dans son image (coordonnées normalisées).
     feet: Vec2,
     samples: VecDeque<(f64, Vec2)>,
+    /// Combien d'images dure son départ d'un bord avant qu'elle flotte de nouveau, debout (le
+    /// temps que s'efface sa pose assise, s'il y en a une ; 0 sinon).
+    leave_frames: u64,
 }
 
 impl Capri {
@@ -103,6 +122,7 @@ impl Capri {
             gesture: None,
             feet: Vec2::new(0.5, 1.0),
             samples: VecDeque::new(),
+            leave_frames: 0,
         };
         capri.clamp();
         capri
@@ -130,46 +150,69 @@ impl Capri {
         self.feet = feet;
     }
 
-    /// Le milieu de ses pieds, là où elle touche un bord.
-    pub fn feet(&self) -> Vec2 {
-        self.pos + Vec2::new(self.size.x * self.feet.x, self.size.y * self.feet.y)
+    /// Où sont ses pieds dans son image debout (coordonnées normalisées).
+    pub fn feet_in_image(&self) -> Vec2 {
+        self.feet
     }
 
-    /// Sa taille et la place de ses pieds, pour [`crate::perch`].
-    pub fn stature(&self) -> Stature {
-        Stature { size: self.size, feet: self.feet }
+    /// Le milieu de ses pieds, là où elle touche un bord ; posée, le point posé sur le bord.
+    pub fn feet(&self) -> Vec2 {
+        match self.stance {
+            Stance::Perched { seat, .. } => seat,
+            _ => self.standing_feet(),
+        }
+    }
+
+    /// Le milieu des pieds de son image debout, où qu'elle soit.
+    fn standing_feet(&self) -> Vec2 {
+        self.pos + Vec2::new(self.size.x * self.feet.x, self.size.y * self.feet.y)
     }
 
     /// Où elle est posée, si elle l'est.
     pub fn perched(&self) -> Option<Spot> {
         match self.stance {
-            Stance::Perched { spot } => Some(spot),
+            Stance::Perched { spot, .. } => Some(spot),
             _ => None,
         }
     }
 
-    /// Elle se pose sur un bord : ses pieds en `perch.feet`, avec un écrasement à l'atterrissage.
+    /// Posée, le point posé sur le bord (ses pieds debout, ou sa ligne d'assise).
+    pub fn seat(&self) -> Option<Vec2> {
+        match self.stance {
+            Stance::Perched { seat, .. } => Some(seat),
+            _ => None,
+        }
+    }
+
+    /// Combien d'images dure son départ d'un bord, avant qu'elle flotte de nouveau, debout.
+    pub fn set_leave_frames(&mut self, frames: u64) {
+        self.leave_frames = frames;
+    }
+
+    /// Elle se pose sur un bord, en `perch.feet`, avec un écrasement à l'atterrissage.
     pub fn land(&mut self, perch: Perch) {
         self.place_feet(perch.feet);
-        self.stance = Stance::Perched { spot: perch.spot };
+        self.stance = Stance::Perched { spot: perch.spot, seat: perch.feet };
         self.squash = None;
         self.gesture = Some((self.frame, Gesture::Landing));
     }
 
-    /// Posée, elle suit son bord : ses pieds en `perch.feet`, sans nouvel atterrissage. Sans
-    /// effet si elle n'est pas posée.
+    /// Posée, elle suit son bord : en `perch.feet`, sans nouvel atterrissage. Sans effet si elle
+    /// n'est pas posée.
     pub fn ride(&mut self, perch: Perch) {
         if let Stance::Perched { .. } = self.stance {
             self.place_feet(perch.feet);
-            self.stance = Stance::Perched { spot: perch.spot };
+            self.stance = Stance::Perched { spot: perch.spot, seat: perch.feet };
         }
     }
 
-    /// Elle quitte son bord et se remet à flotter sur place. Sans effet si elle n'est pas posée.
+    /// Elle quitte son bord et se remet à flotter sur place, avec un petit étirement une fois son
+    /// départ joué ([`Capri::set_leave_frames`]). Sans effet si elle n'est pas posée.
     pub fn take_off(&mut self) {
-        if let Stance::Perched { .. } = self.stance {
+        if let Stance::Perched { seat, .. } = self.stance {
+            self.place_feet(seat);
             self.stance = Stance::Floating;
-            self.gesture = Some((self.frame, Gesture::Lifting));
+            self.gesture = Some((self.frame + self.leave_frames, Gesture::Lifting));
         }
     }
 
@@ -184,6 +227,15 @@ impl Capri {
         let feet = self.feet();
         self.size = size;
         self.place_feet(feet);
+    }
+
+    /// On l'attrape avec le curseur en `cursor` à l'instant `t` (secondes), debout, son image
+    /// debout replacée d'abord en `origin` (coin haut gauche) : on l'attrape assise, elle se lève
+    /// sous le curseur.
+    pub fn grab_at(&mut self, cursor: Vec2, origin: Vec2, t: f64) {
+        self.pos = origin;
+        self.clamp();
+        self.grab(cursor, t);
     }
 
     /// On l'attrape avec le curseur en `cursor` à l'instant `t` (secondes).
@@ -229,7 +281,8 @@ impl Capri {
         {
             self.squash = None;
         }
-        if self.gesture.is_some() && self.gesture_scale().is_none() {
+        // un geste fini est oublié ; un geste à venir (après un départ) attend son tour
+        if self.gesture.is_some_and(|(start, _)| frame >= start) && self.gesture_scale().is_none() {
             self.gesture = None;
         }
         let Stance::Thrown { mut vel } = self.stance else { return };
@@ -293,7 +346,7 @@ impl Capri {
 
         let size = Vec2::new(self.size.x * scale.x, self.size.y * scale.y);
         let min = if gesture.is_some() {
-            self.feet() - Vec2::new(size.x * self.feet.x, size.y * self.feet.y) + offset
+            self.standing_feet() - Vec2::new(size.x * self.feet.x, size.y * self.feet.y) + offset
         } else {
             self.pos + self.size * 0.5 + offset - size * 0.5
         };
@@ -457,6 +510,40 @@ mod tests {
         c.ride(perch_at(100.0, 100.0));
         assert_eq!(c.feet(), Vec2::new(930.0, 720.0));
         assert_eq!(c.perched(), None);
+    }
+
+    #[test]
+    fn after_a_leave_of_some_frames_she_stretches_then_floats() {
+        let mut c = capri();
+        c.set_leave_frames(24);
+        c.step(0.0, 100);
+        c.land(perch_at(900.0, 700.0));
+        assert_eq!(c.seat(), Some(Vec2::new(900.0, 700.0)));
+        c.take_off();
+        assert_eq!(c.seat(), None);
+        // le temps qu'elle s'efface : ni étirement, ni geste oublié
+        for frame in 100..124 {
+            c.step(0.0, frame);
+            assert_eq!(c.pose().rect.size, Vec2::new(160.0, 300.0), "image {frame}");
+        }
+        c.step(0.0, 124);
+        assert!(c.pose().rect.size.y > 300.0, "puis étirée");
+        c.step(0.0, 126);
+        assert_eq!(c.pose().rect.size.y, 300.0);
+    }
+
+    #[test]
+    fn grabbed_where_she_was_drawn_seated_she_stands_under_the_cursor() {
+        let mut c = capri();
+        c.land(perch_at(900.0, 700.0));
+        c.grab_at(Vec2::new(950.0, 720.0), Vec2::new(880.0, 600.0), 0.0);
+        assert!(c.is_held());
+        assert_eq!(c.position(), Vec2::new(880.0, 600.0));
+        c.drag_to(Vec2::new(960.0, 720.0), 0.1);
+        assert_eq!(c.position(), Vec2::new(890.0, 600.0), "elle suit le curseur d'où on l'a prise");
+        // jamais hors de l'écran
+        c.grab_at(Vec2::new(10.0, 10.0), Vec2::new(-500.0, -500.0), 0.2);
+        assert_eq!(c.position(), Vec2::ZERO);
     }
 
     #[test]

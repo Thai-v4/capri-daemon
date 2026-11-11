@@ -313,6 +313,11 @@ impl BannerView {
         self.refresh = true;
     }
 
+    /// Bouge-t-elle les lèvres (voir `Chat::is_talking`) ?
+    pub fn is_talking(&self) -> bool {
+        self.chat.is_talking()
+    }
+
     /// Arrête sa voix tout de suite, sans toucher à sa bulle.
     #[cfg(any(target_os = "macos", windows))]
     pub fn silence(&mut self) {

@@ -58,6 +58,10 @@ pub const HANG: u32 = 380 - SEAT_Y;
 /// La place qu'elle prend au-dessus du bord : ses cheveux montent jusqu'à la ligne 29 (musique),
 /// soit 237 px au-dessus de [`SEAT_Y`].
 pub const HEADROOM: u32 = SEAT_Y - 29;
+/// Ce qu'elle occupe en largeur dans une case étroite, de la colonne 7 à la colonne 192 incluse :
+/// mesuré sur l'union des quatre boucles (assise, clignement, parole, musique), alpha non nul.
+/// L'arrivée et le départ, plus larges, débordent un instant de leurs éclats.
+pub const SPAN: (u32, u32) = (7, 193);
 /// Les dessins sont tenus en deux : 12 dessins par seconde à 24 i/s.
 pub const HOLD: u32 = 2;
 /// Dans une boucle de 60 dessins, on en montre un sur deux (30 dessins, 60 images : 2,5 s par

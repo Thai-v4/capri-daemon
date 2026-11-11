@@ -250,6 +250,19 @@ impl Chat {
         self.speech.is_some()
     }
 
+    /// Bouge-t-elle les lèvres ? Quand sa voix dit sa réponse, le temps où sa voix parle (pas
+    /// avant le premier son, ni après le dernier, même si sa bulle reste à l'écran) ; sans voix,
+    /// tant que sa bulle montre ses mots (pas « … » pendant qu'elle réfléchit), le temps de les
+    /// lire, comme si elle les disait. Rien de ce qui se dit n'est lu ici : seulement si c'est vide.
+    pub fn is_talking(&self) -> bool {
+        let voice = self.voice.as_ref();
+        if voice.is_some_and(Voice::is_speaking) {
+            return true;
+        }
+        let aloud = self.aloud.is_some() && voice.is_some();
+        !aloud && self.speech.as_ref().is_some_and(|speech| !speech.text().trim().is_empty())
+    }
+
     /// Parle-t-elle, de quelque façon que ce soit : une réponse attendue, sa bulle, ou sa voix
     /// qui n'a pas fini ? Ce qui doit attendre son tour attend que ce soit fini.
     pub fn is_busy(&self) -> bool {
@@ -698,6 +711,25 @@ mod tests {
         assert_eq!(chat.turns(), 2, "la question et la réponse");
         let (page, _) = chat.page().expect("la réponse reste le temps d'être lue");
         assert!(answer.starts_with(&page));
+    }
+
+    #[test]
+    fn without_a_voice_her_lips_move_while_her_bubble_shows_her_words() {
+        let mut chat = Chat::new(None);
+        assert!(!chat.is_talking(), "rien à dire");
+        chat.say("Bonjour");
+        assert!(!chat.is_talking(), "elle réfléchit : « … », la bouche fermée");
+        listen(&mut chat);
+        assert!(chat.is_talking(), "sa bulle montre ses mots");
+        chat.hush();
+        assert!(!chat.is_talking(), "elle se tait");
+        // une réponse à dire à voix haute, mais aucune voix n'a pu être créée sur ce système (les
+        // essais n'en créent jamais de vraie) : c'est sa bulle qui compte
+        chat.say("Encore");
+        listen(&mut chat);
+        chat.aloud = Some(Aloud { delivery: Delivery::plain(None), sentences: Sentences::new() });
+        chat.voice = None;
+        assert!(chat.is_talking(), "sans voix créée sur ce système, sa bulle compte");
     }
 
     #[test]

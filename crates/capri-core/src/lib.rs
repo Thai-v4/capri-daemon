@@ -10,7 +10,8 @@
 //! sans rien savoir du système : `capri-chat` la compose, la voix de `capri-platform` l'applique.
 //! [`perch`] décide où elle se pose sur les fenêtres des autres apps, d'après leurs seuls
 //! rectangles, que la liste des fenêtres de `capri-platform` lui décrit. [`sheets`] décrit les
-//! planches de sa pose assise (cases, dessins, où passe le bord de la fenêtre). [`music`] décide,
+//! planches de ses poses assise et debout (cases, dessins, où passe le bord de la fenêtre), et
+//! [`look`] dit lequel montrer à chaque image, où, et ce qui l'attrape. [`music`] décide,
 //! d'après une suite d'écoutes oui/non, si de la musique joue.
 //! [`pace`] dit quand la boucle se réveille : ses dessins restent à 24 i/s, mais sa position suit
 //! le curseur ou sa fenêtre à la cadence de l'écran.
@@ -23,6 +24,7 @@ pub mod body;
 pub mod form;
 pub mod geom;
 pub mod input;
+pub mod look;
 pub mod mask;
 pub mod music;
 pub mod pace;

@@ -43,6 +43,24 @@ pub fn load_sprite() -> Result<Sprite> {
     Ok(Sprite { width, height, rgba, mask })
 }
 
+/// Le masque de clic d'une pose : l'union de ses dessins (un pixel compte s'il compte dans au
+/// moins l'un d'eux), des cases de `cell` pixels prises dans leurs grilles (`grid`, de `width`
+/// pixels de large, la case à `origin`). Dilaté comme celui de son dessin d'avant.
+fn union_mask<'a>(cell: (u32, u32), cells: impl Iterator<Item = (&'a [u8], u32, (u32, u32))>) -> AlphaMask {
+    let (cw, ch) = cell;
+    let mut rgba = vec![0u8; (cw * ch * 4) as usize];
+    for (grid, width, (gx, gy)) in cells {
+        for y in 0..ch {
+            for x in 0..cw {
+                let alpha = grid[(((gy + y) * width + gx + x) * 4 + 3) as usize];
+                let union = &mut rgba[((y * cw + x) * 4 + 3) as usize];
+                *union = (*union).max(alpha);
+            }
+        }
+    }
+    AlphaMask::from_rgba(cw, ch, &rgba, ALPHA_THRESHOLD, GRAB_MARGIN)
+}
+
 /// Les planches de sa pose assise (`assets/capri/perch/`, voir CREDITS.md et
 /// `capri_core::sheets`).
 pub mod perch {
@@ -50,6 +68,8 @@ pub mod perch {
 
     use std::path::Path;
 
+    use capri_core::AlphaMask;
+    use capri_core::look::PerchMasks;
     use capri_core::sheets::{self, Strip};
 
     /// Une planche remise en grille (`sheets::repack`) : RGBA 8 bits non prémultiplié, de taille
@@ -69,8 +89,28 @@ pub mod perch {
 
     impl PerchSheets {
         pub fn get(&self, strip: Strip) -> &PerchStrip {
-            let index = Strip::ALL.iter().position(|&s| s == strip).unwrap_or(0);
-            &self.strips[index]
+            // `load_from` les range toutes, dans l'ordre : la recherche trouve toujours
+            self.strips.iter().find(|grid| grid.strip == strip).unwrap_or(&self.strips[0])
+        }
+
+        /// Les masques de clic de sa pose assise : l'union des quatre boucles (cases étroites),
+        /// et celle de l'arrivée et du départ (cases larges).
+        pub fn masks(&self) -> PerchMasks {
+            let loops = [Strip::Perch, Strip::PerchBlink, Strip::PerchTalk, Strip::PerchMusic];
+            PerchMasks {
+                narrow: self.union(&loops),
+                wide: self.union(&[Strip::PerchArrive, Strip::PerchLeave]),
+            }
+        }
+
+        /// L'union des dessins de ces planches, qui ont toutes des cases de la même taille.
+        fn union(&self, strips: &[Strip]) -> AlphaMask {
+            let cells = strips.iter().flat_map(|&strip| {
+                let grid = self.get(strip);
+                (0..strip.count())
+                    .map(move |index| (grid.rgba.as_slice(), grid.width, strip.cell_origin(index)))
+            });
+            super::union_mask(strips[0].cell(), cells)
         }
     }
 
@@ -125,10 +165,9 @@ pub mod perch {
 /// Les planches de sa pose debout (`assets/capri/stand/`, voir CREDITS.md et
 /// `capri_core::sheets::stand`), du même artiste que sa pose assise.
 pub mod stand {
-    #![allow(dead_code, reason = "branché par le lot qui la dessinera debout avec ces planches")]
-
     use std::path::Path;
 
+    use capri_core::AlphaMask;
     use capri_core::sheets::stand::{self, Strip};
 
     /// Une planche remise en grille (`stand::repack`) : RGBA 8 bits non prémultiplié, de taille
@@ -148,8 +187,19 @@ pub mod stand {
 
     impl StandSheets {
         pub fn get(&self, strip: Strip) -> &StandStrip {
-            let index = Strip::ALL.iter().position(|&s| s == strip).unwrap_or(0);
-            &self.strips[index]
+            // `load_from` les range toutes, dans l'ordre : la recherche trouve toujours
+            self.strips.iter().find(|grid| grid.strip == strip).unwrap_or(&self.strips[0])
+        }
+
+        /// Le masque de clic de sa pose debout : l'union de la boucle et du clignement (sa bouche
+        /// reste dans son visage).
+        pub fn mask(&self) -> AlphaMask {
+            let cells = [Strip::Stand, Strip::StandBlink].into_iter().flat_map(|strip| {
+                let grid = self.get(strip);
+                (0..strip.count())
+                    .map(move |index| (grid.rgba.as_slice(), grid.width, strip.cell_origin(index)))
+            });
+            super::union_mask(Strip::Stand.cell(), cells)
         }
     }
 
@@ -160,6 +210,14 @@ pub mod stand {
     /// au GPU.
     pub fn load() -> Option<StandSheets> {
         load_from(&super::assets_dir()?)
+    }
+
+    /// Ses planches debout sont-elles toutes là (sans les lire) ?
+    #[cfg(debug_assertions)]
+    pub fn present() -> bool {
+        super::assets_dir().is_some_and(|dir| {
+            Strip::ALL.iter().all(|strip| dir.join(stand::DIR).join(strip.file()).is_file())
+        })
     }
 
     pub(super) fn load_from(dir: &Path) -> Option<StandSheets> {

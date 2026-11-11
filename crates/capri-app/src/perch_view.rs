@@ -15,7 +15,7 @@
 //! Jamais pendant qu'on la tient ou qu'elle vole, jamais quand elle est cachée (la boucle ne
 //! l'appelle pas), jamais quand c'est désactivé. Le journal n'en dit que des nombres.
 
-use capri_core::perch::{self, Seen, Watch};
+use capri_core::perch::{self, Seen, Stature, Watch};
 use capri_core::{Capri, Rect, Stance, Vec2};
 use capri_platform::Overlay;
 use capri_platform::desk::{self, DeskError};
@@ -73,13 +73,13 @@ impl PerchView {
     /// À chaque pas de la boucle, après celui de Capri, à l'instant `now` (secondes) : si elle
     /// vient de s'arrêter (lâchée doucement, ou au bout d'un lancer), se pose-t-elle sur un bord ?
     /// Posée, elle suit sa fenêtre, ou la quitte. `period` : la durée d'un rafraîchissement de
-    /// l'écran, en secondes.
-    pub fn tick(&mut self, capri: &mut Capri, overlay: &Overlay, now: f64, period: f64) {
+    /// l'écran, en secondes ; `stature` : ce qu'il lui faut sur un bord (`Look::stature`).
+    pub fn tick(&mut self, capri: &mut Capri, overlay: &Overlay, now: f64, period: f64, stature: Stature) {
         let moving = matches!(capri.stance(), Stance::Held { .. } | Stance::Thrown { .. });
         if std::mem::replace(&mut self.moving, moving) && capri.stance() == Stance::Floating {
-            self.settle(capri, overlay, now);
+            self.settle(capri, overlay, now, stature);
         }
-        self.ride(capri, overlay, now, period);
+        self.ride(capri, overlay, now, period, stature);
     }
 
     /// Posée, est-elle pressée (un bouton de la souris enfoncé, ou sa fenêtre qui vient de
@@ -111,13 +111,13 @@ impl PerchView {
     /// Elle vient de changer de taille : posée, la place au-dessus de son bord lui suffit-elle
     /// encore ? Oui : elle y reste, ses pieds glissés s'il le faut pour tenir dans l'écran ; non
     /// (ou la liste illisible) : elle repart flotter, là où elle est.
-    pub fn resized(&mut self, capri: &mut Capri, overlay: &Overlay, now: f64) {
+    pub fn resized(&mut self, capri: &mut Capri, overlay: &Overlay, now: f64, stature: Stature) {
         let Some(spot) = capri.perched() else { return };
-        let Some(seen) = self.read(capri, overlay) else {
+        let Some(seen) = self.read(stature, overlay) else {
             log::debug!("quitte le bord : liste des fenêtres illisible");
             return capri.take_off();
         };
-        match perch::follow(&seen, screen(overlay), capri.stature(), spot) {
+        match perch::follow(&seen, screen(overlay), stature, spot) {
             Ok(perch) => {
                 capri.ride(perch);
                 self.watch.saw(now, rect_of(&seen, spot.window));
@@ -137,16 +137,17 @@ impl PerchView {
     /// En version de débogage, pour `CAPRI_PERCH_REHEARSAL` : comme si on venait de la lâcher là
     /// où elle est.
     #[cfg(debug_assertions)]
-    pub fn rehearse_settle(&mut self, capri: &mut Capri, overlay: &Overlay, now: f64) {
-        self.settle(capri, overlay, now);
+    pub fn rehearse_settle(&mut self, capri: &mut Capri, overlay: &Overlay, now: f64, stature: Stature) {
+        self.settle(capri, overlay, now, stature);
     }
 
-    /// Elle vient de s'arrêter, à l'instant `now` : se pose-t-elle sur un bord ?
-    fn settle(&mut self, capri: &mut Capri, overlay: &Overlay, now: f64) {
+    /// Elle vient de s'arrêter, à l'instant `now`, debout : se pose-t-elle sur un bord ? Sur un
+    /// bord près de ses pieds, qui lui laisse la place une fois posée (`stature`).
+    fn settle(&mut self, capri: &mut Capri, overlay: &Overlay, now: f64, stature: Stature) {
         if !self.enabled || capri.stance() != Stance::Floating {
             return;
         }
-        let Some(seen) = self.read(capri, overlay) else { return };
+        let Some(seen) = self.read(stature, overlay) else { return };
         let desk = overlay.desk_frame();
         let counted = format!(
             "{} fenêtres comptées ; overlay à ({}, {}) dans leur repère, {} px par unité",
@@ -155,7 +156,7 @@ impl PerchView {
             desk.origin.y,
             desk.pixels_per_unit
         );
-        let Some(perch) = perch::landing(&seen, screen(overlay), capri.stature(), capri.feet()) else {
+        let Some(perch) = perch::landing(&seen, screen(overlay), stature, capri.feet()) else {
             log::debug!("aucun bord sous ses pieds ({counted})");
             return;
         };
@@ -170,7 +171,7 @@ impl PerchView {
     }
 
     /// Posée, elle suit sa fenêtre, ou la quitte.
-    fn ride(&mut self, capri: &mut Capri, overlay: &Overlay, now: f64, period: f64) {
+    fn ride(&mut self, capri: &mut Capri, overlay: &Overlay, now: f64, period: f64, stature: Stature) {
         let Some(spot) = capri.perched() else { return };
         if !self.enabled {
             return capri.take_off();
@@ -189,7 +190,7 @@ impl PerchView {
         if !self.watch.due(now, self.mouse_down(), period) {
             return;
         }
-        let Some(seen) = self.read(capri, overlay) else {
+        let Some(seen) = self.read(stature, overlay) else {
             log::debug!("quitte le bord : liste des fenêtres illisible");
             return capri.take_off();
         };
@@ -197,7 +198,7 @@ impl PerchView {
         if let Some(trace) = self.trace.as_mut() {
             trace.read(rect_of(&seen, spot.window));
         }
-        match perch::follow(&seen, screen(overlay), capri.stature(), spot) {
+        match perch::follow(&seen, screen(overlay), stature, spot) {
             Ok(perch) => {
                 capri.ride(perch);
                 self.watch.saw(now, rect_of(&seen, spot.window));
@@ -210,7 +211,7 @@ impl PerchView {
     }
 
     /// Les fenêtres qui comptent, en pixels de l'overlay ; `None` si le système ne les donne pas.
-    fn read(&mut self, capri: &Capri, overlay: &Overlay) -> Option<Vec<Seen>> {
+    fn read(&mut self, stature: Stature, overlay: &Overlay) -> Option<Vec<Seen>> {
         #[cfg(debug_assertions)]
         let (started, cpu) = {
             self.reads += 1;
@@ -222,7 +223,7 @@ impl PerchView {
             trace.timed(started.elapsed(), cpu, desk::thread_cpu_time());
         }
         match listed {
-            Ok(windows) => Some(perch::sift(&windows, overlay.desk_frame(), screen(overlay), capri.size().y)),
+            Ok(windows) => Some(perch::sift(&windows, overlay.desk_frame(), screen(overlay), stature.height)),
             Err(DeskError::Unavailable) => {
                 if !std::mem::replace(&mut self.told_unavailable, true) {
                     log::info!("pas de liste des fenêtres sur ce système : elle ne s'assoit pas dessus");

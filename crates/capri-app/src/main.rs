@@ -25,6 +25,7 @@ mod claude;
 mod ear_setup;
 #[cfg(test)]
 mod fake_server;
+mod figure;
 mod hook_setup;
 mod keys;
 #[cfg(any(target_os = "macos", windows))]
@@ -47,12 +48,12 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use banner_view::BannerView;
+use capri_core::look::Picture;
 use capri_core::{
-    AlphaMask, Button, Capri, Pose, Press, Rect, Scale, Stance, Vec2, frame_at, interpret_press, pace,
-    place_input,
+    Button, Capri, Press, Rect, Scale, Stance, Vec2, frame_at, interpret_press, pace, place_input,
 };
 use capri_platform::{Overlay, OverlayEvent};
-use capri_render::{Crop, ImageId, Renderer, SpriteDraw, SpriteImage};
+use capri_render::{Renderer, SpriteDraw};
 use global_hotkey::hotkey::{Code, HotKey, Modifiers};
 use global_hotkey::{GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState};
 use winit::application::ApplicationHandler;
@@ -60,8 +61,6 @@ use winit::event::{MouseButton, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::window::WindowId;
 
-/// Amplitude du « boil », en pixels du sprite d'origine.
-const BOIL: f32 = 1.0;
 /// Écart entre ses pieds et le champ de saisie, en points.
 const INPUT_GAP_POINTS: f32 = 10.0;
 
@@ -92,13 +91,17 @@ fn main() -> Result<()> {
     }
 
     init_log();
+    let loaded = Instant::now();
     let sprite = assets::load_sprite()?;
+    // ses planches debout ; sans elles, son dessin d'avant
+    let stand = assets::stand::load();
+    log::info!("images lues en {} ms", loaded.elapsed().as_millis());
 
     let mut builder = EventLoop::builder();
     capri_platform::configure_event_loop(&mut builder);
     let event_loop = builder.build().context("création de la boucle d'événements")?;
 
-    let mut app = App { sprite: Some(sprite), ..App::default() };
+    let mut app = App { images: Some(Images { sprite, stand }), ..App::default() };
     event_loop.run_app(&mut app)?;
     app.fatal.map_or(Ok(()), Err)
 }
@@ -145,9 +148,15 @@ impl log::Log for NoWireLog {
     }
 }
 
+/// Ses images lues au lancement, en attendant d'être confiées à la carte graphique.
+struct Images {
+    sprite: assets::Sprite,
+    stand: Option<assets::stand::StandSheets>,
+}
+
 #[derive(Default)]
 struct App {
-    sprite: Option<assets::Sprite>,
+    images: Option<Images>,
     running: Option<Running>,
     hidden: bool,
     hotkeys: Option<Hotkeys>,
@@ -190,10 +199,9 @@ struct Hotkeys {
 struct Running {
     overlay: Overlay,
     renderer: Renderer,
-    /// Son dessin d'avant, confié à la carte graphique.
-    cutout: ImageId,
     capri: Capri,
-    mask: AlphaMask,
+    /// Ses dessins : lequel montrer, où, et ce qui l'attrape.
+    figure: figure::Figure,
     start: Instant,
     last_step: Instant,
     cursor: Option<Vec2>,
@@ -203,8 +211,8 @@ struct Running {
     perch: perch_view::PerchView,
     /// Image d'animation courante.
     frame: u64,
-    /// Ce qui est à l'écran : sa pose et, s'il est là, son bandeau.
-    drawn: Option<(Pose, Option<SpriteDraw>)>,
+    /// Ce qui est à l'écran : son dessin et, s'il est là, son bandeau.
+    drawn: Option<(Picture, Option<SpriteDraw>)>,
     /// La fréquence de son écran, telle que le système la dit (relue quand l'écran change).
     refresh: Option<f64>,
     /// Le réveil des pas pressés, là où l'écran ne réveille pas la boucle lui-même.
@@ -271,16 +279,11 @@ impl ApplicationHandler for App {
 
 impl App {
     fn start(&mut self, event_loop: &ActiveEventLoop) -> Result<Running> {
-        let sprite = self.sprite.take().context("démarrage déjà fait")?;
+        let Images { sprite, stand } = self.images.take().context("démarrage déjà fait")?;
         let overlay = Overlay::new(event_loop)?;
 
         let (width, height) = overlay.size();
         let mut renderer = Renderer::new(overlay.surface_handle(), width, height)?;
-        let cutout = renderer.add_image(SpriteImage {
-            width: sprite.width,
-            height: sprite.height,
-            rgba: &sprite.rgba,
-        })?;
         if !renderer.is_transparent() {
             log::warn!("la fenêtre ne peut pas être transparente sur cette machine");
         }
@@ -292,11 +295,20 @@ impl App {
             Scale::ORIGINAL
         });
         log::info!("taille : {} %", scale.percent());
-        let body = display_size(sprite.mask.size(), overlay.scale_factor(), scale);
+        let standing = standing_height(overlay.scale_factor(), scale);
+        // ses images confiées à la carte graphique, puis lâchées
+        let figure = figure::Figure::new(sprite, stand, None, standing, |image| renderer.add_image(image))?;
+        log::info!(
+            "dessins : {} debout ; mémoire graphique : {:.1} Mo",
+            if figure.look.has_stand() { "planches" } else { "dessin d'avant" },
+            renderer.image_bytes() as f64 / 1_000_000.0
+        );
+        let body = figure.look.standing_size();
         // en bas à droite, au-dessus du Dock ou de la barre des tâches
         let start_at = Vec2::new(bounds.size.x - body.x * 1.8, bounds.size.y - body.y * 1.3);
         let mut capri = Capri::new(body, bounds, start_at);
-        capri.set_feet(sprite.mask.feet());
+        capri.set_feet(figure.look.standing_feet());
+        capri.set_leave_frames(figure.look.leave_frames());
         let perch_enabled = brain_setup::config_dir().and_then(|directory| perch_setup::load(&directory));
         let perch_enabled = perch_enabled.unwrap_or_else(|err| {
             log::warn!("réglage « S'asseoir sur les fenêtres » illisible, elle s'y assoit : {err:#}");
@@ -338,9 +350,8 @@ impl App {
         Ok(Running {
             overlay,
             renderer,
-            cutout,
             capri,
-            mask: sprite.mask,
+            figure,
             start: now,
             last_step: now,
             cursor: None,
@@ -375,7 +386,7 @@ impl App {
                 OverlayEvent::ScaleFactorChanged(scale) => {
                     log::debug!("overlay : densité {scale}");
                     r.refresh = r.overlay.refresh_rate();
-                    r.capri.set_size(display_size(r.mask.size(), scale, r.scale));
+                    r.apply_size(scale);
                     r.banner.rescaled();
                 }
                 OverlayEvent::Pressed { button, ctrl } => {
@@ -389,7 +400,11 @@ impl App {
                         on_her.is_some()
                     );
                     match (press, on_her) {
-                        (Press::Grab, Some(c)) => r.capri.grab(c, r.seconds()),
+                        // assise, elle se lève sous le curseur, tenue par le même endroit d'elle
+                        (Press::Grab, Some(c)) => match r.figure.look.grab_origin(&r.capri, c) {
+                            Some(origin) => r.capri.grab_at(c, origin, r.seconds()),
+                            None => r.capri.grab(c, r.seconds()),
+                        },
                         (Press::Menu, Some(_)) =>
                         {
                             #[cfg(any(target_os = "macos", windows))]
@@ -440,10 +455,10 @@ impl App {
         }
         let (width, height) = r.overlay.size();
         let bounds = Rect::new(Vec2::ZERO, Vec2::new(width as f32, height as f32));
-        let standing = Rect::new(r.capri.position(), r.capri.size());
+        let shown = r.figure.look.shown(&r.capri);
         let gap = INPUT_GAP_POINTS * r.overlay.scale_factor() as f32;
         let opened = r.overlay.show_input("Dis quelque chose à Capri…", |w, h| {
-            let at = place_input(standing, Vec2::new(w as f32, h as f32), bounds, gap);
+            let at = place_input(shown, Vec2::new(w as f32, h as f32), bounds, gap);
             (f64::from(at.x), f64::from(at.y))
         });
         if !opened {
@@ -871,9 +886,10 @@ impl Running {
         }
     }
 
-    /// Le curseur est-il sur elle (au pixel près, avec une petite marge) ?
+    /// Le curseur est-il sur elle (au pixel près, d'après la pose dessinée, avec une petite
+    /// marge) ?
     fn is_over(&self, cursor: Vec2) -> bool {
-        self.capri.pose().rect.to_unit(cursor).is_some_and(|uv| self.mask.hit(uv))
+        self.figure.look.is_over(&self.capri, cursor)
     }
 
     fn tick(&mut self) {
@@ -892,7 +908,10 @@ impl Running {
         self.banner.update(self.frame, self.overlay.scale_factor(), &mut self.renderer);
         // sa fenêtre est lue le plus tard possible avant de dessiner : le dessin la montre plus fraîche
         let (seconds, period) = (self.seconds(), pace::refresh_period(self.refresh).as_secs_f64());
-        self.perch.tick(&mut self.capri, &self.overlay, seconds, period);
+        let stature = self.figure.look.stature();
+        self.perch.tick(&mut self.capri, &self.overlay, seconds, period, stature);
+        let talking = self.banner.is_talking();
+        self.figure.look.update(&self.capri, self.frame, talking, false);
 
         // La souris traverse la fenêtre partout, sauf sur elle ou tant qu'on la tient.
         let over = self.cursor.is_some_and(|c| self.is_over(c));
@@ -917,10 +936,18 @@ impl Running {
         }
         log::debug!("taille : {} %", scale.percent());
         self.scale = scale;
-        self.capri.set_size(display_size(self.mask.size(), self.overlay.scale_factor(), scale));
-        let seconds = self.seconds();
-        self.perch.resized(&mut self.capri, &self.overlay, seconds);
+        self.apply_size(self.overlay.scale_factor());
+        let (seconds, stature) = (self.seconds(), self.figure.look.stature());
+        self.perch.resized(&mut self.capri, &self.overlay, seconds, stature);
         true
+    }
+
+    /// Sa hauteur debout à l'écran a changé (sa taille, ou la densité `density` de l'écran) : tous
+    /// ses dessins suivent, ses pieds restent où ils sont.
+    fn apply_size(&mut self, density: f64) {
+        let look = &mut self.figure.look;
+        look.set_height(standing_height(density, self.scale));
+        self.capri.set_size(look.standing_size());
     }
 
     /// Retient sa taille dans son dossier ; si on ne peut pas, elle le dit, et la garde quand même
@@ -977,32 +1004,23 @@ impl Running {
         !self.by_screen || refreshed || Instant::now() >= self.fallback
     }
 
-    /// Ce qu'il faut dessiner maintenant : sa pose, et son bandeau s'il y en a un.
-    fn scene(&self) -> (Pose, Option<SpriteDraw>) {
+    /// Ce qu'il faut dessiner maintenant : son dessin, et son bandeau s'il y en a un, au-dessus de
+    /// ce qu'elle occupe (sans son flottement, pour que le texte reste lisible).
+    fn scene(&self) -> (Picture, Option<SpriteDraw>) {
         let (width, height) = self.overlay.size();
         let bounds = Rect::new(Vec2::ZERO, Vec2::new(width as f32, height as f32));
-        let standing = Rect::new(self.capri.position(), self.capri.size());
-        let banner = self.banner.draw(self.frame, standing, bounds, self.overlay.scale_factor());
-        (self.capri.pose(), banner)
+        let shown = self.figure.look.shown(&self.capri);
+        let banner = self.banner.draw(self.frame, shown, bounds, self.overlay.scale_factor());
+        (self.figure.look.picture(&self.capri), banner)
     }
 
     fn draw(&mut self) {
-        let (pose, banner) = self.scene();
-        let unit = pose.rect.size.y / 420.0;
-        let draw = SpriteDraw {
-            min: [pose.rect.min.x, pose.rect.min.y],
-            size: [pose.rect.size.x, pose.rect.size.y],
-            ghost: [pose.ghost.x, pose.ghost.y],
-            ghost_strength: capri_render::GHOST,
-            boil_seed: pose.boil_seed,
-            boil: BOIL * unit,
-            opacity: 1.0,
-            crop: Crop::WHOLE,
-        };
+        let (picture, banner) = self.scene();
+        let layers = self.figure.layers(&picture);
         let overlay = &self.overlay;
         #[cfg(debug_assertions)]
         let drawing = perch_rehearsal::follow::wall_us();
-        self.renderer.render(&[(self.cutout, draw)], banner.as_ref(), || overlay.pre_present_notify());
+        self.renderer.render(&layers, banner.as_ref(), || overlay.pre_present_notify());
         #[cfg(debug_assertions)]
         {
             self.perch.drawn += 1;
@@ -1010,7 +1028,7 @@ impl Running {
                 trace.drawn(drawing, &self.capri);
             }
         }
-        self.drawn = Some((pose, banner));
+        self.drawn = Some((picture, banner));
     }
 }
 
@@ -1023,11 +1041,11 @@ fn core_button(button: MouseButton) -> Button {
     }
 }
 
-/// Sa taille à l'écran en pixels physiques, pour un écran de `density` pixels par point, à
-/// l'échelle `scale` choisie par l'utilisateur. Le sprite d'aujourd'hui est son dessin debout : il
-/// donne lui-même la hauteur à laquelle l'échelle se rapporte (voir `capri_core::scale`).
-fn display_size(image: (u32, u32), density: f64, scale: Scale) -> Vec2 {
-    scale.display_size(image, image.1, density)
+/// Sa hauteur debout à l'écran, en pixels physiques, pour un écran de `density` pixels par point,
+/// à l'échelle `scale` choisie par l'utilisateur : tous ses dessins s'y rapportent (voir
+/// `capri_core::scale` et `capri_core::look`).
+fn standing_height(density: f64, scale: Scale) -> f32 {
+    scale.standing_points() * density as f32
 }
 
 /// ⌃⌥C (Ctrl+Alt+C) la cache ou la fait revenir, ⌃⌥P ouvre le champ pour lui parler, depuis

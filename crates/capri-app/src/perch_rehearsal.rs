@@ -57,9 +57,11 @@ fn run() -> i32 {
         );
     }
     let stature = stature(frame.pixels_per_unit);
+    let reach = stature.reach;
     println!(
-        "Capri : {:.0} × {:.0} px, pieds à ({:.2}, {:.2})",
-        stature.size.x, stature.size.y, stature.feet.x, stature.feet.y
+        "Capri : {:.0} px debout ; autour du point posé : {:.0} px à gauche, {:.0} au-dessus, {:.0} à droite, \
+         {:.0} en dessous ; sur le bord : {:.0} et {:.0} px",
+        stature.height, reach.left, reach.up, reach.right, reach.down, stature.rest.0, stature.rest.1
     );
 
     let windows = match desk::windows() {
@@ -70,9 +72,9 @@ fn run() -> i32 {
         }
     };
     let reasons: Vec<Option<Skip>> =
-        windows.iter().map(|window| perch::skip(window, frame, screen, stature.size.y)).collect();
+        windows.iter().map(|window| perch::skip(window, frame, screen, stature.height)).collect();
     let count = |reason: Skip| reasons.iter().filter(|&&r| r == Some(reason)).count();
-    let seen = perch::sift(&windows, frame, screen, stature.size.y);
+    let seen = perch::sift(&windows, frame, screen, stature.height);
     println!(
         "fenêtres à l'écran : {} ; comptées : {} (à elle : {}, inhabituelles : {}, peu opaques : {}, \
          petites : {}, ailleurs : {})",
@@ -151,7 +153,7 @@ fn run() -> i32 {
     let mut times = Vec::with_capacity(READS);
     for _ in 0..READS {
         let start = Instant::now();
-        let read = desk::windows().map(|windows| perch::sift(&windows, frame, screen, stature.size.y));
+        let read = desk::windows().map(|windows| perch::sift(&windows, frame, screen, stature.height));
         times.push(start.elapsed());
         if read.is_err() {
             check(false, "chaque lecture réussit");
@@ -178,18 +180,26 @@ fn run() -> i32 {
     }
 }
 
-/// Sa taille à l'écran et la place de ses pieds, d'après le vrai sprite s'il est là ; sinon ses
-/// proportions d'origine (220 × 420), les pieds au milieu du bas.
+/// Ce qu'il lui faut sur un bord à sa taille d'origine, comme l'app le décide (`Look::stature`) :
+/// assise si ses planches assises sont là (sans les lire : seules leurs mesures comptent) ; sinon
+/// debout, d'après ses planches debout ou son dessin d'avant ; sinon ses proportions d'origine
+/// (220 × 420), les pieds au milieu du bas.
 fn stature(scale: f32) -> Stature {
+    let height = crate::standing_height(f64::from(scale), capri_core::Scale::ORIGINAL);
+    if crate::assets::stand::present() {
+        println!("pose debout : ses planches");
+        let stand = capri_core::sheets::stand::cell_size(height);
+        return Stature::standing(stand, capri_core::sheets::stand::feet_uv(), height);
+    }
     match crate::assets::load_sprite() {
-        Ok(sprite) => Stature {
-            size: crate::display_size(sprite.mask.size(), f64::from(scale), capri_core::Scale::ORIGINAL),
-            feet: sprite.mask.feet(),
-        },
+        Ok(sprite) => {
+            let (width, tall) = sprite.mask.size();
+            let size = Vec2::new(width as f32 * height / tall.max(1) as f32, height);
+            Stature::standing(size, sprite.mask.feet(), height)
+        }
         Err(_) => {
             println!("images absentes : proportions d'origine");
-            let size = crate::display_size((220, 420), f64::from(scale), capri_core::Scale::ORIGINAL);
-            Stature { size, feet: Vec2::new(0.5, 1.0) }
+            Stature::standing(Vec2::new(220.0 * height / 420.0, height), Vec2::new(0.5, 1.0), height)
         }
     }
 }

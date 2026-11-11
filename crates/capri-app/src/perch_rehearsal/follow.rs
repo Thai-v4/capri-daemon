@@ -305,7 +305,8 @@ impl Follow {
         r.capri.grab(at, now);
         r.capri.drag_to(at + (feet - r.capri.feet()), now);
         r.capri.release(now + 1.0);
-        r.perch.rehearse_settle(&mut r.capri, &r.overlay, now);
+        let stature = r.figure.look.stature();
+        r.perch.rehearse_settle(&mut r.capri, &r.overlay, now, stature);
         r.capri.perched().is_some()
     }
 

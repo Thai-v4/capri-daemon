@@ -12,8 +12,11 @@
 //! haut à gauche de l'overlay, comme partout dans ce crate. [`DeskFrame::to_overlay`] passe de l'un
 //! à l'autre ; [`DeskFrame::from_appkit`] dit où est l'overlay quand AppKit le place depuis le bas.
 //!
-//! **« Assise »** veut dire ici : posée debout sur le bord supérieur d'une fenêtre (il n'y a qu'un
-//! dessin d'elle, et pas de pose assise). Ce qui se voit est dans `body.rs`.
+//! **« Assise »** veut dire ici : posée sur le bord supérieur d'une fenêtre, en un point du bord.
+//! Avec les planches de sa pose assise, c'est sa ligne d'assise qui passe sur le bord, ses jambes
+//! pendent devant la fenêtre ; sans elles, elle s'y tient debout, les pieds dessus. Ce module ne
+//! connaît que ce qu'il lui faut de place autour de ce point ([`Stature`]) : ce qui se voit est
+//! dans `look.rs` et `body.rs`.
 //!
 //! **Seules comptent** les fenêtres ordinaires, à l'écran (le système ne donne que celles-là),
 //! opaques, assez grandes, sur son écran, et pas les siennes ([`skip`]) ; et seules les parties
@@ -175,12 +178,45 @@ pub fn ledges(seen: &[Seen], screen: Rect) -> Vec<Ledge> {
         .collect()
 }
 
-/// Sa taille, et où sont ses pieds dans son image (coordonnées normalisées : (0,5 ; 1) pour des
-/// pieds au milieu du bas de l'image). De quoi savoir où elle tient.
+/// Ce qu'il lui faut sur un bord, en pixels de l'overlay. De quoi savoir où elle tient.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Stature {
-    pub size: Vec2,
-    pub feet: Vec2,
+    /// Sa hauteur debout : la mesure de [`SNAP`], [`MIN_WIDTH`] et [`MIN_HEIGHT`].
+    pub height: f32,
+    /// La place qu'elle occupe autour du point posé sur le bord : tout doit tenir dans l'écran.
+    pub reach: Reach,
+    /// Ce qui repose sur le bord, à gauche et à droite du point posé : ce morceau du bord doit
+    /// être visible, et sur la fenêtre (assez loin de ses coins arrondis).
+    pub rest: (f32, f32),
+}
+
+/// La place qu'elle occupe autour d'un point, vers la gauche, le haut, la droite et le bas.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Reach {
+    pub left: f32,
+    pub up: f32,
+    pub right: f32,
+    pub down: f32,
+}
+
+impl Stature {
+    /// Debout, les pieds sur le bord : son image de `size` pixels, ses pieds en `feet` dans
+    /// l'image (coordonnées normalisées : (0,5 ; 1) pour des pieds au milieu du bas), sa hauteur
+    /// debout `height`. Ce qui repose sur le bord : [`FOOT`] de sa hauteur de part et d'autre du
+    /// milieu de ses pieds.
+    pub fn standing(size: Vec2, feet: Vec2, height: f32) -> Self {
+        let foot = FOOT * height;
+        Self {
+            height,
+            reach: Reach {
+                left: size.x * feet.x,
+                up: size.y * feet.y,
+                right: size.x * (1.0 - feet.x),
+                down: size.y * (1.0 - feet.y),
+            },
+            rest: (foot, foot),
+        }
+    }
 }
 
 /// Où elle est posée : sur quelle fenêtre, à quelle distance du bord gauche de cette fenêtre se
@@ -252,16 +288,17 @@ impl Leave {
 }
 
 /// On vient de la lâcher, ou elle vient de s'arrêter, les pieds en `feet` : se pose-t-elle ? Sur
-/// le bord visible le plus proche de ses pieds, à moins de [`SNAP`], qui lui laisse la place ; le
-/// plus en avant à égalité. Ses pieds glissent juste ce qu'il faut pour tenir sur le morceau
-/// visible et loin de ses bouts, et elle reste entière dans l'écran.
+/// le bord visible le plus proche de ses pieds, à moins de [`SNAP`], qui lui laisse la place
+/// (`stature` : ce qu'il lui faudra une fois posée) ; le plus en avant à égalité. Le point posé
+/// est sous ses pieds, glissé juste ce qu'il faut pour que ce qui repose sur le bord tienne sur le
+/// morceau visible, loin de ses bouts, et qu'elle reste entière dans l'écran.
 pub fn landing(seen: &[Seen], screen: Rect, stature: Stature, feet: Vec2) -> Option<Perch> {
-    let foot = FOOT * stature.size.y;
+    let (left, right) = stature.rest;
     let mut best: Option<(f32, Perch)> = None;
     for (index, window) in seen.iter().enumerate() {
         let y = window.rect.min.y;
         let gap = (y - feet.y).abs();
-        let close = gap <= SNAP * stature.size.y;
+        let close = gap <= SNAP * stature.height;
         if !close {
             continue;
         }
@@ -270,8 +307,8 @@ pub fn landing(seen: &[Seen], screen: Rect, stature: Stature, feet: Vec2) -> Opt
             if !(from <= feet.x && feet.x <= to) {
                 continue;
             }
-            // `clamp` exige lo <= hi : un morceau trop court pour ses pieds ne la porte pas
-            let (lo, hi) = (lo.max(from + foot), hi.min(to - foot));
+            // `clamp` exige lo <= hi : un morceau trop court pour ce qui repose dessus ne la porte pas
+            let (lo, hi) = (lo.max(from + left), hi.min(to - right));
             let fits = lo <= hi;
             if !fits {
                 continue;
@@ -296,28 +333,26 @@ pub fn follow(seen: &[Seen], screen: Rect, stature: Stature, spot: Spot) -> Resu
     // `room` garantit lo <= hi, deux nombres ; une place qui ne serait pas un nombre donne un x qui
     // n'en est pas un, et aucun morceau visible ne le contient
     let x = spot.x_on(window.rect).clamp(lo, hi);
-    let foot = FOOT * stature.size.y;
+    let (left, right) = stature.rest;
     let free =
-        visible_edge(seen, index, screen).into_iter().any(|(from, to)| from <= x - foot && x + foot <= to);
+        visible_edge(seen, index, screen).into_iter().any(|(from, to)| from <= x - left && x + right <= to);
     if !free {
         return Err(Leave::Covered);
     }
     Ok(Perch { spot: Spot::on(window, x), feet: Vec2::new(x, window.rect.min.y) })
 }
 
-/// Où peut aller le milieu de ses pieds le long du bord supérieur de `window` : sur le bord, à
-/// [`FOOT`] de ses bouts, et elle entière dans l'écran. `None` : le bord est hors de l'écran, ou ne
-/// lui laisse pas la place.
+/// Où peut aller le point posé le long du bord supérieur de `window` : ce qui repose dessus sur
+/// le bord, loin de ses bouts, et elle entière dans l'écran. `None` : le bord est hors de l'écran,
+/// ou ne lui laisse pas la place.
 fn room(window: Rect, screen: Rect, stature: Stature) -> Option<(f32, f32)> {
-    let Stature { size, feet } = stature;
+    let Stature { reach, rest, .. } = stature;
     let y = window.min.y;
-    let (top, bottom) = (y - size.y * feet.y, y + size.y * (1.0 - feet.y));
-    if !(top >= screen.min.y && bottom <= screen.max().y) {
+    if !(y - reach.up >= screen.min.y && y + reach.down <= screen.max().y) {
         return None;
     }
-    let foot = FOOT * size.y;
-    let lo = (window.min.x + foot).max(screen.min.x + size.x * feet.x);
-    let hi = (window.max().x - foot).min(screen.max().x - size.x * (1.0 - feet.x));
+    let lo = (window.min.x + rest.0).max(screen.min.x + reach.left);
+    let hi = (window.max().x - rest.1).min(screen.max().x - reach.right);
     (lo <= hi).then_some((lo, hi))
 }
 
@@ -411,7 +446,7 @@ mod tests {
 
     /// Capri à 300 points de haut sur cet écran, les pieds au milieu du bas de son image.
     fn capri() -> Stature {
-        Stature { size: Vec2::new(314.0, 600.0), feet: Vec2::new(0.5, 1.0) }
+        Stature::standing(Vec2::new(314.0, 600.0), Vec2::new(0.5, 1.0), 600.0)
     }
 
     fn rect(x: f32, y: f32, w: f32, h: f32) -> Rect {
@@ -454,7 +489,7 @@ mod tests {
 
     #[test]
     fn only_ordinary_opaque_large_windows_on_her_screen_and_not_hers_count() {
-        let h = capri().size.y;
+        let h = capri().height;
         let ok = window(1, rect(100.0, 300.0, 800.0, 500.0));
         assert_eq!(skip(&ok, RETINA, screen(), h), None);
         assert_eq!(skip(&DeskWindow { ours: true, ..ok }, RETINA, screen(), h), Some(Skip::Ours));
@@ -558,7 +593,7 @@ mod tests {
     #[test]
     fn her_feet_slide_onto_the_edge_and_away_from_its_corners() {
         let w = seen(1, rect(200.0, 1000.0, 1600.0, 800.0));
-        let foot = FOOT * capri().size.y; // 36 pixels
+        let foot = FOOT * capri().height; // 36 pixels
         // juste au bord gauche de la fenêtre : ses pieds rentrent d'une demi-largeur
         let perch = landing(&[w], screen(), capri(), Vec2::new(205.0, 1000.0)).expect("posée");
         assert_eq!(perch.feet.x, 200.0 + foot);
@@ -582,9 +617,41 @@ mod tests {
         let perch = landing(&[right], screen(), capri(), Vec2::new(3000.0, 1000.0)).expect("posée");
         assert_eq!(perch.feet.x, 3024.0 - 157.0);
         // ses pieds ne sont pas au milieu de son image : c'est la place de ses pieds qui compte
-        let offset = Stature { feet: Vec2::new(0.6, 1.0), ..capri() };
+        let offset = Stature::standing(Vec2::new(314.0, 600.0), Vec2::new(0.6, 1.0), 600.0);
         let perch = landing(&[right], screen(), offset, Vec2::new(3000.0, 1000.0)).expect("posée");
         assert!((perch.feet.x - (3024.0 - 314.0 * 0.4)).abs() < 0.01, "{perch:?}");
+    }
+
+    #[test]
+    fn sitting_she_needs_less_room_above_but_a_longer_piece_of_edge_and_room_below() {
+        // assise, à la taille d'origine sur cet écran : 369 pixels au-dessus du bord, 178 en
+        // dessous (ses jambes pendent), et 103 de part et d'autre sur le bord (sa main, son genou)
+        let sitting = Stature {
+            height: 600.0,
+            reach: Reach { left: 107.0, up: 369.0, right: 182.0, down: 178.0 },
+            rest: (103.0, 103.0),
+        };
+        // un bord à 400 pixels du haut : debout, sa tête sortirait ; assise, elle s'y pose
+        let high = seen(1, rect(200.0, 400.0, 1600.0, 800.0));
+        assert_eq!(landing(&[high], screen(), capri(), Vec2::new(700.0, 400.0)), None);
+        let perch = landing(&[high], screen(), sitting, Vec2::new(700.0, 400.0)).expect("posée");
+        assert_eq!(perch.feet, Vec2::new(700.0, 400.0));
+        // un morceau visible de 150 pixels porte ses pieds, pas ce qui repose assise sur le bord
+        let cover = seen(2, rect(350.0, 300.0, 2000.0, 400.0));
+        let piece = [cover, high];
+        let standing_low = Stature::standing(Vec2::new(157.0, 300.0), Vec2::new(0.5, 1.0), 300.0);
+        assert!(landing(&piece, screen(), standing_low, Vec2::new(275.0, 400.0)).is_some());
+        assert_eq!(landing(&piece, screen(), sitting, Vec2::new(275.0, 400.0)), None);
+        // près du bout du bord, le point posé rentre de ce qui repose dessus
+        let perch = landing(&[high], screen(), sitting, Vec2::new(210.0, 400.0)).expect("posée");
+        assert_eq!(perch.feet.x, 303.0);
+        // un bord trop bas : ses jambes sortiraient de l'écran
+        let low = seen(3, rect(200.0, 1900.0, 1600.0, 64.0));
+        assert_eq!(landing(&[low], screen(), sitting, Vec2::new(700.0, 1900.0)), None);
+        // posée, si une fenêtre recouvre ce qui repose sur le bord, elle repart
+        let spot = perch.spot;
+        let over = seen(4, rect(100.0, 350.0, 220.0, 300.0));
+        assert_eq!(follow(&[over, high], screen(), sitting, spot), Err(Leave::Covered));
     }
 
     #[test]
@@ -656,9 +723,8 @@ mod tests {
         // posée au milieu du bord d'une fenêtre dont le haut est à 800 pixels du haut de l'écran
         let w = seen(1, rect(200.0, 800.0, 1600.0, 800.0));
         let spot = Spot { window: 1, along: 800.0, left: 200.0, width: 1600.0 };
-        let at = |height: f32| Stature {
-            size: Vec2::new(height * 220.0 / 420.0, height),
-            feet: Vec2::new(0.5, 1.0),
+        let at = |height: f32| {
+            Stature::standing(Vec2::new(height * 220.0 / 420.0, height), Vec2::new(0.5, 1.0), height)
         };
         // plus petite (40 % : 240 pixels sur cet écran) : elle reste, au même endroit
         let small = follow(&[w], screen(), at(240.0), spot).expect("elle reste");
@@ -675,7 +741,7 @@ mod tests {
         let edge = seen(3, rect(2400.0, 1000.0, 624.0, 800.0));
         let near_end = Spot { window: 3, along: 580.0, left: 2400.0, width: 624.0 };
         let grown = follow(&[edge], screen(), at(780.0), near_end).expect("elle reste");
-        assert!(grown.feet.x <= 3024.0 - at(780.0).size.x / 2.0 + 0.01, "{grown:?}");
+        assert!(grown.feet.x <= 3024.0 - at(780.0).reach.right + 0.01, "{grown:?}");
     }
 
     #[test]
