@@ -615,7 +615,7 @@ fn a_provider_that_needs_a_key_is_not_contacted_without_one() {
     let listener = TcpListener::bind("127.0.0.1:0").expect("un port libre");
     listener.set_nonblocking(true).expect("écoute sans attente");
     let address = listener.local_addr().expect("adresse");
-    for provider in [Provider::OpenRouter, Provider::DeepSeek, Provider::ProxyApi] {
+    for provider in [Provider::OpenRouter, Provider::DeepSeek, Provider::ProxyApi, Provider::Anthropic] {
         let brain = provider_at(provider, address);
         assert_eq!(
             ask_with(&brain, None),
@@ -802,4 +802,342 @@ fn a_redirect_never_takes_the_key_elsewhere() {
         matches!(&knocked, Err(err) if err.kind() == std::io::ErrorKind::WouldBlock),
         "personne n'a contacté l'autre adresse : {knocked:?}"
     );
+}
+
+// --- L'API d'Anthropic ---
+
+/// Un événement du flux d'Anthropic : son nom, et ses données.
+fn event(name: &str, data: Value) -> Vec<u8> {
+    format!("event: {name}\ndata: {data}\n\n").into_bytes()
+}
+
+fn text_delta(index: u32, text: &str) -> Vec<u8> {
+    event(
+        "content_block_delta",
+        json!({ "type": "content_block_delta", "index": index, "delta": { "type": "text_delta", "text": text } }),
+    )
+}
+
+fn message_start() -> Vec<u8> {
+    event(
+        "message_start",
+        json!({ "type": "message_start", "message": { "id": "msg_test", "type": "message", "role": "assistant",
+            "content": [], "model": "modele-de-test", "stop_reason": null, "stop_sequence": null,
+            "usage": { "input_tokens": 25, "output_tokens": 1 } } }),
+    )
+}
+
+/// Un bloc de réflexion tel que l'envoient les modèles récents par défaut : vide, signé.
+fn thinking_block(index: u32) -> Vec<u8> {
+    [
+        event(
+            "content_block_start",
+            json!({ "type": "content_block_start", "index": index,
+                "content_block": { "type": "thinking", "thinking": "", "signature": "" } }),
+        ),
+        event(
+            "content_block_delta",
+            json!({ "type": "content_block_delta", "index": index,
+                "delta": { "type": "thinking_delta", "thinking": "" } }),
+        ),
+        event(
+            "content_block_delta",
+            json!({ "type": "content_block_delta", "index": index,
+                "delta": { "type": "signature_delta", "signature": "EqQBCgIYAhIM1gbcDa9GJwZA" } }),
+        ),
+        event("content_block_stop", json!({ "type": "content_block_stop", "index": index })),
+    ]
+    .concat()
+}
+
+fn stop(reason: &str) -> Vec<u8> {
+    [
+        event(
+            "message_delta",
+            json!({ "type": "message_delta", "delta": { "stop_reason": reason, "stop_sequence": null },
+                "usage": { "output_tokens": 15 } }),
+        ),
+        event("message_stop", json!({ "type": "message_stop" })),
+    ]
+    .concat()
+}
+
+fn anthropic_at(address: SocketAddr) -> Brain {
+    provider_at(Provider::Anthropic, address)
+}
+
+fn declined() -> ReplyEvent {
+    failed("Le modèle d'Anthropic a décliné cette demande. Essaie de la dire autrement.")
+}
+
+#[test]
+fn anthropic_gets_its_own_request_and_only_the_text_of_its_answer_is_said() {
+    let server = serve(vec![
+        Step::Send(STREAM_HEAD.to_vec()),
+        Step::Send(chunk(&message_start())),
+        Step::Send(chunk(&event("ping", json!({ "type": "ping" })))),
+        Step::Send(chunk(&thinking_block(0))),
+        Step::Send(chunk(&event(
+            "content_block_start",
+            json!({ "type": "content_block_start", "index": 1, "content_block": { "type": "text", "text": "" } }),
+        ))),
+        Step::Send(chunk(&text_delta(1, "Salut"))),
+        Step::Send(chunk(&event("un_evenement_futur", json!({ "type": "un_evenement_futur" })))),
+        Step::Send(chunk(&text_delta(1, ", ça va ?"))),
+        Step::Send(chunk(&event("content_block_stop", json!({ "type": "content_block_stop", "index": 1 })))),
+        Step::Send(chunk(&stop("end_turn"))),
+        Step::Send(LAST_CHUNK.to_vec()),
+    ]);
+    let brain = anthropic_at(server.address);
+    assert_eq!(
+        ask_with(&brain, Some(&key_for(&brain))),
+        [said("Salut"), said(", ça va ?"), ReplyEvent::Done]
+    );
+
+    let (head, body) = server.request();
+    assert!(head.starts_with("POST /v1/messages HTTP/1.1\r\n"), "{head}");
+    assert_eq!(header(&head, "x-api-key").as_deref(), Some(KEY), "la clé seule, dans son en-tête");
+    assert_eq!(head.matches(KEY).count(), 1, "une seule fois : {head}");
+    assert_eq!(header(&head, "authorization"), None, "{head}");
+    assert_eq!(header(&head, "anthropic-version").as_deref(), Some("2026-10-21"));
+    assert_eq!(header(&head, "content-type").as_deref(), Some("application/json"));
+    for absent in ["anthropic-beta", "cookie", "http-referer", "referer", "x-title", "proxy-authorization"] {
+        assert_eq!(header(&head, absent), None, "{head}");
+    }
+    let agent = header(&head, "user-agent").unwrap_or_default();
+    assert!(agent.starts_with("ureq/") && !agent.to_lowercase().contains("capri"), "{head}");
+    assert!(!body.contains(KEY), "jamais dans le corps");
+    let body: Value = serde_json::from_str(&body).expect("un corps en JSON");
+    assert_eq!(
+        body,
+        json!({
+            "model": "modele-de-test",
+            "max_tokens": capri_chat::anthropic::MAX_TOKENS,
+            "stream": true,
+            "system": "Tu es Capri.",
+            "messages": [
+                { "role": "user", "content": "Salut" },
+                { "role": "assistant", "content": "Salut !" },
+                { "role": "user", "content": "Ça va ?" },
+            ],
+        }),
+        "rien d'autre ne part que la personnalité et la conversation"
+    );
+}
+
+#[test]
+fn a_refusal_from_anthropic_is_said_in_our_own_words_not_kept_silent() {
+    // avant le moindre mot
+    let server = serve(vec![
+        Step::Send(STREAM_HEAD.to_vec()),
+        Step::Send(chunk(&message_start())),
+        Step::Send(chunk(&event(
+            "message_delta",
+            json!({ "type": "message_delta", "delta": { "stop_reason": "refusal", "stop_sequence": null,
+                "stop_details": { "type": "refusal", "category": "cyber", "explanation": "…" } },
+                "usage": { "output_tokens": 0 } }),
+        ))),
+        Step::Send(chunk(&event("message_stop", json!({ "type": "message_stop" })))),
+        Step::Send(LAST_CHUNK.to_vec()),
+    ]);
+    let brain = anthropic_at(server.address);
+    assert_eq!(ask_with(&brain, Some(&key_for(&brain))), [declined()]);
+
+    // en plein milieu : ce qui a été écrit avant ne compte pas comme une réponse complète
+    let server = serve(vec![
+        Step::Send(STREAM_HEAD.to_vec()),
+        Step::Send(chunk(&message_start())),
+        Step::Send(chunk(&text_delta(0, "Je commence"))),
+        Step::Send(chunk(&stop("refusal"))),
+        Step::Send(LAST_CHUNK.to_vec()),
+    ]);
+    let brain = anthropic_at(server.address);
+    assert_eq!(ask_with(&brain, Some(&key_for(&brain))), [said("Je commence"), declined()]);
+}
+
+#[test]
+fn an_answer_cut_by_its_token_ceiling_is_kept_like_any_other_cut_answer() {
+    let server = serve(vec![
+        Step::Send(STREAM_HEAD.to_vec()),
+        Step::Send(chunk(&message_start())),
+        Step::Send(chunk(&thinking_block(0))),
+        Step::Send(chunk(&text_delta(1, "Une réponse qui s'arr"))),
+        Step::Send(chunk(&stop("max_tokens"))),
+        Step::Send(LAST_CHUNK.to_vec()),
+    ]);
+    let brain = anthropic_at(server.address);
+    assert_eq!(ask_with(&brain, Some(&key_for(&brain))), [said("Une réponse qui s'arr"), ReplyEvent::Done]);
+
+    // toute la place prise par la réflexion : rien n'a été dit, et elle le dit
+    let server = serve(vec![
+        Step::Send(STREAM_HEAD.to_vec()),
+        Step::Send(chunk(&message_start())),
+        Step::Send(chunk(&thinking_block(0))),
+        Step::Send(chunk(&stop("max_tokens"))),
+        Step::Send(LAST_CHUNK.to_vec()),
+    ]);
+    let brain = anthropic_at(server.address);
+    assert_eq!(ask_with(&brain, Some(&key_for(&brain))), [failed("Anthropic n'a rien répondu.")]);
+}
+
+#[test]
+fn an_error_in_the_middle_of_anthropic_s_stream_is_explained_and_masked() {
+    let server = serve(vec![
+        Step::Send(STREAM_HEAD.to_vec()),
+        Step::Send(chunk(&message_start())),
+        Step::Send(chunk(&text_delta(0, "Je"))),
+        Step::Send(chunk(&event(
+            "error",
+            json!({ "type": "error", "error": { "type": "overloaded_error", "message": format!("Overloaded ({KEY})") } }),
+        ))),
+        Step::Send(chunk(&text_delta(0, " continue quand même"))),
+        Step::Send(LAST_CHUNK.to_vec()),
+    ]);
+    let brain = anthropic_at(server.address);
+    assert_eq!(
+        ask_with(&brain, Some(&key_for(&brain))),
+        [said("Je"), failed("Anthropic a abandonné : Overloaded ([clé masquée])")]
+    );
+}
+
+#[test]
+fn a_refusal_from_anthropic_is_classified_like_the_others_and_never_quotes_the_key() {
+    let error = |kind: &str, message: &str| {
+        json!({ "type": "error", "error": { "type": kind, "message": message }, "request_id": "req_test" })
+            .to_string()
+    };
+    // une clé refusée, dont le message rappelle le début et la fin : rien n'en reste
+    let echoed =
+        error("authentication_error", &format!("invalid key {}…{}", &KEY[..7], &KEY[KEY.len() - 4..]));
+    let server = serve(vec![Step::Send(plain("401 Unauthorized", "application/json", &echoed))]);
+    let brain = anthropic_at(server.address);
+    let events = ask_with(&brain, Some(&key_for(&brain)));
+    assert_eq!(
+        events,
+        [failed(
+            "Anthropic refuse ma clé (401) : invalid key [clé masquée]…[clé masquée]. Pour la remettre : ouvre \
+             Réglages… dans mon menu."
+        )]
+    );
+
+    let cases = [
+        (
+            "403 Forbidden",
+            error("permission_error", "Your API key does not have permission"),
+            "Anthropic refuse (403) : Your API key does not have permission. Si c'est ma clé, pour la remettre : \
+             ouvre Réglages… dans mon menu.",
+        ),
+        (
+            "429 Too Many Requests",
+            error("rate_limit_error", "Number of requests has exceeded your rate limit"),
+            "Anthropic refuse (429) : Number of requests has exceeded your rate limit",
+        ),
+        (
+            "529 Site Overloaded",
+            error("overloaded_error", "Overloaded"),
+            "Anthropic refuse (529) : Overloaded",
+        ),
+        (
+            "404 Not Found",
+            error("not_found_error", "model: modele-de-test"),
+            "Anthropic refuse (404) : model: modele-de-test",
+        ),
+        (
+            "400 Bad Request",
+            error("invalid_request_error", &format!("bad header {KEY}")),
+            "Anthropic refuse (400) : bad header [clé masquée]",
+        ),
+    ];
+    for (status, body, expected) in cases {
+        let server = serve(vec![Step::Send(plain(status, "application/json", &body))]);
+        let brain = anthropic_at(server.address);
+        assert_eq!(ask_with(&brain, Some(&key_for(&brain))), [failed(expected)], "{status}");
+    }
+}
+
+/// Un serveur qui sert une connexion par réponse donnée, dans l'ordre, et rend chaque requête.
+fn serve_each(responses: Vec<Vec<u8>>) -> (SocketAddr, Receiver<(String, String)>) {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("un port libre");
+    let address = listener.local_addr().expect("l'adresse du serveur");
+    let (sender, requests) = channel();
+    std::thread::spawn(move || {
+        for response in responses {
+            let Ok((mut stream, _)) = listener.accept() else { return };
+            let Some(received) = read_request(&mut stream) else { return };
+            let _ = sender.send(received);
+            let _ = stream.write_all(&response);
+        }
+    });
+    (address, requests)
+}
+
+#[test]
+fn anthropic_s_models_are_listed_page_by_page_with_its_key() {
+    let first = json!({ "data": [{ "type": "model", "id": "modele-a", "display_name": "A", "max_tokens": 128000 },
+        { "type": "model", "id": "modele-b" }], "first_id": "modele-a", "has_more": true, "last_id": "modele-b" });
+    let last = json!({ "data": [{ "type": "model", "id": "modele-c" }], "first_id": "modele-c",
+        "has_more": false, "last_id": "modele-c" });
+    let (address, requests) = serve_each(vec![
+        plain("200 OK", "application/json", &first.to_string()),
+        plain("200 OK", "application/json", &last.to_string()),
+    ]);
+    let brain = anthropic_at(address);
+    assert_eq!(
+        Client::new().models(Provider::Anthropic, brain.endpoint(), Some(&key_for(&brain))),
+        Ok(vec!["modele-a".to_owned(), "modele-b".to_owned(), "modele-c".to_owned()])
+    );
+    let next = || requests.recv_timeout(Duration::from_secs(5)).expect("une requête");
+    let (head, body) = next();
+    assert!(head.starts_with("GET /v1/models?limit=1000 HTTP/1.1\r\n"), "{head}");
+    assert_eq!(body, "");
+    let (second, _) = next();
+    assert!(second.starts_with("GET /v1/models?limit=1000&after_id=modele-b HTTP/1.1\r\n"), "{second}");
+    for head in [head, second] {
+        assert_eq!(header(&head, "x-api-key").as_deref(), Some(KEY));
+        assert_eq!(header(&head, "anthropic-version").as_deref(), Some("2026-10-21"));
+        assert_eq!(header(&head, "authorization"), None);
+    }
+
+    // une clé refusée en demandant la liste
+    let refused = r#"{"type":"error","error":{"type":"authentication_error","message":"invalid x-api-key"}}"#;
+    let (address, _requests) = serve_each(vec![plain("401 Unauthorized", "application/json", refused)]);
+    let brain = anthropic_at(address);
+    assert!(matches!(
+        Client::new().models(Provider::Anthropic, brain.endpoint(), Some(&key_for(&brain))),
+        Err(Problem::KeyRefused { status: 401, reason: Some(_) })
+    ));
+}
+
+/// La clé d'Anthropic donnée pour son adresse ne part jamais vers une autre : elle y compte pour
+/// absente, et personne n'est contacté.
+#[test]
+fn anthropic_s_key_given_for_another_address_is_never_sent() {
+    let given_for = TcpListener::bind("127.0.0.1:0").expect("un port libre");
+    given_for.set_nonblocking(true).expect("écoute sans attente");
+    let unused = TcpListener::bind("127.0.0.1:0").expect("un port libre");
+    unused.set_nonblocking(true).expect("écoute sans attente");
+    let address = unused.local_addr().expect("adresse");
+    let brain = anthropic_at(address);
+    let other_port = key_for(&anthropic_at(given_for.local_addr().expect("adresse")));
+    assert_eq!(
+        ask_with(&brain, Some(&other_port)),
+        [failed(&format!(
+            "Anthropic demande une clé, et je n'en ai pas pour {address}. Pour me la donner : ouvre Réglages… dans mon menu."
+        ))]
+    );
+    assert_eq!(
+        Client::new().models(Provider::Anthropic, brain.endpoint(), Some(&other_port)),
+        Err(Problem::NoKey)
+    );
+    // ni la clé d'un autre fournisseur donnée pour la même adresse
+    let openrouter_here = key_for(&provider_at(Provider::OpenRouter, address));
+    assert_eq!(ask_with(&brain, Some(&openrouter_here)).len(), 1);
+    std::thread::sleep(Duration::from_millis(50));
+    for listener in [&unused, &given_for] {
+        let knocked = listener.accept();
+        assert!(
+            matches!(&knocked, Err(err) if err.kind() == std::io::ErrorKind::WouldBlock),
+            "personne n'a été contacté : {knocked:?}"
+        );
+    }
 }

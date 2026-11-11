@@ -4,18 +4,22 @@
 //! La clé vit dans le trousseau du système (c'est le travail de `capri-platform`) ; ici, on ne
 //! touche ni au trousseau ni au réseau. Une [`ApiKey`] ne s'affiche pas : elle n'a pas de
 //! `Display`, son `Debug` la masque, et le seul moyen d'en lire le texte, hors du trousseau, est
-//! d'en faire un en-tête `Authorization` ([`authorization`]).
+//! d'en faire l'en-tête qui la porte ([`key_header`]) : `Authorization: Bearer …` pour les
+//! fournisseurs au format d'OpenAI, `x-api-key: …` pour Anthropic. Le nom et la valeur de cet
+//! en-tête sont décidés ici ; `capri-net` ne fait que le poser.
 //!
 //! Une clé est liée à l'adresse pour laquelle elle a été donnée. Elle est rangée sous un compte
 //! qui nomme le fournisseur et l'adresse ([`KeyAccount`] : `openrouter@openrouter.ai:443`), relue
-//! avec ce compte ([`BoundKey`]), et [`authorization`] refuse de la mettre dans une requête vers
+//! avec ce compte ([`BoundKey`]), et [`key_header`] refuse de la mettre dans une requête vers
 //! une autre adresse. Choisir une autre adresse (`--url`) n'emporte donc jamais la clé : il faut en
 //! donner une pour cette adresse-là.
 
 use std::fmt;
 
+use crate::anthropic;
 use crate::brain::{Brain, Provider};
 use crate::endpoint::Endpoint;
+use crate::wire::Wire;
 
 /// Longueur maximale d'une clé. Celles des fournisseurs font quelques dizaines de caractères : au-delà,
 /// ce n'est pas une clé (un fichier collé par erreur, par exemple).
@@ -196,7 +200,7 @@ impl fmt::Debug for ApiKey {
 }
 
 /// Une clé, avec le compte sous lequel elle était rangée : l'adresse pour laquelle elle a été
-/// donnée. C'est sous cette forme seulement qu'une clé peut partir ([`authorization`]).
+/// donnée. C'est sous cette forme seulement qu'une clé peut partir ([`key_header`]).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BoundKey {
     account: KeyAccount,
@@ -224,17 +228,51 @@ impl BoundKey {
     }
 }
 
-/// La valeur de l'en-tête `Authorization` qui porte `key` vers `endpoint` pour `provider`, si elle
-/// a le droit d'y aller : seulement vers l'adresse pour laquelle elle a été donnée, et seulement
-/// en `https://`, ou en `http://` vers cette machine. Jamais en clair sur le réseau.
-pub fn authorization(key: &BoundKey, provider: Provider, endpoint: &Endpoint) -> Result<String, KeyError> {
+/// L'en-tête qui porte une clé : son nom, et sa valeur, qui contient la clé. Il ne s'affiche
+/// pas : son `Debug` ne montre que le nom.
+#[derive(Clone, PartialEq, Eq)]
+pub struct KeyHeader {
+    name: &'static str,
+    value: String,
+}
+
+impl KeyHeader {
+    /// `Authorization`, ou `x-api-key`.
+    pub fn name(&self) -> &'static str {
+        self.name
+    }
+
+    /// La valeur, à poser dans la requête et nulle part ailleurs.
+    pub fn reveal_for_request(&self) -> &str {
+        &self.value
+    }
+}
+
+/// Jamais la clé, même dans un journal de débogage.
+impl fmt::Debug for KeyHeader {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "KeyHeader({}: …)", self.name)
+    }
+}
+
+/// L'en-tête qui porte `key` vers `endpoint` pour `provider`, si elle a le droit d'y aller :
+/// seulement vers l'adresse pour laquelle elle a été donnée, à ce fournisseur, et seulement en
+/// `https://`, ou en `http://` vers cette machine. Jamais en clair sur le réseau.
+///
+/// Son nom dépend du format du fournisseur : `Authorization: Bearer <clé>` pour celui d'OpenAI,
+/// `x-api-key: <clé>` pour Anthropic
+/// (<https://platform.claude.com/docs/en/build-with-claude/streaming>, relue le 11 novembre 2026).
+pub fn key_header(key: &BoundKey, provider: Provider, endpoint: &Endpoint) -> Result<KeyHeader, KeyError> {
     if key.account != KeyAccount::new(provider, endpoint) {
         return Err(KeyError::OtherAddress);
     }
     if !endpoint.may_carry_secret() {
         return Err(KeyError::InClear);
     }
-    Ok(format!("Bearer {}", key.key.0))
+    Ok(match provider.wire() {
+        Wire::OpenAi => KeyHeader { name: "Authorization", value: format!("Bearer {}", key.key.0) },
+        Wire::Anthropic => KeyHeader { name: anthropic::KEY_HEADER, value: key.key.0.clone() },
+    })
 }
 
 #[cfg(test)]
@@ -264,6 +302,14 @@ mod tests {
 
     fn key(text: &str) -> ApiKey {
         ApiKey::parse(text).expect("une clé valable")
+    }
+
+    /// L'en-tête qui porterait la clé, nom et valeur, ou pourquoi elle ne part pas.
+    fn authorization(key: &BoundKey, provider: Provider, endpoint: &Endpoint) -> Result<String, KeyError> {
+        key_header(key, provider, endpoint).map(|header| {
+            assert_eq!(header.name(), "Authorization");
+            header.reveal_for_request().to_owned()
+        })
     }
 
     fn endpoint(url: &str) -> Endpoint {
@@ -528,5 +574,70 @@ mod tests {
         assert_eq!(secret.redact("Ça marche, déjà 🙂"), "Ça marche, déjà 🙂");
         // une clé très courte est masquée en entier
         assert_eq!(key("abc").redact("clé abc refusée"), "clé [clé masquée] refusée");
+    }
+
+    #[test]
+    fn the_anthropic_key_travels_in_x_api_key_and_only_to_its_own_address() {
+        const ANTHROPIC: &str = "https://api.anthropic.com/v1";
+        let text = "sk-ant-api03-test-0123456789abcdef";
+        let secret = bound(Provider::Anthropic, ANTHROPIC, text);
+        assert_eq!(secret.account().name(), "anthropic@api.anthropic.com:443");
+        let header = key_header(&secret, Provider::Anthropic, &endpoint(ANTHROPIC)).expect("son adresse");
+        assert_eq!(
+            (header.name(), header.reveal_for_request()),
+            ("x-api-key", text),
+            "la clé seule, sans Bearer"
+        );
+        // les autres fournisseurs gardent leur en-tête d'avant
+        let openrouter = bound(Provider::OpenRouter, "https://openrouter.ai/api/v1", text);
+        let header = key_header(&openrouter, Provider::OpenRouter, &endpoint("https://openrouter.ai/api/v1"))
+            .expect("son adresse");
+        assert_eq!(header.name(), "Authorization");
+        assert_eq!(header.reveal_for_request(), format!("Bearer {text}"));
+
+        // ni vers une autre adresse, ni à un autre fournisseur, ni en clair
+        for url in
+            ["https://proxy.example/v1", "https://api.anthropic.com:8443/v1", "https://anthropic.com/v1"]
+        {
+            assert_eq!(
+                key_header(&secret, Provider::Anthropic, &endpoint(url)),
+                Err(KeyError::OtherAddress),
+                "{url}"
+            );
+        }
+        for provider in Provider::ALL.into_iter().filter(|&provider| provider != Provider::Anthropic) {
+            assert_eq!(
+                key_header(&secret, provider, &endpoint(ANTHROPIC)),
+                Err(KeyError::OtherAddress),
+                "{}",
+                provider.name()
+            );
+        }
+        let lan = bound(Provider::Anthropic, "http://192.168.1.20:8080/v1", text);
+        assert_eq!(
+            key_header(&lan, Provider::Anthropic, &endpoint("http://192.168.1.20:8080/v1")),
+            Err(KeyError::InClear)
+        );
+
+        // nulle part en clair : ni dans un Debug, ni dans un message d'erreur
+        let header = key_header(&secret, Provider::Anthropic, &endpoint(ANTHROPIC)).expect("son adresse");
+        for shown in [
+            format!("{header:?}"),
+            format!("{secret:?}"),
+            format!("{:?}", key_header(&secret, Provider::Anthropic, &endpoint(ANTHROPIC))),
+            KeyError::OtherAddress.to_string(),
+            KeyError::InClear.to_string(),
+        ] {
+            assert!(!shown.contains(text) && !shown.contains("0123456789"), "{shown}");
+        }
+        assert_eq!(format!("{header:?}"), "KeyHeader(x-api-key: …)");
+        // un refus qui citerait un bout de la clé : rien n'en reste
+        assert_eq!(
+            secret.redact_any_trace("invalid key: sk-ant-…cdef"),
+            "invalid key: [clé masquée]…[clé masquée]"
+        );
+        // le prix de ce masquage : un mot qui ressemble à un morceau de la clé (« -api », comme dans
+        // le début public des clés d'Anthropic) est masqué lui aussi
+        assert_eq!(secret.redact_any_trace("invalid x-api-key"), "invalid x[clé masquée]-key");
     }
 }

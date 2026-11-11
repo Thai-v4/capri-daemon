@@ -2,7 +2,8 @@
 //!
 //! Il envoie une conversation au fournisseur choisi et lit la réponse au fil de l'eau. Ce qu'il
 //! faut envoyer et comment lire ce qui revient est décidé par `capri-chat`, qui ne se connecte à
-//! rien ; ici, on se connecte, et rien d'autre.
+//! rien (le format de chaque fournisseur : `capri_chat::Wire`) ; ici, on se connecte, et rien
+//! d'autre.
 //!
 //! Ce que ce crate garantit :
 //! - il ne contacte que l'adresse du cerveau choisi, que `capri_chat::Endpoint` a vérifiée : pas
@@ -13,6 +14,8 @@
 //! - une clé ne part que vers l'adresse pour laquelle elle a été donnée, et seulement en
 //!   `https://`, ou en `http://` vers cette machine même : les règles de `capri_chat::key`,
 //!   vérifiées avant toute connexion. Une clé donnée pour une autre adresse compte pour absente.
+//!   L'en-tête qui la porte (`Authorization` ou, pour Anthropic, `x-api-key`) est choisi par
+//!   `capri_chat::key::key_header` : ici, on le pose tel quel.
 //!   Elle ne va jamais à un fournisseur qui n'en prend pas, et n'apparaît dans aucun message : si
 //!   un fournisseur la répète dans une erreur, elle y est masquée ;
 //! - une réponse s'arrête dès qu'on le demande, et le serveur l'apprend : la connexion est fermée ;
@@ -29,10 +32,12 @@ use std::io::Read;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-use capri_chat::openai::{self, End};
+use capri_chat::key::KeyHeader;
 use capri_chat::sse::SseDecoder;
+use capri_chat::wire::End;
 use capri_chat::{
-    BoundKey, Brain, Endpoint, KeyError, KeyJob, KeyNeed, Place, Provider, Reach, ReplyEvent, Turn, key,
+    BoundKey, Brain, Endpoint, KeyError, KeyJob, KeyNeed, Place, Provider, Reach, ReplyEvent, Turn, Wire,
+    key, phrases,
 };
 
 /// Ce système sait-il parler `https://` ?
@@ -44,6 +49,9 @@ const MAX_ERROR_BYTES: u64 = 64 * 1024;
 const MAX_LISTING_BYTES: u64 = 8 * 1024 * 1024;
 /// Ce qu'on garde du message d'erreur d'un fournisseur.
 const MAX_REASON_CHARS: usize = 160;
+/// Le nombre de pages de la liste des modèles lues au plus. Anthropic en donne jusqu'à mille par
+/// page : une seule suffit aujourd'hui.
+const MAX_LISTING_PAGES: usize = 5;
 
 /// Les bornes d'un échange.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -96,6 +104,10 @@ pub enum Problem {
     Unreadable,
     /// Le modèle a répondu sans rien dire.
     Empty,
+    /// Le modèle a décliné la demande : la réponse est arrivée sans erreur, mais il refuse d'y
+    /// répondre (chez Anthropic, `stop_reason: "refusal"`). Ce qu'il avait commencé à écrire ne
+    /// compte pas.
+    Declined,
 }
 
 impl Problem {
@@ -116,6 +128,7 @@ impl Problem {
             Self::Cut => "Cut",
             Self::Unreadable => "Unreadable",
             Self::Empty => "Empty",
+            Self::Declined => "Declined",
         };
         kind.to_owned()
     }
@@ -194,6 +207,7 @@ impl Problem {
             Self::Cut => "La réponse a été coupée.".to_owned(),
             Self::Unreadable => format!("{who} a répondu quelque chose que je n'ai pas compris."),
             Self::Empty => format!("{who} n'a rien répondu."),
+            Self::Declined => phrases::declined(provider),
         }
     }
 }
@@ -229,9 +243,9 @@ pub struct Ask<'a> {
     /// Le cerveau des réglages : c'est pour lui que sont écrits les conseils d'un message de panne
     /// (« Pour me la donner : … »).
     pub brain: &'a Brain,
-    /// La clé du fournisseur, s'il en a une. Elle part dans l'en-tête `Authorization`, seulement si
-    /// le fournisseur en prend une, si elle a été donnée pour l'adresse du cerveau, et si cette
-    /// adresse a le droit de la recevoir.
+    /// La clé du fournisseur, s'il en a une. Elle part dans son en-tête (`Authorization`, ou
+    /// `x-api-key` pour Anthropic), seulement si le fournisseur en prend une, si elle a été donnée
+    /// pour l'adresse du cerveau, et si cette adresse a le droit de la recevoir.
     pub key: Option<&'a BoundKey>,
     pub persona: &'a str,
     pub turns: &'a [Turn],
@@ -304,25 +318,40 @@ impl Client {
     }
 
     /// Les modèles que le serveur de `provider` propose (`GET /models`), avec sa clé s'il en
-    /// faut une : la même règle que pour [`Client::answer`].
+    /// faut une : la même règle que pour [`Client::answer`]. Une liste en plusieurs pages
+    /// (Anthropic) est lue page par page, [`MAX_LISTING_PAGES`] au plus.
     pub fn models(
         &self,
         provider: Provider,
         endpoint: &Endpoint,
         key: Option<&BoundKey>,
     ) -> Result<Vec<String>, Problem> {
-        let authorization = authorize(provider, endpoint, key)?;
-        let mut request = self.agent.get(endpoint.url("/models")).header("Accept", "application/json");
-        if let Some(authorization) = &authorization {
-            request = request.header("Authorization", authorization);
+        let wire = provider.wire();
+        let header = authorize(provider, endpoint, key)?;
+        let sent = key.filter(|_| header.is_some());
+        let mut models = Vec::new();
+        let mut after: Option<String> = None;
+        for _ in 0..MAX_LISTING_PAGES {
+            let Some(path) = wire.models_path(after.as_deref()) else { break };
+            let mut request = self.agent.get(endpoint.url(&path)).header("Accept", "application/json");
+            request = with_headers(request, wire, header.as_ref());
+            let response = request.call().map_err(before_the_reply)?;
+            let status = response.status().as_u16();
+            let body = read_capped(response.into_body().into_reader(), MAX_LISTING_BYTES);
+            if !(200..300).contains(&status) {
+                return Err(refusal(status, &body, provider, sent));
+            }
+            let page = wire.model_page(&body).ok_or(Problem::Unreadable)?;
+            models.extend(page.ids);
+            match page.next {
+                Some(next) if after.as_deref() != Some(next.as_str()) => after = Some(next),
+                _ => return Ok(models),
+            }
         }
-        let response = request.call().map_err(before_the_reply)?;
-        let status = response.status().as_u16();
-        let body = read_capped(response.into_body().into_reader(), MAX_LISTING_BYTES);
-        if !(200..300).contains(&status) {
-            return Err(refusal(status, &body, provider, key.filter(|_| authorization.is_some())));
+        if after.is_some() {
+            log::warn!("liste des modèles arrêtée à {} noms", models.len());
         }
-        openai::model_ids(&body).ok_or(Problem::Unreadable)
+        Ok(models)
     }
 
     fn stream(
@@ -335,18 +364,17 @@ impl Client {
         on_text: &mut dyn FnMut(String),
     ) -> Result<Outcome, Problem> {
         let endpoint = brain.endpoint();
-        let authorization = authorize(brain.provider(), endpoint, key)?;
+        let wire = brain.provider().wire();
+        let header = authorize(brain.provider(), endpoint, key)?;
         // la clé effectivement envoyée : c'est elle qu'il faut masquer dans ce qui revient
-        let sent = key.filter(|_| authorization.is_some());
-        let body = openai::request_body(brain.model(), persona, turns);
-        let mut request = self
+        let sent = key.filter(|_| header.is_some());
+        let body = wire.request_body(brain.model(), persona, turns);
+        let request = self
             .agent
-            .post(endpoint.url("/chat/completions"))
+            .post(endpoint.url(wire.reply_path()))
             .header("Content-Type", "application/json")
             .header("Accept", "text/event-stream");
-        if let Some(authorization) = &authorization {
-            request = request.header("Authorization", authorization);
-        }
+        let request = with_headers(request, wire, header.as_ref());
         let response = request.send(&body).map_err(before_the_reply)?;
         if cancelled.load(Ordering::Relaxed) {
             return Ok(Outcome::Cancelled);
@@ -377,13 +405,14 @@ impl Client {
                     return Ok(Outcome::Cancelled);
                 }
                 events += 1;
-                let piece = openai::interpret(&data);
+                let piece = wire.interpret(&data);
                 if !piece.text.is_empty() {
                     said += piece.text.chars().count();
                     on_text(piece.text);
                 }
                 match piece.end {
                     Some(End::Failed(reason)) => return Err(Problem::GaveUp(masked(&reason, sent))),
+                    Some(End::Declined) => return Err(Problem::Declined),
                     Some(End::Complete) => return finished(said, events),
                     None if said >= self.limits.reply_chars => {
                         log::warn!("réponse arrêtée à {said} caractères");
@@ -396,38 +425,56 @@ impl Client {
         // le serveur a fermé le flux sans annoncer la fin : ce qui est arrivé est la réponse
         if let Some(data) = decoder.finish() {
             events += 1;
-            let piece = openai::interpret(&data);
+            let piece = wire.interpret(&data);
             if !piece.text.is_empty() {
                 said += piece.text.chars().count();
                 on_text(piece.text);
             }
-            if let Some(End::Failed(reason)) = piece.end {
-                return Err(Problem::GaveUp(masked(&reason, sent)));
+            match piece.end {
+                Some(End::Failed(reason)) => return Err(Problem::GaveUp(masked(&reason, sent))),
+                Some(End::Declined) => return Err(Problem::Declined),
+                _ => {}
             }
         }
         finished(said, events)
     }
 }
 
-/// L'en-tête `Authorization` à envoyer, s'il en faut un, une fois vérifié tout ce qui doit
-/// l'être avant de se connecter : le https possible sur ce système, la clé donnée pour cette
-/// adresse, présente si le fournisseur l'exige, et jamais en clair sur le réseau. Une clé donnée
-/// pour une autre adresse compte pour absente. Un fournisseur qui ne prend pas de clé n'en reçoit
-/// jamais, même si on lui en confie une.
+/// Les en-têtes propres au format du fournisseur, puis celui de la clé s'il y en a une : tels
+/// que `capri-chat` les a décidés.
+fn with_headers<B>(
+    mut request: ureq::RequestBuilder<B>,
+    wire: Wire,
+    key: Option<&KeyHeader>,
+) -> ureq::RequestBuilder<B> {
+    for (name, value) in wire.headers() {
+        request = request.header(*name, *value);
+    }
+    if let Some(key) = key {
+        request = request.header(key.name(), key.reveal_for_request());
+    }
+    request
+}
+
+/// L'en-tête de la clé à envoyer, s'il en faut un, une fois vérifié tout ce qui doit l'être avant
+/// de se connecter : le https possible sur ce système, la clé donnée pour cette adresse, présente
+/// si le fournisseur l'exige, et jamais en clair sur le réseau. Une clé donnée pour une autre
+/// adresse compte pour absente. Un fournisseur qui ne prend pas de clé n'en reçoit jamais, même si
+/// on lui en confie une.
 fn authorize(
     provider: Provider,
     endpoint: &Endpoint,
     key: Option<&BoundKey>,
-) -> Result<Option<String>, Problem> {
+) -> Result<Option<KeyHeader>, Problem> {
     if endpoint.secure && !TLS {
         return Err(Problem::NoTls);
     }
     if provider.key_need() == KeyNeed::None {
         return Ok(None);
     }
-    let authorization = match key.map(|key| (key, key::authorization(key, provider, endpoint))) {
+    let authorization = match key.map(|key| (key, key::key_header(key, provider, endpoint))) {
         None => None,
-        Some((_, Ok(authorization))) => Some(authorization),
+        Some((_, Ok(header))) => Some(header),
         Some((_, Err(KeyError::InClear))) => return Err(Problem::KeyInClear),
         Some((key, Err(_))) => {
             log::warn!(
@@ -447,7 +494,7 @@ fn authorize(
 /// Le refus d'un serveur (`status` hors de 2xx), avec son explication masquée. `sent` : la clé
 /// envoyée avec la requête, s'il y en avait une.
 fn refusal(status: u16, body: &str, provider: Provider, sent: Option<&BoundKey>) -> Problem {
-    let said = openai::error_message(body);
+    let said = provider.wire().error_message(body);
     let reason = said.as_deref().map(|reason| masked(reason, sent));
     match (status, sent) {
         // La clé vient d'être refusée, et la raison du fournisseur dit pourquoi (inconnue, mal
@@ -575,6 +622,10 @@ mod tests {
         assert_eq!(say(Problem::Cut), "La réponse a été coupée.");
         assert_eq!(say(Problem::Unreadable), "Ollama a répondu quelque chose que je n'ai pas compris.");
         assert_eq!(say(Problem::Empty), "Ollama n'a rien répondu.");
+        assert_eq!(
+            say(Problem::Declined),
+            "Le modèle d'Ollama a décliné cette demande. Essaie de la dire autrement."
+        );
         assert_eq!(say(Problem::NoTls), "Je ne sais pas me connecter en https sur ce système.");
         assert_eq!(say(Problem::Refused { status: 401, reason: None }), "Ollama refuse (401).");
         assert_eq!(
@@ -710,8 +761,13 @@ mod tests {
     #[test]
     fn a_key_is_only_sent_where_it_belongs() {
         let at = |url: &str| Endpoint::parse(url).expect("valide");
-        let authorize = |provider, url: &str, key: Option<&BoundKey>| authorize(provider, &at(url), key);
-        let bearer = Ok(Some("Bearer sk-test-0123456789".to_owned()));
+        // l'en-tête qui partirait : son nom et sa valeur
+        let authorize = |provider, url: &str, key: Option<&BoundKey>| {
+            authorize(provider, &at(url), key).map(|header| {
+                header.map(|header| format!("{}: {}", header.name(), header.reveal_for_request()))
+            })
+        };
+        let bearer = Ok(Some("Authorization: Bearer sk-test-0123456789".to_owned()));
 
         let openrouter = bound(Provider::OpenRouter, "https://openrouter.ai/api/v1");
         assert_eq!(
@@ -744,6 +800,22 @@ mod tests {
         // sans clé : rien à envoyer, sauf si le fournisseur l'exige
         assert_eq!(authorize(Provider::Custom, "http://192.168.1.20:1234/v1", None), Ok(None));
         assert_eq!(authorize(Provider::DeepSeek, "https://api.deepseek.com", None), Err(Problem::NoKey));
+        assert_eq!(authorize(Provider::Anthropic, "https://api.anthropic.com/v1", None), Err(Problem::NoKey));
+        // Anthropic : la clé seule, dans son propre en-tête, et seulement chez lui
+        let anthropic = bound(Provider::Anthropic, "https://api.anthropic.com/v1");
+        assert_eq!(
+            authorize(Provider::Anthropic, "https://api.anthropic.com/v1", Some(&anthropic)),
+            Ok(Some("x-api-key: sk-test-0123456789".to_owned()))
+        );
+        assert_eq!(
+            authorize(Provider::Anthropic, "https://proxy.example/v1", Some(&anthropic)),
+            Err(Problem::NoKey)
+        );
+        assert_eq!(
+            authorize(Provider::Custom, "https://api.anthropic.com/v1", Some(&anthropic)),
+            Ok(None),
+            "ni à un autre fournisseur à la même adresse"
+        );
     }
 
     #[test]
@@ -803,6 +875,7 @@ mod tests {
         let logged: Vec<String> = problems.iter().map(Problem::for_log).collect();
         assert_eq!(logged, ["Refused(400)", "KeyRefused(403)", "KeyNeeded(401)", "GaveUp"]);
         assert_eq!(Problem::Unreachable.for_log(), "Unreachable");
+        assert_eq!(Problem::Declined.for_log(), "Declined");
     }
 
     #[test]

@@ -10,7 +10,9 @@
 //! - [`phrases`] : ce que disent de son cerveau la ligne de commande et la fenêtre de réglages,
 //!   à commencer par où part ce qu'on lui dit ;
 //! - [`persona`] : qui elle est quand elle parle ;
+//! - [`wire`] : les deux formats que parlent les fournisseurs, et lequel parle chacun ;
 //! - [`openai`] : le format « chat completions », ce qu'on envoie et ce qu'on lit ;
+//! - [`anthropic`] : le format de l'API d'Anthropic, ce qu'on envoie et ce qu'on lit ;
 //! - [`plain`] : du texte brut à partir de ce qu'écrit un modèle, Markdown retiré ;
 //! - [`sse`] : le décodeur du flux dans lequel la réponse arrive ;
 //! - [`dictation`] : lui parler au micro, le déroulé d'une prise de parole ;
@@ -23,6 +25,7 @@
 //!
 //! Se connecter est le travail de `capri-net`, le seul crate qui parle au réseau.
 
+pub mod anthropic;
 pub mod brain;
 pub mod conversation;
 pub mod dictation;
@@ -38,6 +41,7 @@ pub mod reply;
 pub mod settings;
 pub mod sse;
 pub mod voice;
+pub mod wire;
 
 pub use brain::{Brain, BrainError, KeyNeed, Provider};
 pub use conversation::{Conversation, Role, Turn};
@@ -45,3 +49,4 @@ pub use endpoint::{Endpoint, EndpointError, Reach};
 pub use key::{ApiKey, BoundKey, KeyAccount, KeyError};
 pub use place::{KeyJob, Place};
 pub use reply::ReplyEvent;
+pub use wire::Wire;

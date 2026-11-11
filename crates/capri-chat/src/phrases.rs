@@ -125,6 +125,25 @@ pub fn how_to_get(provider: Provider, model: &str) -> String {
     }
 }
 
+/// Le modèle a décliné la demande (une réponse arrivée sans erreur, mais refusée : chez Anthropic,
+/// `stop_reason: "refusal"`). Elle le dit plutôt que de se taire ; ce qu'il avait commencé à écrire
+/// ne compte pas. Rien à faire de ses réglages : le même conseil partout.
+pub fn declined(provider: Provider) -> String {
+    format!("Le modèle {} a décliné cette demande. Essaie de la dire autrement.", of_provider(provider))
+}
+
+/// Ce qu'il faut savoir de la clé de ce fournisseur avant de la donner, s'il y a quelque chose à en
+/// dire.
+pub fn key_hint(provider: Provider) -> Option<&'static str> {
+    match provider {
+        Provider::Anthropic => Some(
+            "Une clé d'API, créée dans la Console d'Anthropic (platform.claude.com) : Capri ne se sert jamais \
+             de ton abonnement Claude, ni de Claude Code.",
+        ),
+        _ => None,
+    }
+}
+
 /// La clé vient d'être rangée.
 pub fn key_stored(provider: Provider, keychain: &str, address: &str) -> String {
     format!(
@@ -262,6 +281,13 @@ mod tests {
         assert_eq!(of_provider(Provider::OpenRouter), "d'OpenRouter");
         assert_eq!(of_provider(Provider::OllamaCloud), "d'Ollama en ligne");
         assert_eq!(of_provider(Provider::DeepSeek), "de DeepSeek");
+        assert_eq!(of_provider(Provider::Anthropic), "d'Anthropic");
+        assert_eq!(
+            declined(Provider::Anthropic),
+            "Le modèle d'Anthropic a décliné cette demande. Essaie de la dire autrement."
+        );
+        assert!(key_hint(Provider::Anthropic).is_some_and(|hint| hint.contains("jamais")));
+        assert_eq!(key_hint(Provider::OpenRouter), None);
         assert_eq!(of_provider(Provider::Custom), "du serveur personnalisé");
         assert_eq!(
             server(Provider::OllamaCloud, &at("https://ollama.com/v1")),

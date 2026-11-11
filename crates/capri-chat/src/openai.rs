@@ -8,6 +8,7 @@
 use serde_json::{Value, json};
 
 use crate::conversation::{Role, Turn};
+use crate::wire::{End, Piece};
 
 /// La fin du flux, telle que l'annonce le format.
 pub const DONE: &str = "[DONE]";
@@ -37,22 +38,6 @@ pub fn request_body(model: &str, persona: &str, turns: &[Turn]) -> String {
     let messages: Vec<Value> =
         messages.into_iter().map(|(role, content)| json!({ "role": role, "content": content })).collect();
     json!({ "model": model, "messages": messages, "stream": true }).to_string()
-}
-
-/// Ce qu'apporte un événement du flux.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct Piece {
-    /// Le texte à ajouter à la réponse ; vide si l'événement n'en porte pas.
-    pub text: String,
-    pub end: Option<End>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum End {
-    /// La réponse est complète.
-    Complete,
-    /// Le fournisseur a abandonné en cours de route, et dit pourquoi.
-    Failed(String),
 }
 
 /// Lit les données d'un événement du flux.

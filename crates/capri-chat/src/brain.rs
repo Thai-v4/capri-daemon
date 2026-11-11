@@ -12,7 +12,8 @@ use crate::endpoint::{Endpoint, EndpointError};
 /// Longueur maximale d'un nom de modèle.
 const MAX_MODEL_CHARS: usize = 200;
 
-/// Les fournisseurs que Capri connaît. Tous parlent le format « chat completions » d'OpenAI.
+/// Les fournisseurs que Capri connaît. Tous parlent le format « chat completions » d'OpenAI, sauf
+/// Anthropic, qui a le sien ([`crate::wire::Wire`]).
 ///
 /// Les adresses viennent de la documentation de chacun, relue le 10 novembre 2026 :
 /// - Ollama : <https://docs.ollama.com/api/openai-compatibility> ;
@@ -24,7 +25,12 @@ const MAX_MODEL_CHARS: usize = 200;
 ///   fournisseur, ferment le 1er février 2027 d'après <https://proxyapi.ru/docs/migration>) ;
 /// - Ollama en ligne : <https://docs.ollama.com/api/authentication> et
 ///   <https://docs.ollama.com/cloud> (« Direct cloud inference at `https://ollama.com/api` and
-///   `https://ollama.com/v1` requires an API key », dans l'en-tête `Authorization: Bearer`).
+///   `https://ollama.com/v1` requires an API key », dans l'en-tête `Authorization: Bearer`) ;
+/// - Anthropic, relue le 11 novembre 2026 : `https://api.anthropic.com/v1/messages` et
+///   `…/v1/models`, avec une clé d'API dans l'en-tête `x-api-key`
+///   (<https://platform.claude.com/docs/en/build-with-claude/streaming>,
+///   <https://platform.claude.com/docs/en/api/models/list>). Une clé d'API seulement : jamais un
+///   jeton de connexion, ni ce qui sert à Claude Code, ni l'abonnement de l'utilisateur.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Provider {
     /// Ollama, sur cette machine ou sur le réseau privé : aucun compte, aucune clé. Un modèle
@@ -37,6 +43,8 @@ pub enum Provider {
     ProxyApi,
     /// Les serveurs d'Ollama, joints directement, avec une clé : rien à installer.
     OllamaCloud,
+    /// L'API d'Anthropic, avec une clé d'API : son propre format ([`crate::anthropic`]).
+    Anthropic,
     /// Un autre serveur compatible, dont l'utilisateur donne l'adresse.
     Custom,
 }
@@ -53,13 +61,14 @@ pub enum KeyNeed {
 }
 
 impl Provider {
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 8] = [
         Self::Ollama,
         Self::LmStudio,
         Self::OpenRouter,
         Self::DeepSeek,
         Self::ProxyApi,
         Self::OllamaCloud,
+        Self::Anthropic,
         Self::Custom,
     ];
 
@@ -72,6 +81,7 @@ impl Provider {
             Self::DeepSeek => "deepseek",
             Self::ProxyApi => "proxyapi",
             Self::OllamaCloud => "ollama-cloud",
+            Self::Anthropic => "anthropic",
             Self::Custom => "custom",
         }
     }
@@ -85,6 +95,7 @@ impl Provider {
             Self::DeepSeek => "DeepSeek",
             Self::ProxyApi => "ProxyAPI",
             Self::OllamaCloud => "Ollama en ligne",
+            Self::Anthropic => "Anthropic",
             Self::Custom => "Serveur personnalisé",
         }
     }
@@ -98,6 +109,7 @@ impl Provider {
             Self::DeepSeek => Some("https://api.deepseek.com"),
             Self::ProxyApi => Some("https://api.proxyapi.ru/v1"),
             Self::OllamaCloud => Some("https://ollama.com/v1"),
+            Self::Anthropic => Some("https://api.anthropic.com/v1"),
             Self::Custom => None,
         }
     }
@@ -106,7 +118,9 @@ impl Provider {
         match self {
             Self::Ollama => KeyNeed::None,
             Self::LmStudio | Self::Custom => KeyNeed::Optional,
-            Self::OpenRouter | Self::DeepSeek | Self::ProxyApi | Self::OllamaCloud => KeyNeed::Required,
+            Self::OpenRouter | Self::DeepSeek | Self::ProxyApi | Self::OllamaCloud | Self::Anthropic => {
+                KeyNeed::Required
+            }
         }
     }
 
@@ -325,13 +339,14 @@ mod tests {
         assert_eq!(url(Provider::DeepSeek).as_deref(), Ok("https://api.deepseek.com"));
         assert_eq!(url(Provider::ProxyApi).as_deref(), Ok("https://api.proxyapi.ru/v1"));
         assert_eq!(url(Provider::OllamaCloud).as_deref(), Ok("https://ollama.com/v1"));
+        assert_eq!(url(Provider::Anthropic).as_deref(), Ok("https://api.anthropic.com/v1"));
         assert_eq!(url(Provider::Custom), Err(BrainError::MissingUrl), "son adresse est à donner");
 
         let need = |id: &str| Provider::from_id(id).map(Provider::key_need);
         assert_eq!(need("ollama"), Some(KeyNeed::None));
         assert_eq!(need("lmstudio"), Some(KeyNeed::Optional));
         assert_eq!(need("custom"), Some(KeyNeed::Optional));
-        for id in ["openrouter", "deepseek", "proxyapi", "ollama-cloud"] {
+        for id in ["openrouter", "deepseek", "proxyapi", "ollama-cloud", "anthropic"] {
             assert_eq!(need(id), Some(KeyNeed::Required), "{id}");
         }
     }
