@@ -30,19 +30,29 @@ micro ouvert en permanence). Sur macOS, une fenêtre de réglages
   Et `sheets` : les planches de sa pose assise (cases, dessins tenus en deux, ligne du bord de la
   fenêtre), et dans `sheets::stand` celles de sa pose debout (sa hauteur, ses pieds, son échelle
   face à la pose assise ; la boucle ne flotte pas, le flottement reste au programme), mesurées sur
-  les images.
+  les images ; `shown` serre les seuls dessins montrés (un sur deux pour les boucles et le
+  clignement) dans les grilles confiées à la carte graphique.
+  Et `look` : **son dessin**, quelle case montrer à chaque image (debout, la boucle et ses
+  clignements aux tours de `BLINKS`, sa bouche posée par-dessus quand elle parle ; posée,
+  l'arrivée, sa boucle assise, parlante ou en musique, le départ), où (sa ligne d'assise sur le
+  bord), ce qui l'attrape (un masque par pose, l'union de sa boucle), ce qu'il lui faut sur un bord
+  (`Look::stature`, que `perch` reçoit), et le repli sur son dessin d'avant quand des planches
+  manquent (`Wardrobe`). `body` ne connaît que son image debout, le point posé sur le bord
+  (`Capri::seat`), et combien d'images dure son départ.
   Et `scale` : **sa taille**, choisie par l'utilisateur, est une échelle `Scale` rapportée à sa
-  hauteur **debout** d'origine (300 points), de 40 % à 140 % (au-delà, son dessin de 420 pixels de
-  haut serait agrandi plus de 2 fois sur un écran Retina), jamais des dimensions en dur. Tout
-  dessin d'elle, quelles que soient ses proportions, se dessine à `Scale::display_size`, à la
-  densité de son dessin debout : un nouveau dessin (assise…) n'ajoute pas sa propre taille.
+  hauteur **debout** d'origine (300 points pour sa silhouette, `stand::STATURE`, pas pour la case),
+  de 40 % à 140 % (borne choisie pour son dessin d'avant, agrandi 2 fois à 140 % sur un écran
+  Retina ; ses planches le sont 2,42 fois), jamais des dimensions en dur. Tous ses dessins se
+  rapportent à sa hauteur debout à l'écran (`Look::set_height`) : un nouveau dessin n'ajoute pas
+  sa propre taille.
   Et `perch` : où se poser sur les fenêtres des autres apps, d'après la description neutre qu'en
   donne `capri-platform` (`DeskWindow` : un numéro, un rectangle, ordinaire ou non, l'opacité, à
   elle ou non ; rien d'autre) : le passage du repère du système à celui de l'overlay (`DeskFrame`,
   AppKit compris), le tri (`skip`, `sift`), les morceaux visibles des bords (`ledges`),
   l'accroche (`landing`), le suivi et le départ (`follow`, `Leave`), la cadence de lecture
-  (`Watch`, en images). Le corps (`body`) a la posture `Perched` et ses deux gestes, ancrés à
-  ses pieds (`AlphaMask::feet`).
+  (`Watch`, en images), d'après ce qu'il lui faut autour du point posé (`Stature` : sa hauteur
+  debout, la place qu'elle occupe, le morceau de bord qui la porte). Le corps (`body`) a la
+  posture `Perched` et ses deux gestes, ancrés à ses pieds (`AlphaMask::feet`).
 - `capri-claude` : tout ce que Capri sait de Claude Code, lui aussi **sans dépendance système** :
   lecture de l'entrée des hooks, protocole, suivi des sessions, édition de `settings.json` de
   texte à texte, le style de sortie « Capri » (`style` : son texte, la signature qui reconnaît le
@@ -70,7 +80,9 @@ micro ouvert en permanence). Sur macOS, une fenêtre de réglages
   faudrait OpenSSL) et `https://` est refusé. Testé contre un faux serveur local ; aucun test ne
   sort de la machine.
 - `capri-render` : wgpu, et le tracé du texte du bandeau et de la bulle (cosmic-text, polices du
-  système).
+  système). Ses images sont confiées une fois (`Renderer::add_image`, qui compte ce qu'elles
+  pèsent) ; chaque dessin en prend une part (`Crop` : une case de grille), lue à un demi-texel des
+  bords de la case. `Offscreen` fait le même rendu dans une image en mémoire, pour les essais.
   Couleurs prémultipliées de bout en bout.
 - Les appels système et l'`unsafe` lié à l'OS vivent dans **deux crates, et nulle part
   ailleurs** : `capri-platform` (la fenêtre, la voix, le micro, le trousseau, la liste des
@@ -159,6 +171,14 @@ micro ouvert en permanence). Sur macOS, une fenêtre de réglages
   `capri_core::perch` ; `perch_setup` lit et écrit `perch.json` (la case « S'asseoir sur les
   fenêtres » de son menu). `perch_rehearsal` (version de débogage seulement) est `capri perch
   rehearse` : la vraie liste, lue et triée sans rien afficher, qui n'imprime que des nombres.
+  `figure` confie ses images à la carte graphique (les planches lues par `assets`, puis lâchées),
+  fait les masques de clic, et traduit ce que décide `capri_core::look` en dessins pour le rendu ;
+  `portraits` (essais ignorés) rend de vraies images de chaque pose par ce même code, pour les
+  regarder : à relancer après tout changement de ce qui se voit,
+  `CAPRI_PORTRAITS_DIR=… cargo test --release -p capri-app portraits -- --ignored`.
+  `music_view` décide quand écouter si un son joue (sur son thread « capri-musique ») et ce
+  qu'elle en conclut ; `music_setup` lit et écrit `music.json` (la case « Se balancer sur la
+  musique » de son menu). `music_rehearsal` est `capri music rehearse` (version de débogage).
 
 ## La fenêtre de réglages : ajouter une rubrique
 
@@ -255,7 +275,10 @@ précisément quoi vérifier plutôt que de l'affirmer.
   obligatoires recopiées dans `CREDITS.md`. Son chargement est tolérant : sans elles, elle se pose
   debout. Sa pose debout (`assets/capri/stand/`) en vient aussi, aux mêmes conditions (la boucle
   `idle`, son clignement et sa bouche ; pas l'ancien jeu de cases de 240 px) ; sans elle, elle
-  garde `capri-cutout.png`.
+  garde `capri-cutout.png`. **Le repli** : seul `capri-cutout.png` est indispensable ; une planche
+  absente, illisible ou refusée par la carte graphique ne fait jamais planter, sa pose revient à
+  son dessin d'avant (`look::Wardrobe`), et chaque combinaison (debout seule, assise seule, aucune)
+  est testée.
   Dans un worktree sans images, utiliser `CAPRI_ASSETS=/chemin/vers/assets`.
 - Aucune télémétrie, rien n'envoyé sur le réseau sans action explicite de l'utilisateur. La
   fenêtre de réglages ne demande d'elle-même la liste des modèles qu'à un serveur de cette
@@ -280,7 +303,13 @@ précisément quoi vérifier plutôt que de l'affirmer.
   l'artiste, l'album ni le nom de l'app : ni lus (pas de `kAudioProcessPropertyBundleID`, pas de
   notification de lecteur qui les transporte), ni gardés, ni écrits dans le journal, ni affichés,
   ni envoyés à son cerveau. **Aucune permission** (ni AppleScript, ni Automatisation, ni capture
-  du son) et **aucune API privée** (pas de MediaRemote). Rien ne part sur le réseau.
+  du son) et **aucune API privée** (pas de MediaRemote). Rien ne part sur le réseau. L'écoute ne
+  tourne que **quand elle sert** : assise (avec ses planches), visible, et permise par la case de
+  son menu (`music.json`) ; une fois par seconde, sur son propre thread (la première écoute d'un
+  processus prend environ 70 ms : jamais sur le chemin d'une image) ; oubliée dès qu'elle ne sert
+  plus. Sa propre voix ne compte pas (mesuré : le système l'attribue à son processus, que
+  l'écoute écarte) ; à revérifier après tout changement de la voix ou de l'écoute avec
+  `capri music rehearse`, qui le compte sans un bruit. Debout, la musique ne change rien.
 - Son oreille : le micro ne s'ouvre que sur un **geste de l'utilisateur** (le raccourci, ou le
   menu), jamais autrement : pas d'écoute permanente, pas de mot d'éveil, pas de réouverture
   automatique après une réponse. Il se ferme toujours tout seul : au relâchement (touche maintenue),

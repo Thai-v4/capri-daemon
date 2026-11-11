@@ -8,10 +8,11 @@
 //! son visage et son trait gardent la même taille d'un dessin à l'autre.
 //!
 //! **Les bornes.** De [`MIN`] (40 %, 120 points : elle se pose sur bien plus de fenêtres, et son
-//! dessin, réduit, reste lisible) à [`MAX`] (140 %, 420 points). Son dessin debout fait 420 pixels
-//! de haut : à 140 %, sur un écran Retina (2 pixels par point), un pixel du dessin couvre 2 pixels
-//! de l'écran en hauteur comme en largeur, et il est déjà flou ; au-delà, il le serait de plus en
-//! plus (à la taille d'origine, il est déjà agrandi 1,43 fois sur un tel écran).
+//! dessin, réduit, reste lisible) à [`MAX`] (140 %, 420 points). La borne haute a été choisie pour
+//! son dessin d'avant, de 420 pixels de haut : à 140 %, sur un écran Retina (2 pixels par point),
+//! un pixel du dessin y couvre 2 pixels de l'écran, et il est déjà flou. Ses planches (sa silhouette
+//! debout : 347 pixels, `sheets::stand::STATURE`) le sont davantage : agrandies 1,73 fois à la
+//! taille d'origine, 2,42 fois à 140 %. La borne n'a pas changé avec elles.
 //!
 //! **Les pas.** Les menus avancent par crans de 10 % (« Plus grande », « Plus petite », alignés sur
 //! les dizaines) ; la molette, par crans de 2 % de sa taille du moment, assez fins pour sembler

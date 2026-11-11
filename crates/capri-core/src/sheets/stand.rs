@@ -69,7 +69,13 @@ pub const MOUTH_BOX: ((u32, u32), (u32, u32)) = ((58, 117), (74, 131));
 /// grossières, le confirment : du cou à l'entrejambe, 98 px debout contre 106 assise (1,08) ; du
 /// haut des cheveux à l'assise, 237 px assise contre 203 debout jusqu'à l'entrejambe, alors
 /// qu'elle est penchée en avant (au moins 1,17 pour le seul torse) ; et à 1,0, assise, les jambes
-/// pendantes, elle serait aussi haute que debout. À revoir à l'œil en passant d'une pose à l'autre.
+/// pendantes, elle serait aussi haute que debout.
+///
+/// Regardé sur des images rendues côte à côte (le 11 novembre 2026, `portraits.rs` de l'app) : les
+/// deux dessins n'ont pas les mêmes proportions (assise, ses cheveux plus hérissés, sa tête plus
+/// grande, environ 1,4 du haut des cheveux au menton, et ses jambes dessinées bien plus longues).
+/// À 1,11, elle paraît un peu plus grande assise, la tête surtout ; à 1,20, les têtes se
+/// rapprochent. Gardé à 1,11 en attendant que l'utilisateur le voie en mouvement.
 pub const STAND_OVER_PERCH: f32 = 1.11;
 
 /// Une planche.

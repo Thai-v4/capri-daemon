@@ -7,8 +7,11 @@ Capri, la construct de *Cyberpunk: Edgerunners* saison 2, vit sur ton bureau. É
 
 ## Jalon 1 : ce qu'elle fait
 
-- Elle flotte en bas à droite de l'écran, animée façon anime : des poses clés tenues plusieurs
-  images, un trait qui « bout » à chaque dessin, une copie violette mal repérée.
+- Elle flotte en bas à droite de l'écran, animée façon anime : la boucle dessinée par l'artiste du
+  projet [Capri](https://github.com/lachydotmcg/capri-desktop) (voir
+  [plus bas](#ses-dessins--debout-assise-et-sur-ta-musique)), tenue « en deux » (12 dessins par
+  seconde), et un flottement en poses clés. Sans ces planches, son dessin d'avant : un trait qui
+  « bout » à chaque dessin, une copie violette mal repérée.
 - La souris traverse la fenêtre partout, sauf sur elle, au pixel près.
 - **Attrape-la** au clic gauche pour la déplacer. **Lâche-la** doucement et elle reste là ;
   **lance-la** et elle file, ralentit et rebondit sur les bords de l'écran.
@@ -61,26 +64,32 @@ Limites connues, qui viennent de ce que Claude Code signale ou non :
 
 ## Jalon 3 : elle s'assoit sur tes fenêtres
 
-**Lâche-la doucement** les pieds près du haut d'une fenêtre (à moins de 45 points au-dessus ou en
-dessous de son bord) : elle s'y pose, s'écrase un instant sur ses pieds, rebondit, puis reste
-immobile (elle ne flotte plus ; seul son trait continue de « bouillir »). **Lance-la** : là où elle
-s'arrête, c'est la même règle. Posée, elle **suit la fenêtre** quand tu la déplaces ou la
+**Lâche-la doucement**, debout, les pieds près du haut d'une fenêtre (à moins de 45 points au-dessus
+ou en dessous de son bord) : elle apparaît sur le bord et **s'y assoit** : le bord passe sous ses
+cuisses, ses jambes pendent devant la fenêtre, sa main s'y tient (voir
+[ses dessins](#ses-dessins--debout-assise-et-sur-ta-musique)). Sans ses planches assises, elle s'y
+tient debout, comme avant : elle s'écrase un instant sur ses pieds, rebondit, puis reste immobile.
+**Lance-la** : là où elle s'arrête, c'est la même règle. Posée, elle **suit la fenêtre** quand tu la déplaces ou la
 redimensionnes, à la même place le long du bord (tirée par un seul côté, la fenêtre ne l'emmène pas :
 le bord sous ses pieds n'a pas bougé), sans quitter le bord ni l'écran, à chaque rafraîchissement de
 l'écran (120 fois par seconde sur un écran ProMotion, 60 sur la plupart des autres ; de même quand
 on la tient ou qu'elle vole). Ses dessins, eux, restent des poses tenues à 24 images par seconde :
-seule sa position suit l'écran. Elle **se remet à flotter
-sur place**, avec un petit étirement, quand :
+seule sa position suit l'écran. Elle **s'efface du bord**, là où elle était (en une seconde), puis
+**se remet à flotter**, debout, avec un petit étirement, quand :
 
 - sa fenêtre n'est plus à l'écran (fermée, réduite dans le Dock, app masquée, autre bureau) ;
-- une autre fenêtre passe devant le morceau de bord sous ses pieds ;
-- le bord sort de l'écran, ou ne lui laisse plus la place au-dessus de lui (plein écran) ;
-- tu l'attrapes, ou tu décoches « S'asseoir sur les fenêtres ».
+- une autre fenêtre passe devant le morceau de bord où elle est assise ;
+- le bord sort de l'écran, ou ne lui laisse plus la place (plein écran) ;
+- tu décoches « S'asseoir sur les fenêtres ».
 
-Il n'y a qu'un dessin d'elle, debout : « assise » veut dire posée sur le bord. Ne comptent que les
-fenêtres d'app ordinaires (ni menus, ni Dock, ni panneaux flottants), à l'écran, opaques, d'au moins
-90 × 45 points, sur son écran (celui qui porte la barre des menus), et pas les siennes ; et seulement
-les parties visibles de leurs bords : une fenêtre devant cache le bord de celle de derrière.
+**Attrape-la** : elle se lève tout de suite, sans s'effacer, tenue par le même endroit d'elle (ses
+cheveux, ses pieds…). Debout, elle reprend sa place à l'écran : si le bord est trop près du haut
+de l'écran pour qu'elle y tienne debout, elle réapparaît un peu plus bas, devant la fenêtre.
+
+Ne comptent que les fenêtres d'app ordinaires (ni menus, ni Dock, ni panneaux flottants), à
+l'écran, opaques, d'au moins 90 × 45 points, sur son écran (celui qui porte la barre des menus), et
+pas les siennes ; et seulement les parties visibles de leurs bords : une fenêtre devant cache le
+bord de celle de derrière.
 
 **Ce qu'elle lit, et ce qu'elle ne lit jamais.** Aucune permission : ni Accessibilité, ni
 Enregistrement de l'écran. Sur macOS, elle lit la liste des fenêtres de CoreGraphics
@@ -106,6 +115,12 @@ de tout le processus, version optimisée, par la répétition `CAPRI_PERCH_REHEA
 | posée, sa fenêtre déplacée | 12,4 à 14,3 | 115 à 119 | 100 à 108 |
 | *avant ce réglage*, sa fenêtre déplacée | 4,7 (une mesure) | 24 | 24 |
 
+Ces mesures datent d'avant ses planches (son dessin d'avant). Avec elles, flottante au repos :
+2,3 % d'un cœur (0,35 s de processeur en 15 s, version optimisée, mesuré le 11 novembre 2026 ;
+2,3 % aussi avec son dessin d'avant, mesuré de même). Posée, et pendant qu'on déplace sa fenêtre,
+pas remesuré avec ses planches : elle dessine toujours 12 dessins par seconde au repos, une seule
+case (deux quand elle parle debout), sans trait qui bout ni copie violette.
+
 Posée au repos, elle ne coûte donc rien de plus que flottante. Pendant un déplacement, chaque image
 coûte : c'est le prix de 100 positions par seconde au lieu de 24, et seulement le temps du
 déplacement (une demi-seconde après son arrêt, elle revient au repos). Une lecture de la liste prend
@@ -128,8 +143,8 @@ déplacée par programme : une fenêtre tirée à la main n'a pas été mesurée
 icône dans la barre des menus). C'est retenu d'un lancement à l'autre (`perch.json`, dans son
 dossier) ; activé par défaut.
 
-**Sa taille.** Plus petite, elle se pose sur bien plus de fenêtres (il lui faut toute sa hauteur
-au-dessus d'un bord). Dans son menu (clic droit sur elle, ou son icône ; macOS et Windows),
+**Sa taille.** Plus petite, elle se pose sur bien plus de fenêtres (il lui faut, assise, la place
+de sa tête au-dessus d'un bord). Dans son menu (clic droit sur elle, ou son icône ; macOS et Windows),
 « Taille : 100 % » ouvre « Plus grande », « Plus petite » et « Taille d'origine » : par crans de
 10 %, de **40 %** (120 points de haut) à **140 %** (420 points). Plus finement, d'un geste sur
 elle : la molette, ou deux doigts sur le pavé tactile, **avec ⌥ tenue** sur macOS (**Ctrl** sous
@@ -145,18 +160,23 @@ qu'on la tient.
   d'autre), au plus tard une demi-seconde après le dernier cran de molette ; un fichier illisible
   donne la taille d'origine, avec une ligne dans le journal, et n'est pas réécrit tant qu'on ne
   change pas sa taille ;
-- **agrandie, elle est floue** : son dessin fait 220 × 420 pixels. Sur un écran Retina, il est déjà
-  agrandi 1,4 fois à la taille d'origine, 2 fois à 140 % : c'est la borne haute, pour ne pas aller
-  plus loin dans le flou. Réduite, elle reste nette ; sur un écran standard (1 pixel par point),
-  très réduite, son trait fin peut scintiller (le dessin n'a qu'une seule résolution) ;
+- **agrandie, elle est floue** : sa silhouette debout fait 347 pixels de haut dans ses planches.
+  Sur un écran Retina, elle est déjà agrandie 1,73 fois à la taille d'origine (1,56 fois assise),
+  2,42 fois à 140 % (2,18 fois assise) : ses bords sont un peu doux à 100 %, nettement à 140 %. La
+  borne haute (140 %) avait été choisie pour son dessin d'avant (220 × 420 pixels, agrandi 2 fois
+  à 140 %) ; elle n'a pas changé. Réduite, elle reste nette ; très réduite, son trait fin peut
+  scintiller (les planches n'ont qu'une seule résolution, sans mipmaps) ;
 - la taille est une échelle rapportée à sa hauteur debout (`capri_core::scale`), pas des
-  dimensions : un autre dessin d'elle, d'autres proportions, se dessinera à la même échelle.
+  dimensions : 100 % = 300 points pour sa silhouette debout, des cheveux à la pointe du pied (pas
+  pour la case de la planche, qui a de la marge), et sa pose assise est à la même échelle.
 
 Limites connues :
 
-- il lui faut toute sa hauteur de place au-dessus du bord (300 points à la taille d'origine, 120 à
-  la plus petite). Une fenêtre agrandie, ou dont le haut est près de la barre des menus, ne peut pas
-  la porter ;
+- assise, il lui faut au-dessus du bord la place de sa tête (185 points à la taille d'origine, 74 à
+  la plus petite, 258 à la plus grande), en dessous celle de ses jambes (89 points à la taille
+  d'origine), et un morceau de bord visible d'environ 103 points pour sa main et son genou. Une
+  fenêtre agrandie, ou dont le haut est près de la barre des menus, ne peut pas la porter. Sans ses
+  planches assises, debout, il lui faut toute sa hauteur (300 points à la taille d'origine) ;
 - elle vit sur l'écran qui porte la barre des menus : les fenêtres d'un autre écran ne comptent pas,
   et elle repart quand sa fenêtre quitte son écran ;
 - une fenêtre fermée, réduite ou passée devant elle au clavier se remarque au plus tard un quart de
@@ -172,31 +192,76 @@ Limites connues :
   minuteur à haute résolution), et la présentation (`Fifo`) se cale sur l'écran ; Linux : elle
   flotte comme avant.
 
-### Prêt, pas encore branché : une vraie pose assise
+### Ses dessins : debout, assise, et sur ta musique
 
-`tools/fetch-assets.sh` télécharge aussi, dans `assets/capri/perch/`, les planches de sa pose
-assise dessinées par l'artiste du projet [Capri](https://github.com/lachydotmcg/capri-desktop)
-(jambes pendantes, clignement, parole, musique, arrivée et départ ; voir `CREDITS.md`, usage non
-commercial seulement). Leur description (cases, dessins tenus en deux, ligne du bord de la fenêtre)
-est dans `capri_core::sheets`, leur chargement dans `assets::perch::load` : sans elles, elle se pose
-debout comme aujourd'hui. **Rien ne les affiche encore.**
+Debout comme assise, elle a les dessins de l'artiste du projet
+[Capri](https://github.com/lachydotmcg/capri-desktop) (voir `CREDITS.md`, usage non commercial
+seulement), que `tools/fetch-assets.sh` télécharge dans `assets/capri/stand/` et
+`assets/capri/perch/`. Tous sont tenus « en deux » : 12 dessins par seconde. Rien n'est tiré au
+hasard : à la même image, le même dessin.
 
-Pareil pour sa pose debout, du même artiste, dans `assets/capri/stand/` (la boucle, son clignement,
-sa bouche) : décrite dans `capri_core::sheets::stand`, chargée par `assets::stand::load`. Elle
-remplacera son dessin actuel, d'un autre style, qui reste là quand ces planches manquent. **Rien ne
-les affiche encore.**
+- **Debout** : sa boucle (2,5 s), et le flottement que le programme lui ajoute (la boucle de
+  l'artiste ne flotte pas), dont le tour dure aussi 2,5 s : elle est au plus bas quand ses cheveux
+  retombent. Elle cligne des yeux quatre fois toutes les 20 s, toujours aux mêmes tours (espacées de
+  5 s, 2,5 s, 5 s puis 7,5 s). **Tenue ou lancée** : la même boucle, écrasée à l'impact et étirée
+  dans le sens de sa course, comme avant.
+- **Elle parle** : sa bouche, une des cinq formes de l'artiste, change 12 fois par seconde,
+  posée sur son visage. « Parler », c'est : si sa réponse se dit à voix haute, tant que sa voix
+  parle (pas avant le premier son, ni après le dernier, même si sa bulle reste) ; sinon, tant que
+  sa bulle montre ses mots (pas « … » quand elle réfléchit). La ligne que Claude écrit pour elle
+  (le miroir) compte de même. Assise, c'est la boucle parlante de l'artiste, la même que sa boucle
+  assise, dessin pour dessin.
+- **Assise** : elle apparaît sur le bord à partir d'un trait (1,2 s), puis sa boucle, où elle cligne
+  aux mêmes tours que debout. Le bord passe sur sa ligne d'assise (sous ses cuisses) : ses jambes
+  pendent devant la fenêtre, sa main tient le bord. Elle s'efface jusqu'à un trait (1 s) quand elle
+  repart d'elle-même ; attrapée, elle est debout tout de suite. Les deux poses sont à la même
+  échelle : un pixel de ses planches debout vaut 1,11 pixel de ses planches assises
+  (`STAND_OVER_PERCH`, le rapport du projet Capri, voir plus bas ce qu'en montrent les images).
+- **Sur ta musique**, assise : quand un son sort d'une autre app depuis 3 s, elle se balance, les
+  yeux fermés, une main dans les cheveux ; elle s'arrête 8 s après le dernier son. Elle entre dans
+  la musique et en sort au début d'un tour de sa boucle (jusqu'à 2,5 s plus tard), là où les deux
+  dessins se ressemblent le plus. Parler passe avant : elle se met à parler tout de suite, et ne
+  reprend la musique qu'au tour suivant. **Debout, la musique ne change rien** : il n'y a pas de
+  dessin pour cela.
+- **Sans ses planches** (manquantes, illisibles, ou refusées par la carte graphique) : son dessin
+  d'avant (`capri-cutout.png`), comme avant, avec son trait qui bout et sa copie violette ; sans
+  planches assises, elle se tient debout sur les fenêtres ; et sans planches debout mais avec les
+  assises, son dessin d'avant debout, assise avec ses planches. Le journal le dit en une ligne.
 
-De même, sur macOS, elle sait déjà dire si **un son sort d'une autre app** (`capri_platform::music`,
-décidé par `capri_core::music`), pour se balancer quand tu mets de la musique : **un oui ou un non,
-rien d'autre**. Elle demande à CoreAudio quelles apps ont un flux de sortie en marche, sans aucune
-permission et sans jamais lire le titre, l'artiste ni le nom de l'app. Comptent : un lecteur, une
-vidéo, un jeu ; ne comptent pas : elle-même, une app d'appel qui a le micro ouvert, un son de moins
-de 3 secondes ; une pause de moins de 8 secondes entre deux morceaux ne l'arrête pas. Une app qui
-garde sa sortie ouverte sans rien jouer compte à tort, le volume coupé aussi. Une écoute coûte
-0,07 à 0,2 ms en médiane quand aucun appareil audio ne tourne, 4,3 ms quand il faut interroger tous
-les clients du son (mesuré sur un MacBook Pro M5 Pro, 42 clients) ; à une écoute par seconde, au
-plus un demi-centième d'un cœur.
-Windows et Linux : elle ne sait pas. **Pas encore branché** non plus.
+**Sur ta musique : un oui ou un non, rien d'autre.** Sur macOS, elle demande à CoreAudio quelles
+apps ont un flux de sortie en marche (`capri_platform::music`, décidé par `capri_core::music`),
+sans aucune permission et sans jamais lire le titre, l'artiste ni le nom de l'app ; le journal n'en
+dit que « se balance » ou « ne se balance plus ». Comptent : un lecteur, une vidéo, un jeu ; ne
+comptent pas : elle-même, une app d'appel qui a le micro ouvert, un son de moins de 3 secondes ;
+une pause de moins de 8 secondes entre deux morceaux ne l'arrête pas. Une app qui garde sa sortie
+ouverte sans rien jouer compte à tort, le volume coupé aussi. **Sa propre voix ne compte pas** :
+mesuré par `capri music rehearse` (version de débogage), qui fait parler une voix d'essai muette
+dans le même processus et compte les autres apps qui jouent : sa voix, sans effet comme avec, est
+attribuée à son propre processus, que l'écoute écarte ; aucune autre app de plus.
+
+L'écoute **ne tourne que quand elle sert** : elle est assise (avec ses planches), visible, et
+c'est permis. Une fois par seconde, sur un thread à elle : la première écoute d'un processus prend
+environ 70 ms (mesuré : 73 à 75 ms), elle ne doit retenir aucune image. Une écoute coûte 0,07 à
+0,2 ms en médiane quand aucun appareil audio ne tourne, 4,3 ms quand il faut interroger tous les
+clients du son (mesuré sur un MacBook Pro M5 Pro, 42 clients) ; à une écoute par seconde, au plus
+un demi-centième d'un cœur. **Le désactiver** : décoche « Se balancer sur la musique » dans son
+menu (clic droit sur elle, ou son icône). C'est retenu d'un lancement à l'autre (`music.json`,
+dans son dossier, rien d'autre que `{ "enabled": false }`) ; permis par défaut. Windows et Linux :
+elle ne sait pas si un son joue, et ne se balance pas ; la case est grisée.
+
+**Ce que ça pèse.** Les planches sont lues au lancement (44 ms en version optimisée), remises en
+grilles (81 Mo), puis lâchées une fois confiées à la carte graphique. Seuls les dessins montrés y
+vont (un sur deux pour les boucles et le clignement) : 47 Mo de textures. Sur un Mac à puce Apple,
+elles comptent dans la mémoire de l'app (son « empreinte », celle du Moniteur d'activité) : mesuré
+par `footprint`, 253 Mo avec ses planches contre 200 Mo avec son dessin d'avant seulement.
+
+**Les deux poses à la même échelle : ce qu'on en sait.** Les deux dessins n'ont pas les mêmes
+proportions, et leurs mesures ne s'accordent pas : du cou à l'entrejambe, il faudrait 1,08 ; pour
+que sa tête (du haut des cheveux au menton : 107 pixels debout, environ 153 assise) ait la même
+taille, environ 1,4, mais assise ses cheveux sont plus hérissés et sa tête penchée, son visage vu
+de trois quarts ; ses jambes, assise, sont dessinées bien plus longues. 1,11 est le rapport du
+projet Capri, gardé ici. À l'œil, à 1,11, elle paraît un peu plus grande assise que debout, la tête
+surtout ; à 1,20, les têtes se rapprochent. À regarder (liste plus bas).
 
 ## Jalon 4 : lui parler
 
@@ -653,8 +718,11 @@ crates/
                    poser sur les fenêtres (perch.rs : repères, bords visibles, accroche, suivi,
                    départ, cadence de lecture), et quand la boucle se réveille (pace.rs : 60 Hz
                    au repos, la fréquence de l'écran quand elle suit quelque chose), et sa taille
-                   (scale.rs : une échelle rapportée à sa hauteur debout, ses bornes, ses crans)
-                   (testée)
+                   (scale.rs : une échelle rapportée à sa hauteur debout, ses bornes, ses crans),
+                   ses planches (sheets.rs, sheets/stand.rs : cases, dessins tenus en deux, ligne
+                   d'assise, grilles serrées des seuls dessins montrés), et son dessin (look.rs :
+                   quelle case montrer, où, ce qui l'attrape, ce qu'il lui faut sur un bord),
+                   et si de la musique joue (music.rs) (testée)
   capri-claude/    logique pure : hooks de Claude Code, protocole, sessions, settings.json, style
                    de sortie « Capri », miroir, dossiers de Capri et de Claude Code (testée)
   capri-chat/      logique pure : conversation, fournisseurs et format « chat completions », flux
@@ -665,8 +733,10 @@ crates/
                    (testée)
   capri-net/       le seul crate qui parle au réseau : envoyer la conversation (en https par le TLS
                    du système), lire la réponse au fil de l'eau (testé contre un faux serveur local)
-  capri-render/    rendu wgpu : Metal sur macOS, DirectX 12 + DirectComposition sur Windows
-    sprite.wgsl    le shader : boil et copie violette
+  capri-render/    rendu wgpu : Metal sur macOS, DirectX 12 + DirectComposition sur Windows ;
+                   ses images confiées une fois, une case de grille par dessin ; Offscreen, le
+                   même rendu dans une image en mémoire, pour les essais
+    sprite.wgsl    le shader : une part de l'image, boil et copie violette
     banner.rs      le texte du bandeau et de la bulle, tracé avec les polices du système
   capri-platform/  la fenêtre « Overlay » : première des deux couches qui parlent au système
     macos.rs         AppKit via objc2 : un NSPanel non activant, sans fenêtre winit, et le
@@ -703,7 +773,13 @@ crates/
                    rehearse` (perch_rehearsal.rs : la vraie liste des fenêtres, sans rien
                    afficher, lancée par tests/fenetres_du_bureau.rs) et `CAPRI_PERCH_REHEARSAL`
                    (perch_rehearsal/follow.rs : le suivi d'une fenêtre d'essai, mesuré) ; sa
-                   taille (size_setup.rs pour size.json)
+                   taille (size_setup.rs pour size.json) ; ses dessins (assets.rs : lecture
+                   tolérante des planches ; figure.rs : confiées à la carte graphique, masques de
+                   clic, ce que look.rs décide traduit pour le rendu ; portraits.rs : des images
+                   rendues pour les regarder, essais ignorés) ; sa musique (music_view.rs : quand
+                   écouter, sur son thread ; music_setup.rs pour music.json ; en version de
+                   débogage `capri music rehearse`, music_rehearsal.rs, lancé par
+                   tests/musique_sans_titre.rs)
 tools/             récupération vérifiée des images, fabrication de Capri.app (macOS)
 ```
 
@@ -714,10 +790,11 @@ Règle : tout ce qui peut être testé sans écran va dans `capri-core`, `capri-
 
 Vérifié automatiquement :
 
-- formatage, `clippy -D warnings` et 468 tests sur **macOS Apple Silicon** (plus 7 qui ne
-  tournent qu'à la main : ils écrivent des images, lisent un vrai `settings.json`, touchent au
-  vrai trousseau, créent de vraies voix et un vrai moteur audio, sans bruit, lisent la vraie
-  liste des fenêtres, ou demandent au système si un son joue) : animation, lancer et rebonds, hit-test, clics, bandeau, parole en pages, bulle
+- formatage, `clippy -D warnings` et 490 tests sur **macOS Apple Silicon** (plus 11 qui ne
+  tournent qu'à la main : ils écrivent des images ou dessinent sur la vraie carte graphique,
+  lisent un vrai `settings.json`, touchent au vrai trousseau, créent de vraies voix et un vrai
+  moteur audio, sans bruit, lisent la vraie liste des fenêtres, ou demandent au système si un son
+  joue) : animation, lancer et rebonds, hit-test, clics, bandeau, parole en pages, bulle
   sur plusieurs lignes, conversation, **validation du shader** par le compilateur de wgpu, lecture
   des exemples de hooks de la documentation de Claude Code, suivi des sessions, aller-retour sur
   `settings.json`, socket (droits, connexions simultanées), et le binaire `capri-hook` lancé pour
@@ -816,8 +893,44 @@ Vérifié automatiquement :
   elle reste si la place suffit, repart sinon, et se pose plus petite là où elle ne tenait pas ;
   `size.json` (la taille d'origine sans fichier, retenue, un nombre hors bornes ramené dedans, un
   fichier étrange signalé) ;
+- ses dessins, sans écran : debout, sa boucle tenue en deux et ses clignements aux tours choisis,
+  toujours les mêmes ; son flottement au plus bas quand ses cheveux le sont ; sa bouche seulement
+  quand elle parle, au même endroit qu'elle, tenue ou lancée aussi ; posée, l'arrivée puis sa
+  boucle, sa ligne d'assise sur le bord à moins d'un pixel, et qui suit sa fenêtre ; le départ là
+  où elle était, sans étirement avant la fin, puis l'étirement ; attrapée, debout tout de suite,
+  tenue par le même endroit d'elle ; parler avant la musique, la musique prise et quittée au début
+  d'un tour, une image sautée sans la perdre ; chaque masque de clic selon la pose dessinée ; ce
+  qu'il lui faut sur un bord assise (moins de place au-dessus, un morceau de bord plus long, de la
+  place pour ses jambes) ; sans planches, ou avec une seule des deux poses, son dessin d'avant comme
+  avant ; les vraies planches mesurées (sa largeur assise, ses masques) ; seuls les dessins montrés
+  serrés dans les grilles confiées à la carte graphique, chacun intact ; « parler » d'après sa
+  bulle ;
+- la musique, sans son : l'écoute une fois par seconde seulement assise, visible et permise, sur
+  son thread, oubliée dès qu'elle ne sert plus ; jamais quand c'est interdit ou que le système ne
+  sait pas ; un son court ne la fait pas se balancer ; `music.json` (permis sans fichier, retenu, un
+  fichier étrange signalé) ;
 - `clippy -D warnings` en compilation croisée pour **Windows x64** et **Linux x64** (le code
   compile, il n'est pas exécuté).
+
+**Vérifié sur ce Mac, sans écran ni bruit** (le 11 novembre 2026, à la main) :
+
+- le rendu sur la vraie carte graphique (`cargo test -p capri-render gpu_tests -- --ignored`) :
+  une case de grille dessinée seule, sans rien prendre à ses voisines, même agrandie ;
+- de vraies images de chaque pose, rendues par le même code que l'app sur un faux bureau
+  (`CAPRI_PORTRAITS_DIR=… cargo test --release -p capri-app portraits -- --ignored`), et
+  regardées : debout, clignant, ses cinq bouches (de près, et quatre fois agrandie : elles
+  couvrent celle de sa boucle, rien ne dépasse), tenue et lancée (étirée), assise sur le bord d'un
+  rectangle clair (le bord passe sous ses cuisses, ses jambes devant), clignant, parlant, en
+  musique, l'arrivée et le départ dessin par dessin (nés d'un trait sur le bord, au même endroit
+  que sa pose assise), les deux poses côte à côte (à 1,11 et à 1,20) ; et le repli : planches
+  refusées par la carte graphique, ou absentes, son dessin d'avant debout comme posée ;
+- `capri music rehearse` : sa propre voix, sans effet comme avec, n'ajoute aucune autre app qui
+  joue ;
+- la vraie app lancée quelques secondes avec des lieux d'essai : planches lues en 44 ms, 47 Mo de
+  textures, 2,3 % d'un cœur flottante au repos ; puis avec son seul dessin d'avant
+  (`CAPRI_ASSETS`) : elle démarre, le journal dit qu'elle garde son dessin d'avant, 0,4 Mo de
+  textures. Ni le mouvement, ni le suivi d'une vraie fenêtre, ni une vraie musique n'ont été
+  regardés : voir la liste suivante.
 
 **Vérifié en ligne de commande sur ce Mac** (le 10 novembre 2026, sans la clé d'un vrai
 fournisseur) :
@@ -1094,11 +1207,11 @@ elle saccadait en suivant sa fenêtre, d'où la nouvelle cadence ; depuis `Capri
 ou `RUST_LOG=debug cargo run --release` pour lire le journal) :
 
 1. **se poser** : une fenêtre ordinaire (Finder, TextEdit) dont le haut est vers le milieu de
-   l'écran ; lâche Capri doucement, les pieds un peu au-dessus du bord : elle descend s'y poser, ses
-   pieds sur le bord (ni vide dessous, ni pieds enfoncés dans la barre de titre), s'écrase un
-   instant, rebondit, puis ne bouge plus (plus de flottement). Lâchée les pieds dans la barre de
-   titre : elle remonte sur le bord. Lâchée nettement plus haut (au-delà d'environ 45 points) :
-   elle flotte, comme avant ;
+   l'écran ; lâche Capri doucement, les pieds un peu au-dessus du bord : elle disparaît et
+   apparaît assise sur le bord (voir la liste suivante pour ce qu'il faut y regarder). Sans ses
+   planches assises : elle descend s'y poser, ses pieds sur le bord, s'écrase un instant, rebondit,
+   puis ne bouge plus. Lâchée les pieds dans la barre de titre : elle s'y pose aussi. Lâchée
+   nettement plus haut (au-delà d'environ 45 points) : elle flotte, comme avant ;
 2. près d'un coin arrondi : ses pieds rentrent un peu sur le bord, elle ne se tient pas dans le
    vide ; contre le bord de l'écran, elle reste entière à l'écran ;
 3. **la lancer** vers une fenêtre : si elle s'arrête près d'un bord, elle s'y pose ; sinon elle
@@ -1113,8 +1226,9 @@ ou `RUST_LOG=debug cargo run --release` pour lire le journal) :
    doucement. Redimensionne-la par la gauche : elle ne bouge pas ; par la droite,
    jusqu'à plus étroite que l'endroit où elle était : elle glisse au bout du bord, sans le quitter ;
    par un coin du haut : elle monte ou descend avec le bord ;
-5. **fenêtre fermée** (⌘W), réduite dans le Dock (⌘M), app masquée (⌘H) : elle se remet à
-   flotter sur place en un quart de seconde au plus, avec un petit étirement, sans sauter ailleurs ;
+5. **fenêtre fermée** (⌘W), réduite dans le Dock (⌘M), app masquée (⌘H) : en un quart de seconde
+   au plus, elle s'efface du bord là où elle était (une seconde), puis flotte debout au même
+   endroit, avec un petit étirement, sans sauter ailleurs ;
 6. **bord recouvert** : clique sur une autre fenêtre qui chevauche le bord sous ses pieds, elle
    repart ; une fenêtre devant mais à côté de ses pieds : elle reste ;
 7. **plein écran** : sa fenêtre en plein écran (bouton vert), elle repart ; une fenêtre agrandie
@@ -1159,6 +1273,63 @@ ou `RUST_LOG=debug cargo run --release` pour lire le journal) :
 21. **le flou** : à 140 %, son dessin est nettement plus doux qu'à 100 % (attendu) ; à 40 %, son
     trait ne doit ni scintiller ni s'émietter sur l'écran Retina.
 
+**Ses dessins et la musique : à regarder et à écouter à la main** (rien de cette liste n'a été
+regardé en mouvement ; les images fixes, elles, l'ont été, voir plus haut) :
+
+1. **debout** : elle flotte doucement, monte et descend en 2,5 s ; ses cheveux retombent quand
+   elle est au plus bas : les deux ensemble, sans à-coup ni dessin qui saute à la fin d'un tour.
+   Elle cligne de temps en temps (quatre fois en 20 s), pas à chaque tour ;
+2. **la netteté** : à 100 %, sur l'écran Retina, ses bords sont-ils assez nets ? (ses planches y
+   sont agrandies 1,73 fois ; légèrement doux sur les images rendues) ; à 140 %, nettement plus
+   doux ; à 40 %, son trait ne scintille-t-il pas quand elle flotte ?
+3. **attrapée, lancée** : la même boucle, qui continue pendant qu'on la tient ; lancée, étirée dans
+   le sens de sa course, écrasée en touchant un bord de l'écran ; on l'attrape bien partout sur
+   elle (cheveux, main sur la hanche, pointe du pied), et le clic passe à côté d'elle ;
+4. **elle parle**, debout : écris-lui (⌃⌥P) ; sa bouche ne bouge pas pendant « … », puis bouge
+   tant que sa bulle montre ses mots, et se ferme une fois la bulle partie. Avec sa voix activée :
+   sa bouche bouge pendant qu'on l'entend, et seulement alors (pas pendant « … », ni une fois la
+   dernière phrase dite) ; à toi de dire si le décalage entre ses lèvres et sa voix gêne. La bouche
+   est-elle bien sur son visage, même pendant un clignement ou un lancer ?
+5. **se poser** : sur une fenêtre (Finder, TextEdit) : elle apparaît à partir d'un trait sur le bord
+   (un peu plus d'une seconde), puis s'assoit : **le bord de la fenêtre passe sous ses cuisses**,
+   sa main tient le bord à gauche, ses jambes pendent devant la fenêtre (pas derrière, pas dans le
+   vide au-dessus). Pas de saut entre la fin de l'arrivée et sa boucle assise ;
+6. **assise** : elle respire, cligne aux mêmes moments que debout ; sa fenêtre déplacée, elle suit
+   (comme au jalon 3) ; une fenêtre dont le haut est à environ 200 points du haut de l'écran la porte
+   maintenant (il en fallait plus de 300) ; une fenêtre devant sa main ou son genou la fait partir ;
+7. **elle repart** : ferme sa fenêtre (⌘W) : elle s'efface jusqu'à un trait, là où elle était,
+   puis flotte debout, avec un petit étirement ; attrape-la pendant qu'elle s'efface : debout tout de
+   suite. Attrape-la assise par les cheveux, puis par les pieds : elle se lève sous le curseur,
+   tenue à peu près par le même endroit, sans saut ;
+8. **elle parle assise** : écris-lui : sa bouche bouge, sans que son corps saute ;
+9. **la même échelle** : passe d'une pose à l'autre plusieurs fois (pose-la, attrape-la) : a-t-elle
+   l'air de la même taille ? Les images rendues `cote-a-cote.png` (à 1,11) et
+   `cote-a-cote-a-1-20.png` (à 1,20) montrent les deux ; si 1,20 te paraît plus juste, c'est
+   `STAND_OVER_PERCH` dans `capri_core::sheets::stand` ;
+10. **la musique** : assise, mets un morceau (Musique, Spotify, une vidéo) : au bout de 3 s environ,
+    et au début d'un tour de sa boucle (jusqu'à 2,5 s de plus), elle se balance, les yeux fermés ;
+    mets en pause : elle continue un peu, puis reprend sa boucle environ 8 s après (au début d'un
+    tour) ; une pause de quelques secondes entre deux morceaux ne l'arrête pas. Écris-lui pendant
+    la musique : elle parle tout de suite, puis reprend la musique au tour suivant. Une notification
+    (un son d'une seconde) ne la fait pas se balancer ;
+11. **sa propre voix** : sans musique, voix activée, fais-lui dire une longue réponse : elle ne se
+    balance ni pendant, ni après ;
+12. **debout, la musique ne change rien** : avec un morceau, attrape-la : debout, sa boucle
+    habituelle ; repose-la : elle se balance de nouveau quelques secondes après ;
+13. **le menu** : « Se balancer sur la musique » est coché dans les deux menus ; décoche-le : assise
+    en musique, elle reprend sa boucle au tour suivant ; quitte et relance : toujours décoché
+    (`music.json`) ; recoche-le ;
+14. **cachée** (⌃⌥C) pendant la musique : rien ne bouge ; montrée de nouveau, elle reprend sa
+    boucle, puis la musique après quelques secondes ;
+15. **le processeur et la mémoire** (Moniteur d'activité) : flottante, environ 2 % d'un cœur
+    (comme avant) ; assise, pareil ; en musique, pas plus ; « Mémoire » d'environ 250 Mo (contre
+    200 sans ses planches) ;
+16. **le repli** : lance-la avec `CAPRI_ASSETS` vers un dossier qui n'a que
+    `capri/capri-cutout.png` : son dessin d'avant, qui bout, posée debout sur les fenêtres, sans
+    bouche, et sans se balancer ;
+17. aucune demande de permission n'apparaît (ni micro, ni Enregistrement de l'écran) quand elle
+    écoute la musique, et `RUST_LOG=debug` ne dit que « se balance » ou « ne se balance plus ».
+
 **Pas encore testé sur un vrai PC Windows** : il n'y a pas encore de fenêtre de réglages. Le tube
 nommé de `capri-ipc` n'y a jamais tourné, le champ de saisie et la voix n'y existent pas encore,
 et le chat n'y a jamais été lancé : ni le https (SChannel), ni le Gestionnaire d'identification,
@@ -1189,8 +1360,10 @@ Points à surveiller :
    un bandeau qui affiche ce que fait Claude~~ ← jalon 2
 3. ~~Elle s'assoit sur tes fenêtres~~ ← jalon 3 (macOS : CoreGraphics, sans aucune permission ;
    Windows : Win32) : écrit et testé sans écran ; se poser vu sur un vrai Mac le 11 novembre 2026,
-   puis le suivi rendu fluide (à la cadence de l'écran, mesuré sans écran) ; reste à regarder le
-   reste sur un vrai Mac, et à l'exécuter sur un vrai PC Windows.
+   puis le suivi rendu fluide (à la cadence de l'écran, mesuré sans écran) ; ~~les dessins de
+   l'artiste du projet Capri, debout et assise~~, ~~se balancer sur ta musique~~ (écrits, testés
+   sans écran, images fixes rendues et regardées ; pas encore regardés en mouvement) ; reste à
+   regarder le reste sur un vrai Mac, et à l'exécuter sur un vrai PC Windows.
 4. Le chat avec un modèle d'IA : ~~la saisie et la bulle~~, ~~un modèle local par Ollama~~,
    ~~les fournisseurs à clé compatibles OpenAI (OpenRouter, DeepSeek, ProxyAPI, Ollama en ligne)
    avec leurs clés dans le trousseau~~, ~~une fenêtre de réglages (macOS)~~, ~~Capri dans Claude
