@@ -52,7 +52,7 @@ use capri_core::{
     place_input,
 };
 use capri_platform::{Overlay, OverlayEvent};
-use capri_render::{Renderer, SpriteDraw, SpriteImage};
+use capri_render::{Crop, ImageId, Renderer, SpriteDraw, SpriteImage};
 use global_hotkey::hotkey::{Code, HotKey, Modifiers};
 use global_hotkey::{GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState};
 use winit::application::ApplicationHandler;
@@ -190,6 +190,8 @@ struct Hotkeys {
 struct Running {
     overlay: Overlay,
     renderer: Renderer,
+    /// Son dessin d'avant, confié à la carte graphique.
+    cutout: ImageId,
     capri: Capri,
     mask: AlphaMask,
     start: Instant,
@@ -273,12 +275,12 @@ impl App {
         let overlay = Overlay::new(event_loop)?;
 
         let (width, height) = overlay.size();
-        let renderer = Renderer::new(
-            overlay.surface_handle(),
-            width,
-            height,
-            SpriteImage { width: sprite.width, height: sprite.height, rgba: &sprite.rgba },
-        )?;
+        let mut renderer = Renderer::new(overlay.surface_handle(), width, height)?;
+        let cutout = renderer.add_image(SpriteImage {
+            width: sprite.width,
+            height: sprite.height,
+            rgba: &sprite.rgba,
+        })?;
         if !renderer.is_transparent() {
             log::warn!("la fenêtre ne peut pas être transparente sur cette machine");
         }
@@ -336,6 +338,7 @@ impl App {
         Ok(Running {
             overlay,
             renderer,
+            cutout,
             capri,
             mask: sprite.mask,
             start: now,
@@ -990,14 +993,16 @@ impl Running {
             min: [pose.rect.min.x, pose.rect.min.y],
             size: [pose.rect.size.x, pose.rect.size.y],
             ghost: [pose.ghost.x, pose.ghost.y],
+            ghost_strength: capri_render::GHOST,
             boil_seed: pose.boil_seed,
             boil: BOIL * unit,
             opacity: 1.0,
+            crop: Crop::WHOLE,
         };
         let overlay = &self.overlay;
         #[cfg(debug_assertions)]
         let drawing = perch_rehearsal::follow::wall_us();
-        self.renderer.render(&draw, banner.as_ref(), || overlay.pre_present_notify());
+        self.renderer.render(&[(self.cutout, draw)], banner.as_ref(), || overlay.pre_present_notify());
         #[cfg(debug_assertions)]
         {
             self.perch.drawn += 1;

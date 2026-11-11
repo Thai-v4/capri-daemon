@@ -448,10 +448,12 @@ impl BannerView {
             min: [min.x.round(), min.y.round()],
             size: [size.x.round(), size.y.round()],
             ghost: [ghost, ghost],
+            ghost_strength: capri_render::GHOST,
             // le texte ne « bout » pas : il doit rester lisible, et ne coûte rien au repos
             boil_seed: 0,
             boil: 0.0,
             opacity: pose.opacity,
+            crop: capri_render::Crop::WHOLE,
         })
     }
 }

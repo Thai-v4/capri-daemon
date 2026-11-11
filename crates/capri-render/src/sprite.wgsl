@@ -1,20 +1,23 @@
-// Capri : un quad texturé, son « boil » et sa copie violette mal repérée.
+// Capri : un quad texturé, une part rectangulaire de son image (une case de planche, ou l'image
+// entière), son « boil » et sa copie violette mal repérée.
 // Couleurs prémultipliées de bout en bout (macOS et DirectComposition composent ainsi).
 
 struct Uniforms {
     viewport: vec2f,   // taille de la surface, px physiques
-    rect_min: vec2f,   // coin haut gauche du sprite, px
-    rect_size: vec2f,  // taille du sprite, px
+    rect_min: vec2f,   // coin haut gauche du dessin, px
+    rect_size: vec2f,  // taille du dessin, px
     ghost: vec2f,      // décalage de la copie violette, px
+    crop_min: vec2f,   // la part de l'image à dessiner : coin haut gauche…
+    crop_size: vec2f,  // … et taille, en coordonnées normalisées de l'image
     seed: f32,         // dessin de boil courant
     boil: f32,         // amplitude du boil, px
     opacity: f32,
-    _pad: f32,
+    ghost_strength: f32, // 0 : pas de copie violette
 }
 
 @group(0) @binding(0) var<uniform> u: Uniforms;
-@group(0) @binding(1) var tex: texture_2d<f32>;
-@group(0) @binding(2) var samp: sampler;
+@group(1) @binding(0) var tex: texture_2d<f32>;
+@group(1) @binding(1) var samp: sampler;
 
 struct VsOut {
     @builtin(position) pos: vec4f,
@@ -53,10 +56,15 @@ fn value_noise(p: vec2f) -> f32 {
     );
 }
 
-// Échantillon prémultiplié, transparent hors du sprite.
+// Échantillon prémultiplié, transparent hors du dessin. Le point lu reste dans sa part de
+// l'image, à au moins un demi-texel de ses bords : le filtrage linéaire ne mélange jamais une
+// case avec sa voisine dans la grille.
 fn sample_at(uv: vec2f) -> vec4f {
     let inside = all(uv >= vec2f(0.0)) && all(uv <= vec2f(1.0));
-    let c = textureSampleLevel(tex, samp, clamp(uv, vec2f(0.0), vec2f(1.0)), 0.0);
+    let half_texel = 0.5 / vec2f(textureDimensions(tex));
+    let at = u.crop_min + clamp(uv, vec2f(0.0), vec2f(1.0)) * u.crop_size;
+    let held = clamp(at, u.crop_min + half_texel, u.crop_min + u.crop_size - half_texel);
+    let c = textureSampleLevel(tex, samp, held, 0.0);
     return select(vec4f(0.0), c, inside);
 }
 
@@ -69,7 +77,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4f {
 
     let body = sample_at(uv);
     let ghost_a = sample_at(uv - u.ghost / u.rect_size).a;
-    let violet = vec4f(0.45, 0.16, 0.88, 1.0) * ghost_a * 0.55;
+    let violet = vec4f(0.45, 0.16, 0.88, 1.0) * ghost_a * u.ghost_strength;
 
     // elle, par-dessus sa copie violette
     return (body + violet * (1.0 - body.a)) * u.opacity;
