@@ -877,9 +877,12 @@ impl State {
         }
     }
 
-    /// Le minuteur ne tourne que tant que le chemin traité a quelque chose à faire.
+    /// Le minuteur ne tourne que tant que le chemin traité a quelque chose à faire. En pause, rien
+    /// de ce qu'il fait avancer ne bouge (Capri cachée au milieu d'une phrase peut le rester des
+    /// heures) : il s'arrête aussi, et la reprise le relance. Les paquets d'une phrase en cours
+    /// de rendu arrivent sans lui.
     fn keep_time(&mut self) {
-        let needed = !self.queue.is_empty() || self.treating() || self.is_ringing();
+        let needed = !self.paused && (!self.queue.is_empty() || self.treating() || self.is_ringing());
         if needed && self.timer.is_none() {
             self.timer = Some(start_timer(self.key));
         } else if !needed && let Some(timer) = self.timer.take() {
