@@ -183,12 +183,13 @@ fn run() -> i32 {
 fn stature(scale: f32) -> Stature {
     match crate::assets::load_sprite() {
         Ok(sprite) => Stature {
-            size: crate::display_size(sprite.mask.size(), f64::from(scale)),
+            size: crate::display_size(sprite.mask.size(), f64::from(scale), capri_core::Scale::ORIGINAL),
             feet: sprite.mask.feet(),
         },
         Err(_) => {
             println!("images absentes : proportions d'origine");
-            Stature { size: crate::display_size((220, 420), f64::from(scale)), feet: Vec2::new(0.5, 1.0) }
+            let size = crate::display_size((220, 420), f64::from(scale), capri_core::Scale::ORIGINAL);
+            Stature { size, feet: Vec2::new(0.5, 1.0) }
         }
     }
 }

@@ -94,7 +94,18 @@ pub enum OverlayEvent {
     InputSubmitted(String),
     /// Le champ de saisie a été fermé sans valider : Échap, ou un clic ailleurs.
     InputCancelled,
+    /// La molette (ou deux doigts sur le pavé tactile) sur elle, avec [`ZOOM_MODIFIER`] tenue :
+    /// `steps` crans, positifs vers le haut (plus grande), négatifs vers le bas. Sans la touche,
+    /// rien n'est rapporté : faire défiler ne la change jamais de taille. Sur macOS, l'élan qui suit
+    /// un geste sur le pavé tactile ne compte pas : elle s'arrête quand les doigts se lèvent.
+    Zoom { steps: f64 },
 }
+
+/// La touche à tenir pour la changer de taille à la molette, sur elle : ⌥ (Option) sur macOS, Ctrl
+/// sous Windows (Alt y ouvrirait le menu de l'app au premier plan en la relâchant, et Ctrl +
+/// molette y est le geste habituel pour agrandir ; sur macOS, Ctrl + molette est le zoom de
+/// l'Accessibilité).
+pub const ZOOM_MODIFIER: &str = if cfg!(target_os = "macos") { "⌥" } else { "Ctrl" };
 
 #[derive(Debug, thiserror::Error)]
 pub enum OverlayError {

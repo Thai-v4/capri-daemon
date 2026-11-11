@@ -10,6 +10,7 @@ use capri_core::perch::DeskFrame;
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use windows_sys::Win32::Foundation::{HWND, POINT};
 use windows_sys::Win32::Graphics::Gdi::ScreenToClient;
+use windows_sys::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_CONTROL};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     GWL_EXSTYLE, GetCursorPos, GetWindowLongPtrW, HWND_TOPMOST, LWA_ALPHA, SW_HIDE, SW_SHOWNOACTIVATE,
     SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SetLayeredWindowAttributes, SetWindowLongPtrW,
@@ -67,6 +68,14 @@ pub fn set_click_through(window: &Window, through: bool) {
     } else {
         update_ex_style(hwnd, OVERLAY_STYLES, WS_EX_TRANSPARENT);
     }
+}
+
+/// Ctrl est-il enfoncé, là, tout de suite ? La fenêtre n'a jamais le clavier : winit ne lui dit
+/// pas ses touches, on demande donc l'état du clavier lui-même.
+pub fn zoom_modifier_down() -> bool {
+    // SAFETY: lecture de l'état d'une touche virtuelle, sans pointeur ; le bit de poids fort dit
+    // qu'elle est enfoncée.
+    unsafe { GetAsyncKeyState(i32::from(VK_CONTROL)) < 0 }
 }
 
 pub fn set_shown(window: &Window, shown: bool) {

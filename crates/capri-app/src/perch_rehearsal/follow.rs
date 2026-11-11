@@ -190,6 +190,10 @@ impl Follow {
                 self.stage = Stage::Landed { since: t };
             }
             Stage::Landed { since } if t - since >= LANDED => {
+                if !resize_on_her_edge(r) {
+                    self.stop_child();
+                    return true;
+                }
                 self.mark("posée, fenêtre immobile", t);
                 self.stage = Stage::Still { since: t };
             }
@@ -413,6 +417,36 @@ impl Follow {
             stats(trace.took.iter().map(|t| t.1).collect())
         );
     }
+}
+
+/// Posée sur la fenêtre d'essai (son bord à 560 points du haut), elle change de taille par le vrai
+/// chemin de l'app : la plus grande (420 points, il y a la place), la plus petite, puis celle
+/// d'origine. Chaque fois, elle doit rester posée, les pieds au même endroit du bord. Rien n'est
+/// retenu dans son dossier.
+fn resize_on_her_edge(r: &mut crate::Running) -> bool {
+    use capri_core::scale::{MAX, MIN};
+    let feet = r.capri.feet();
+    let mut fine = true;
+    for scale in [capri_core::Scale::new(MAX), capri_core::Scale::new(MIN), capri_core::Scale::ORIGINAL] {
+        r.resize(scale);
+        let stayed = r.capri.perched().is_some();
+        let moved = r.capri.feet() - feet;
+        let same_place = moved.x.abs() < 1.0 && moved.y.abs() < 1.0;
+        log::info!(
+            "répétition du suivi : taille {} % : {}, pieds déplacés de ({:.1}, {:.1}) px, {:.0} × {:.0} px",
+            scale.percent(),
+            if stayed { "toujours posée" } else { "plus posée" },
+            moved.x,
+            moved.y,
+            r.capri.size().x,
+            r.capri.size().y
+        );
+        fine &= stayed && same_place;
+    }
+    if !fine {
+        log::error!("répétition du suivi : changer de taille l'a fait quitter son bord ou bouger ses pieds");
+    }
+    fine
 }
 
 /// « n valeurs, médiane, 90 %, max ».

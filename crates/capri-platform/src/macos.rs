@@ -19,8 +19,8 @@ use objc2::runtime::{NSObject, NSObjectProtocol};
 use objc2::{DefinedClass, MainThreadMarker, MainThreadOnly, define_class, msg_send, sel};
 use objc2_app_kit::{
     NSApplicationDidChangeScreenParametersNotification, NSBackingStoreType, NSColor, NSEvent,
-    NSEventModifierFlags, NSPanel, NSScreen, NSStatusWindowLevel, NSView, NSWindowCollectionBehavior,
-    NSWindowStyleMask,
+    NSEventModifierFlags, NSEventPhase, NSPanel, NSScreen, NSStatusWindowLevel, NSView,
+    NSWindowCollectionBehavior, NSWindowStyleMask,
 };
 use objc2_foundation::{
     NSNotification, NSNotificationCenter, NSPoint, NSRect, NSRunLoop, NSRunLoopCommonModes,
@@ -132,6 +132,15 @@ define_class!(
         #[unsafe(method(otherMouseUp:))]
         fn other_mouse_up(&self, event: &NSEvent) {
             self.ivars().push(OverlayEvent::Released { button: other_button(event) });
+        }
+
+        /// La molette sur elle (la fenêtre ne reçoit la souris que là). Seulement avec ⌥ : sans la
+        /// touche, rien ne se passe, comme avant.
+        #[unsafe(method(scrollWheel:))]
+        fn scroll_wheel(&self, event: &NSEvent) {
+            if let Some(steps) = zoom_steps(event) {
+                self.ivars().push(OverlayEvent::Zoom { steps });
+            }
         }
 
         /// Résolution, densité ou écran principal modifiés (réglages d'affichage, écran
@@ -493,6 +502,27 @@ pub(crate) fn main_screen_desk() -> Option<(DeskFrame, (u32, u32))> {
 
 fn physical_size(frame: NSRect, scale: f64) -> (u32, u32) {
     ((frame.size.width * scale).round() as u32, (frame.size.height * scale).round() as u32)
+}
+
+/// Sur le pavé tactile, combien de points de défilement font un cran de molette.
+const POINTS_PER_STEP: f64 = 10.0;
+
+/// Les crans d'un défilement avec ⌥ tenue, positifs vers le haut ; `None` sans ⌥, pendant l'élan
+/// qui suit un geste, ou sans mouvement. D'après `NSEvent.h` : `scrollingDeltaY` est en points
+/// quand `hasPreciseScrollingDeltas` (pavé tactile, Magic Mouse), en lignes sinon (molette), et il
+/// est inversé selon les préférences de l'utilisateur, ce que dit `isDirectionInvertedFromDevice` :
+/// on revient au sens du geste, doigts ou molette vers le haut pour la grandir.
+fn zoom_steps(event: &NSEvent) -> Option<f64> {
+    if !event.modifierFlags().contains(NSEventModifierFlags::Option)
+        || event.momentumPhase() != NSEventPhase::None
+    {
+        return None;
+    }
+    let (dx, dy) = (event.scrollingDeltaX(), event.scrollingDeltaY());
+    let delta = if dy.abs() >= dx.abs() { dy } else { dx };
+    let delta = if event.isDirectionInvertedFromDevice() { -delta } else { delta };
+    let steps = if event.hasPreciseScrollingDeltas() { delta / POINTS_PER_STEP } else { delta };
+    (steps.is_finite() && steps != 0.0).then_some(steps)
 }
 
 /// Boutons au-delà de gauche et droite : 2 est la molette.

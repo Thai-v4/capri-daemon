@@ -128,10 +128,35 @@ déplacée par programme : une fenêtre tirée à la main n'a pas été mesurée
 icône dans la barre des menus). C'est retenu d'un lancement à l'autre (`perch.json`, dans son
 dossier) ; activé par défaut.
 
+**Sa taille.** Plus petite, elle se pose sur bien plus de fenêtres (il lui faut toute sa hauteur
+au-dessus d'un bord). Dans son menu (clic droit sur elle, ou son icône ; macOS et Windows),
+« Taille : 100 % » ouvre « Plus grande », « Plus petite » et « Taille d'origine » : par crans de
+10 %, de **40 %** (120 points de haut) à **140 %** (420 points). Plus finement, d'un geste sur
+elle : la molette, ou deux doigts sur le pavé tactile, **avec ⌥ tenue** sur macOS (**Ctrl** sous
+Windows), par crans de 2 %. Sans la touche, faire défiler sur elle ne fait rien, comme avant, et la
+page sous elle ne peut pas la changer de taille : la fenêtre ne reçoit la molette que quand le
+curseur est sur elle, et l'élan qui suit un geste sur le pavé tactile ne compte pas. Pas pendant
+qu'on la tient.
+
+- elle change tout de suite : ses pieds restent au même endroit, elle reste entière à l'écran, son
+  bandeau et sa bulle se replacent ; posée, elle reste sur son bord si la place au-dessus lui
+  suffit, sinon elle repart flotter ;
+- c'est retenu d'un lancement à l'autre, dans `size.json` de son dossier (`{ "scale": 0.8 }`, rien
+  d'autre), au plus tard une demi-seconde après le dernier cran de molette ; un fichier illisible
+  donne la taille d'origine, avec une ligne dans le journal, et n'est pas réécrit tant qu'on ne
+  change pas sa taille ;
+- **agrandie, elle est floue** : son dessin fait 220 × 420 pixels. Sur un écran Retina, il est déjà
+  agrandi 1,4 fois à la taille d'origine, 2 fois à 140 % : c'est la borne haute, pour ne pas aller
+  plus loin dans le flou. Réduite, elle reste nette ; sur un écran standard (1 pixel par point),
+  très réduite, son trait fin peut scintiller (le dessin n'a qu'une seule résolution) ;
+- la taille est une échelle rapportée à sa hauteur debout (`capri_core::scale`), pas des
+  dimensions : un autre dessin d'elle, d'autres proportions, se dessinera à la même échelle.
+
 Limites connues :
 
-- elle mesure 300 points : il lui faut 300 points de place au-dessus du bord. Une fenêtre agrandie,
-  ou dont le haut est près de la barre des menus, ne peut pas la porter ;
+- il lui faut toute sa hauteur de place au-dessus du bord (300 points à la taille d'origine, 120 à
+  la plus petite). Une fenêtre agrandie, ou dont le haut est près de la barre des menus, ne peut pas
+  la porter ;
 - elle vit sur l'écran qui porte la barre des menus : les fenêtres d'un autre écran ne comptent pas,
   et elle repart quand sa fenêtre quitte son écran ;
 - une fenêtre fermée, réduite ou passée devant elle au clavier se remarque au plus tard un quart de
@@ -601,7 +626,9 @@ crates/
                    (sound.rs : voix, hauteur, débit, traitements du son, leurs bornes), et où se
                    poser sur les fenêtres (perch.rs : repères, bords visibles, accroche, suivi,
                    départ, cadence de lecture), et quand la boucle se réveille (pace.rs : 60 Hz
-                   au repos, la fréquence de l'écran quand elle suit quelque chose) (testée)
+                   au repos, la fréquence de l'écran quand elle suit quelque chose), et sa taille
+                   (scale.rs : une échelle rapportée à sa hauteur debout, ses bornes, ses crans)
+                   (testée)
   capri-claude/    logique pure : hooks de Claude Code, protocole, sessions, settings.json, style
                    de sortie « Capri », miroir, dossiers de Capri et de Claude Code (testée)
   capri-chat/      logique pure : conversation, fournisseurs et format « chat completions », flux
@@ -649,7 +676,8 @@ crates/
                    perch_setup.rs pour perch.json), et en version de débogage `capri perch
                    rehearse` (perch_rehearsal.rs : la vraie liste des fenêtres, sans rien
                    afficher, lancée par tests/fenetres_du_bureau.rs) et `CAPRI_PERCH_REHEARSAL`
-                   (perch_rehearsal/follow.rs : le suivi d'une fenêtre d'essai, mesuré)
+                   (perch_rehearsal/follow.rs : le suivi d'une fenêtre d'essai, mesuré) ; sa
+                   taille (size_setup.rs pour size.json)
 tools/             récupération vérifiée des images, fabrication de Capri.app (macOS)
 ```
 
@@ -660,7 +688,7 @@ Règle : tout ce qui peut être testé sans écran va dans `capri-core`, `capri-
 
 Vérifié automatiquement :
 
-- formatage, `clippy -D warnings` et 425 tests sur **macOS Apple Silicon** (plus 6 qui ne
+- formatage, `clippy -D warnings` et 433 tests sur **macOS Apple Silicon** (plus 6 qui ne
   tournent qu'à la main : ils écrivent des images, lisent un vrai `settings.json`, touchent au
   vrai trousseau, créent de vraies voix et un vrai moteur audio, sans bruit, ou lisent la vraie
   liste des fenêtres) : animation, lancer et rebonds, hit-test, clics, bandeau, parole en pages, bulle
@@ -753,6 +781,14 @@ Vérifié automatiquement :
   bornes sensées, un minuteur qui ne dérive pas et ne repousse jamais un réveil) ; sa pose (l'écrasement
   et le rebond tenus 3 et 2 images, ses pieds immobiles, puis plus aucun flottement ; l'étirement
   au départ ; attrapée, elle quitte le bord) ; `perch.json` (activé sans fichier, retenu, un
+  fichier étrange signalé) ;
+- sa taille, sans écran : l'échelle toujours dans ses bornes et au centième (ce qui n'est pas un
+  nombre donne la taille d'origine), les crans du menu alignés sur les dizaines et arrêtés aux
+  bornes, ceux de la molette proportionnels et jamais nuls, la même densité pour un autre dessin
+  que pour le dessin debout (2 pixels d'écran par pixel du dessin à 140 % sur un écran Retina) ;
+  ses pieds qui restent en place et elle entière à l'écran quand elle change de taille ; posée,
+  elle reste si la place suffit, repart sinon, et se pose plus petite là où elle ne tenait pas ;
+  `size.json` (la taille d'origine sans fichier, retenue, un nombre hors bornes ramené dedans, un
   fichier étrange signalé) ;
 - `clippy -D warnings` en compilation croisée pour **Windows x64** et **Linux x64** (le code
   compile, il n'est pas exécuté).
@@ -872,7 +908,13 @@ dossier, et le trousseau d'essai est vide après. Le processus quitte de lui-mê
   dossier, un trousseau et une socket d'essai, à côté de la Capri de l'utilisateur sans y toucher
   (deux Capri à l'écran pendant une douzaine de secondes, ses raccourcis restant à la première).
   Cinq passages dans cette configuration (quatre avec la nouvelle cadence, un avec celle d'avant),
-  et d'autres avant, compilés autrement, qui disent la même chose.
+  et d'autres avant, compilés autrement, qui disent la même chose ;
+- sa taille, dans la même répétition : partie de 60 % (lue dans un `size.json` d'essai), posée
+  sur la fenêtre d'essai, elle passe par le vrai chemin de l'app à 140 % (440 × 840 pixels), 40 %
+  (126 × 240) puis 100 % (314 × 600) : toujours posée, les pieds déplacés de 0 pixel. Lancée trois
+  secondes avec un `size.json` illisible : une ligne dans le journal (« elle prend sa taille
+  d'origine : … « scale » n'est pas un nombre »), la taille d'origine, et le fichier laissé tel
+  quel. Ni le menu ni la molette n'ont été essayés (impossible sans souris).
 
 Le rendu réel sous Linux avec un GPU logiciel (le sprite s'affiche, flotte et « bout ») avait été
 vérifié avant le passage à la fenêtre « Overlay » ; il n'a pas été revérifié depuis.
@@ -1069,7 +1111,27 @@ ou `RUST_LOG=debug cargo run --release` pour lire le journal) :
 14. avec `RUST_LOG=debug`, les lignes « posée sur un bord », « aucun bord sous ses pieds » et
     « quitte le bord : … » ne contiennent que des nombres ;
 15. si tu utilises Stage Manager ou Mission Control : rien n'a été prévu pour eux, regarder
-    seulement que rien ne casse.
+    seulement que rien ne casse ;
+16. **sa taille, par le menu** : « Taille : 100 % » dans les deux menus ; « Plus petite » plusieurs
+    fois : elle rapetisse tout de suite, ses pieds au même endroit, jusqu'à 40 %, où « Plus petite »
+    s'éteint ; « Plus grande » jusqu'à 140 %, où elle s'éteint à son tour ; « Taille d'origine »
+    revient à 100 %. Le titre du sous-menu suit, dans les deux menus. Son bandeau (une session
+    Claude Code) et sa bulle (⌃⌥P) se placent au-dessus de sa tête à chaque taille ;
+17. **sa taille, d'un geste** : curseur sur elle, ⌥ tenue, la molette ou deux doigts vers le haut :
+    elle grandit doucement ; vers le bas : elle rapetisse ; doigts levés, elle s'arrête net (pas
+    d'élan). Sans ⌥, faire défiler sur elle ne fait rien ; faire défiler une page à côté d'elle, ⌥
+    tenue ou non, ne la change pas ; la tenir et faire défiler ne la change pas non plus ;
+18. **posée et changée de taille** : posée sur une fenêtre vers le milieu de l'écran, plus petite
+    puis plus grande : elle reste sur le bord, les pieds au même endroit ; posée sur une fenêtre
+    dont le haut est assez haut pour qu'à 140 % sa tête sortirait de l'écran : en grandissant, elle
+    repart flotter quand il n'y a plus la place ; réduite à 40 %, elle se pose sur une fenêtre qui
+    ne pouvait pas la porter à 100 % ;
+19. **près des bords de l'écran** : contre le bord droit ou en bas, agrandie, elle reste entière à
+    l'écran ;
+20. **retenue** : change sa taille, quitte Capri, relance-la : même taille, même titre de
+    sous-menu ;
+21. **le flou** : à 140 %, son dessin est nettement plus doux qu'à 100 % (attendu) ; à 40 %, son
+    trait ne doit ni scintiller ni s'émietter sur l'écran Retina.
 
 **Pas encore testé sur un vrai PC Windows** : il n'y a pas encore de fenêtre de réglages. Le tube
 nommé de `capri-ipc` n'y a jamais tourné, le champ de saisie et la voix n'y existent pas encore,
@@ -1080,7 +1142,10 @@ tourné non plus. La liste des fenêtres (jalon 3 : `EnumWindows`, le cadre et l
 de DWM, l'état des boutons de la souris) est écrite et compilée, jamais exécutée : sur un vrai PC,
 `cargo test --release -p capri-platform --test liste_des_fenetres -- --ignored --nocapture`, puis
 les points du jalon 3 ci-dessus (les fenêtres d'un autre bureau virtuel et les fenêtres réduites
-ne doivent pas la porter).
+ne doivent pas la porter). Sa taille y passe par les mêmes menus et par **Ctrl** + molette sur
+elle (l'état de Ctrl lu auprès du système, la fenêtre n'ayant jamais le clavier) : écrit et
+compilé, jamais exécuté ; que la molette arrive bien à sa fenêtre non activable, et que le suivi à
+la fréquence de l'écran y soit fluide, reste à voir.
 
 Points à surveiller :
 

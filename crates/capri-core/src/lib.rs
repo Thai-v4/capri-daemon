@@ -12,6 +12,8 @@
 //! rectangles, que la liste des fenêtres de `capri-platform` lui décrit.
 //! [`pace`] dit quand la boucle se réveille : ses dessins restent à 24 i/s, mais sa position suit
 //! le curseur ou sa fenêtre à la cadence de l'écran.
+//! [`scale`] dit sa taille, choisie par l'utilisateur : une échelle rapportée à sa hauteur debout,
+//! que tous ses dessins partagent.
 
 pub mod anim;
 pub mod banner;
@@ -22,6 +24,7 @@ pub mod input;
 pub mod mask;
 pub mod pace;
 pub mod perch;
+pub mod scale;
 pub mod sound;
 pub mod speech;
 
@@ -31,4 +34,5 @@ pub use body::{Capri, Pose, Stance};
 pub use geom::{Rect, Vec2};
 pub use input::{Button, Press, interpret_press};
 pub use mask::AlphaMask;
+pub use scale::Scale;
 pub use speech::{Speech, SpeechView};

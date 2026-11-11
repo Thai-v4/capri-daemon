@@ -108,6 +108,27 @@ impl PerchView {
         }
     }
 
+    /// Elle vient de changer de taille : posée, la place au-dessus de son bord lui suffit-elle
+    /// encore ? Oui : elle y reste, ses pieds glissés s'il le faut pour tenir dans l'écran ; non
+    /// (ou la liste illisible) : elle repart flotter, là où elle est.
+    pub fn resized(&mut self, capri: &mut Capri, overlay: &Overlay, now: f64) {
+        let Some(spot) = capri.perched() else { return };
+        let Some(seen) = self.read(capri, overlay) else {
+            log::debug!("quitte le bord : liste des fenêtres illisible");
+            return capri.take_off();
+        };
+        match perch::follow(&seen, screen(overlay), capri.stature(), spot) {
+            Ok(perch) => {
+                capri.ride(perch);
+                self.watch.saw(now, rect_of(&seen, spot.window));
+            }
+            Err(why) => {
+                log::debug!("quitte le bord après avoir changé de taille : {}", why.describe());
+                capri.take_off();
+            }
+        }
+    }
+
     /// Elle revient d'être cachée : posée, elle relit la liste tout de suite.
     pub fn wake(&mut self) {
         self.watch.wake();

@@ -652,6 +652,33 @@ mod tests {
     }
 
     #[test]
+    fn a_new_size_keeps_her_on_her_edge_when_there_is_room_and_lets_her_go_otherwise() {
+        // posée au milieu du bord d'une fenêtre dont le haut est à 800 pixels du haut de l'écran
+        let w = seen(1, rect(200.0, 800.0, 1600.0, 800.0));
+        let spot = Spot { window: 1, along: 800.0, left: 200.0, width: 1600.0 };
+        let at = |height: f32| Stature {
+            size: Vec2::new(height * 220.0 / 420.0, height),
+            feet: Vec2::new(0.5, 1.0),
+        };
+        // plus petite (40 % : 240 pixels sur cet écran) : elle reste, au même endroit
+        let small = follow(&[w], screen(), at(240.0), spot).expect("elle reste");
+        assert_eq!(small.feet, Vec2::new(1000.0, 800.0));
+        // un peu plus grande (130 % : 780 pixels) : il y a encore la place
+        assert!(follow(&[w], screen(), at(780.0), spot).is_ok());
+        // la plus grande (140 % : 840 pixels) ne tient plus au-dessus de ce bord : elle repart
+        assert_eq!(follow(&[w], screen(), at(840.0), spot), Err(Leave::NoRoom));
+        // plus petite, elle se pose là où elle ne tenait pas : un bord à 300 pixels du haut
+        let high = seen(2, rect(200.0, 300.0, 1600.0, 800.0));
+        assert_eq!(landing(&[high], screen(), capri(), Vec2::new(700.0, 300.0)), None);
+        assert!(landing(&[high], screen(), at(240.0), Vec2::new(700.0, 300.0)).is_some());
+        // grandie près du bout du bord, ses pieds glissent juste assez pour tenir dans l'écran
+        let edge = seen(3, rect(2400.0, 1000.0, 624.0, 800.0));
+        let near_end = Spot { window: 3, along: 580.0, left: 2400.0, width: 624.0 };
+        let grown = follow(&[edge], screen(), at(780.0), near_end).expect("elle reste");
+        assert!(grown.feet.x <= 3024.0 - at(780.0).size.x / 2.0 + 0.01, "{grown:?}");
+    }
+
+    #[test]
     fn the_watch_reads_slowly_at_rest_and_at_every_refresh_while_her_window_moves() {
         // un écran à 120 Hz
         let period = 1.0 / 120.0;

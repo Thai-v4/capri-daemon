@@ -8,12 +8,15 @@ use std::collections::VecDeque;
 use std::sync::Arc;
 
 use raw_window_handle::{HandleError, HasWindowHandle, WindowHandle};
-use winit::event::{ElementState, WindowEvent};
+use winit::event::{ElementState, MouseScrollDelta, WindowEvent};
 use winit::event_loop::ActiveEventLoop;
 use winit::keyboard::ModifiersState;
 use winit::window::{Window, WindowLevel};
 
 use crate::{OverlayError, OverlayEvent, imp};
+
+/// Sur un pavé tactile, combien de points de défilement font un cran de molette.
+const PIXELS_PER_STEP: f64 = 10.0;
 
 pub struct Overlay {
     window: Arc<Window>,
@@ -130,6 +133,21 @@ impl Overlay {
                 OverlayEvent::Released { button: *button }
             }
             WindowEvent::RedrawRequested => OverlayEvent::RedrawRequested,
+            // la molette sur elle (la fenêtre ne reçoit la souris que là), la touche tenue : la
+            // fenêtre n'a jamais le clavier, son état vient donc du système, au moment même
+            WindowEvent::MouseWheel { delta, .. } if imp::zoom_modifier_down() => {
+                // winit : positif quand le contenu descendrait, c'est-à-dire la molette vers le haut
+                let steps = match delta {
+                    MouseScrollDelta::LineDelta(_, y) => f64::from(*y),
+                    MouseScrollDelta::PixelDelta(position) => {
+                        position.y / (PIXELS_PER_STEP * self.scale_factor())
+                    }
+                };
+                if !(steps.is_finite() && steps != 0.0) {
+                    return;
+                }
+                OverlayEvent::Zoom { steps }
+            }
             _ => return,
         };
         self.events.borrow_mut().push_back(translated);

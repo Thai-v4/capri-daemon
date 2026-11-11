@@ -27,6 +27,11 @@ micro ouvert en permanence). Sur macOS, une fenêtre de réglages
   chaîne de traitements `Effect` — réverbération, délai, distorsion, égaliseur — avec leurs
   paramètres), ramenée dans les bornes documentées par Apple (`Delivery::bounded`), et la remise
   des échantillons du système en canaux séparés (`planar`). Elle ne sait rien de Capri.
+  Et `scale` : **sa taille**, choisie par l'utilisateur, est une échelle `Scale` rapportée à sa
+  hauteur **debout** d'origine (300 points), de 40 % à 140 % (au-delà, son dessin de 420 pixels de
+  haut serait agrandi plus de 2 fois sur un écran Retina), jamais des dimensions en dur. Tout
+  dessin d'elle, quelles que soient ses proportions, se dessine à `Scale::display_size`, à la
+  densité de son dessin debout : un nouveau dessin (assise…) n'ajoute pas sa propre taille.
   Et `perch` : où se poser sur les fenêtres des autres apps, d'après la description neutre qu'en
   donne `capri-platform` (`DeskWindow` : un numéro, un rectangle, ordinaire ou non, l'opacité, à
   elle ou non ; rien d'autre) : le passage du repère du système à celui de l'overlay (`DeskFrame`,
@@ -135,6 +140,9 @@ micro ouvert en permanence). Sur macOS, une fenêtre de réglages
   un thread à part, résultats relevés à chaque pas de la boucle. `style_setup` écrit le style de
   sortie dans `output-styles/` du dossier de Claude Code ; `claude::Feed` reçoit la ligne du
   miroir, que `banner_view` fait dire par `chat::Chat::relay` quand Capri est libre.
+  Sa taille est retenue par `size_setup` (`size.json` du dossier de Capri, rien d'autre) et
+  appliquée par `Running::resize` (menus « Taille », et `OverlayEvent::Zoom` : la molette sur elle
+  avec `capri_platform::ZOOM_MODIFIER` tenue, ⌥ sur macOS, Ctrl sous Windows).
   `voice_setup::delivery` fait la description de la voix pour la conversation, « Écouter » et
   `capri voice test` ; un changement fait dans la fenêtre est relu par `Chat::refresh_voice` dès
   la phrase suivante. `voice_rehearsal` (version de débogage seulement) est `capri voice
