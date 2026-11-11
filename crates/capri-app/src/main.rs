@@ -728,7 +728,8 @@ impl App {
         let Some(Hotkeys { toggle, talk, listen, .. }) = self.hotkeys else { return };
         while let Ok(event) = GlobalHotKeyEvent::receiver().try_recv() {
             if Some(event.id) == listen {
-                // le seul raccourci qui se maintient : on parle tant qu'il est enfoncé
+                // le seul dont le relâchement compte : appui bref, l'écoute reste ouverte ;
+                // appui maintenu, le relâchement la termine
                 self.listen(event.state == HotKeyState::Pressed);
                 continue;
             }
@@ -751,9 +752,9 @@ impl App {
         let Some(r) = self.running.as_mut() else { return };
         if pressed {
             r.overlay.hide_input(); // on ne tape pas et on ne parle pas en même temps
-            r.banner.listen_start();
+            r.banner.listen_press();
         } else {
-            r.banner.listen_stop();
+            r.banner.listen_release();
         }
     }
 

@@ -20,7 +20,7 @@ use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, TryRecvError, channel};
 use std::time::{Duration, Instant};
 
-use capri_chat::dictation::{Dictation, Said};
+use capri_chat::dictation::{Dictation, EndOfSpeech, Said};
 use capri_claude::{Headline, Tone};
 use capri_core::{Banner, Rect, Vec2, place_banner};
 use capri_platform::{Ear, EarEvent};
@@ -145,12 +145,35 @@ impl BannerView {
         self.refresh = true;
     }
 
-    /// On commence à lui parler au micro : elle se tait et écoute. Sans effet si elle écoute
-    /// déjà. Si elle ne peut pas écouter, elle dit pourquoi.
-    pub fn listen_start(&mut self) {
-        if self.dictation.is_listening() {
-            return;
+    /// Le raccourci vient d'être enfoncé. Si elle écoute déjà en écoute libre, ce nouvel appui
+    /// termine tout de suite et envoie ce qui a été compris ; si la touche est déjà enfoncée
+    /// (répétition), rien ; sinon elle commence à écouter, la touche enfoncée : le relâchement
+    /// dira si c'était un appui bref (écoute libre) ou maintenu (`listen_release`).
+    pub fn listen_press(&mut self) {
+        if self.dictation.is_free() {
+            self.listen_stop();
+        } else if !self.dictation.is_listening() {
+            self.listen_begin(false);
         }
+    }
+
+    /// Le raccourci vient d'être relâché. Maintenu, cela termine ; après un appui bref, le micro
+    /// reste ouvert et c'est la détection de fin de phrase (ou un nouvel appui) qui le fermera.
+    pub fn listen_release(&mut self) {
+        if self.dictation.released(self.now_ms()) {
+            self.listen_stop();
+        }
+    }
+
+    /// Le menu : un clic commence à écouter en écoute libre, un second termine tout de suite.
+    #[cfg(any(target_os = "macos", windows))]
+    pub fn listen_toggle(&mut self) {
+        if self.dictation.is_listening() { self.listen_stop() } else { self.listen_begin(true) }
+    }
+
+    /// Elle se tait et écoute. Si elle ne peut pas écouter, elle dit pourquoi. `free` : écoute
+    /// libre d'emblée (le menu), sans touche à maintenir.
+    fn listen_begin(&mut self, free: bool) {
         self.chat.hush(); // on ne s'écoute pas parler, et on ne lui coupe pas la parole à moitié
         if self.ear.is_none() {
             self.ear = Ear::new();
@@ -163,7 +186,8 @@ impl BannerView {
             None => Err("Je ne sais pas encore t'écouter sur ce système"),
         };
         match started {
-            Ok(()) => self.dictation.begin(),
+            Ok(()) if free => self.dictation.begin_free(self.now_ms()),
+            Ok(()) => self.dictation.begin_held(self.now_ms()),
             Err(why) => self.notify(why, Tone::Failed),
         }
         self.refresh = true;
@@ -171,7 +195,7 @@ impl BannerView {
 
     /// On a fini de lui parler : le micro se ferme, et ce qui a été dit part dès que le système
     /// a rendu son dernier mot.
-    pub fn listen_stop(&mut self) {
+    fn listen_stop(&mut self) {
         if !self.dictation.is_listening() {
             return;
         }
@@ -180,12 +204,6 @@ impl BannerView {
         }
         self.dictation.end(self.now_ms());
         self.refresh = true;
-    }
-
-    /// Commence à écouter, ou arrête si elle écoutait (pour le menu, où rien ne se maintient).
-    #[cfg(any(target_os = "macos", windows))]
-    pub fn listen_toggle(&mut self) {
-        if self.dictation.is_listening() { self.listen_stop() } else { self.listen_start() }
     }
 
     fn now_ms(&self) -> u64 {
@@ -202,20 +220,41 @@ impl BannerView {
                 EarEvent::Heard { text, last } => {
                     // la longueur seulement : ce qui se dit n'est jamais écrit dans le journal
                     log::debug!("entendu : {} caractères (définitif : {last})", text.chars().count());
-                    said = said.or(self.dictation.transcribed(&text, last));
+                    said = said.or(self.dictation.transcribed(
+                        &text,
+                        last,
+                        self.started.elapsed().as_millis() as u64,
+                    ));
                 }
                 EarEvent::Failed => {
                     log::debug!("l'écoute s'est terminée sans texte définitif");
                     said = said.or(self.dictation.failed());
                 }
                 EarEvent::PermissionAnswered => {
-                    let text = format!("C'est noté. Maintiens {} pour me parler", ear_setup::SHORTCUT);
+                    let text = format!("C'est noté. Appuie sur {} pour me parler", ear_setup::SHORTCUT);
                     self.notice = Some((Headline { text, tone: Tone::Done }, Instant::now() + NOTICE_FOR));
                 }
             }
         }
+        let now = self.started.elapsed().as_millis() as u64;
+        // la fin de la phrase, détectée seule (écoute libre), ou la borne dure : le micro se
+        // ferme, il n'est jamais ouvert plus longtemps que cela
+        if said.is_none()
+            && let Some(why) = self.dictation.due(now)
+        {
+            log::debug!("fin de l'écoute : {why:?}");
+            if why == EndOfSpeech::NothingHeard {
+                // pas un mot : on ne laisse pas au système le temps d'un dernier texte
+                ear.cancel();
+                said = self.dictation.failed();
+            } else {
+                ear.stop();
+                self.dictation.end(now);
+            }
+            self.refresh = true;
+        }
         if said.is_none() {
-            said = self.dictation.tick(self.started.elapsed().as_millis() as u64);
+            said = self.dictation.tick(now);
             if said.is_some() {
                 ear.cancel(); // le dernier mot n'est pas venu : on n'attend plus rien de cette écoute
             }
