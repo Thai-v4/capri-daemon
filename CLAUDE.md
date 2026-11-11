@@ -5,7 +5,8 @@ Compagne de bureau (Capri, *Cyberpunk: Edgerunners* 2) écrite en Rust, 100 % na
 du projet et la feuille de route ; jalons 1 (elle flotte) et 2 (le bandeau Claude Code) faits,
 jalon 4 (lui parler) en cours : saisie, bulle, modèle local (Ollama, LM Studio), fournisseurs
 compatibles OpenAI avec leur clé dans le trousseau (OpenRouter, DeepSeek, ProxyAPI, Ollama en
-ligne, serveur personnalisé), voix et écoute au micro en place ; Capri dans Claude Code (un style
+ligne, serveur personnalisé), voix et écoute au micro en place, effets de voix, hauteur et débit
+écrits et vérifiés sans bruit (pas encore écoutés) ; Capri dans Claude Code (un style
 de sortie, et le miroir qui lui fait dire la ligne que Claude écrit pour elle) en place, pas encore
 essayé dans une vraie session ; API d'Anthropic et mot d'éveil à venir. Sur macOS, une fenêtre de
 réglages (« Réglages… » dans son menu) règle son cerveau, sa voix et Claude Code sans terminal.
@@ -16,7 +17,11 @@ réglages (« Réglages… » dans son menu) règle son cerveau, sa voix et Clau
   sans écran va ici, avec des tests. Dont `form` : la description d'un formulaire de réglages
   (rubriques, lignes, événements, `Secret` au `Debug` masqué), que le modèle des réglages produit
   et que la fenêtre de `capri-platform` affiche ; elle est ici parce que les deux doivent la voir
-  et que `capri-chat` ne peut pas dépendre de `capri-platform`.
+  et que `capri-chat` ne peut pas dépendre de `capri-platform`. Et `sound`, pour la même raison :
+  la **description neutre** de comment dire une phrase (`Delivery` : voix, hauteur, débit, et une
+  chaîne de traitements `Effect` — réverbération, délai, distorsion, égaliseur — avec leurs
+  paramètres), ramenée dans les bornes documentées par Apple (`Delivery::bounded`), et la remise
+  des échantillons du système en canaux séparés (`planar`). Elle ne sait rien de Capri.
 - `capri-claude` : tout ce que Capri sait de Claude Code, lui aussi **sans dépendance système** :
   lecture de l'entrée des hooks, protocole, suivi des sessions, édition de `settings.json` de
   texte à texte, le style de sortie « Capri » (`style` : son texte, la signature qui reconnaît le
@@ -28,7 +33,9 @@ réglages (« Réglages… » dans son menu) règle son cerveau, sa voix et Clau
 - `capri-chat` : la conversation, **sans dépendance système ni réseau** : historique borné,
   format des fournisseurs (ce qu'on envoie, comment lire le flux), fournisseurs et besoin d'une
   clé (`brain`), règles d'adresse et règles de la clé (`endpoint`, `key` : jamais en clair, et
-  liée à son adresse), réglages du cerveau, personnalité, nettoyage du Markdown. Avec des tests.
+  liée à son adresse), réglages du cerveau, personnalité, nettoyage du Markdown, et les effets de
+  voix (`voice` : les préréglages `VoiceEffect` écrits pour Capri, l'intensité, la hauteur, le
+  débit, `voice.json`, et `delivery()` qui en fait la description neutre). Avec des tests.
   Les phrases que disent à la fois `capri chat` et la fenêtre de réglages (où part ce qu'on lui
   dit, clé rangée ou retirée…) sont dans `phrases`, écrites une seule fois. Le modèle de la
   fenêtre de réglages est dans `settings` (voir plus bas) ; sa rubrique « Claude Code » dépend de
@@ -72,8 +79,22 @@ réglages (« Réglages… » dans son menu) règle son cerveau, sa voix et Clau
   jamais un champ en cours de saisie, valide la saisie en cours avant toute action, et ne lit un
   champ secret qu'au moment de l'appui qui l'emporte, avant de le vider. Ailleurs que sur macOS :
   refus explicite (`SettingsWindowError::Unavailable`).
-  Sa voix vit ici aussi (`voice.rs`, `macos/voice.rs` : `AVSpeechSynthesizer`) ; ce qu'elle dit
-  et avec quelle voix est décidé par `capri_chat::voice`, qui est pur.
+  Sa voix vit ici aussi (`voice.rs`, `macos/voice.rs`, `macos/voice_stage.rs`) ; ce qu'elle dit,
+  avec quelle voix et quels effets est décidé par `capri_chat::voice`, qui est pur, et reçu sous la
+  forme neutre de `capri_core::sound::Delivery`. Deux chemins, une seule file qui garde l'ordre
+  entre eux : sans traitement, le **chemin direct** (`speakUtterance`), celui d'avant les effets,
+  inchangé — à hauteur et débit normaux, l'énoncé ne reçoit que sa voix (même une valeur égale à
+  la normale change le rendu de certaines voix) ; avec, le **chemin traité** : un second
+  synthétiseur rend la phrase en mémoire (`writeUtterance:toBufferCallback:`), un `AVAudioEngine`
+  la joue (lecteur au format de la voix → mélangeur vers 48 kHz stéréo → unités d'effet →
+  sortie). **Règle du repli** : au moindre problème du chemin traité (chaîne impossible, format
+  illisible, moteur qui ne démarre pas ou s'arrête, son qui ne sort pas, rien de rendu), ce qui
+  n'a pas été joué jusqu'au bout est redit par le chemin direct, sans effet, avec une ligne
+  `warn` dans le journal ; les effets reviennent au prochain `stop`. Une panne des effets ne doit
+  jamais la rendre muette ni la faire planter. Les rappels du système (paquets, fin d'énoncé,
+  minuteur) ne portent qu'un numéro et retrouvent la voix dans un registre propre au thread
+  principal ; seuls les blocs de fin de paquet, appelés ailleurs, ne touchent qu'à des atomiques.
+  Le moteur ne tourne que pendant qu'elle parle (plus 1,5 s de queue), le minuteur aussi.
   Son oreille de même (`ear.rs`, `macos/ear.rs` : `AVAudioEngine` et le framework Speech) ; le
   déroulé d'une prise de parole est dans `capri_chat::dictation`, pur lui aussi.
   Le trousseau aussi (`keychain.rs` ; `macos/keychain.rs` : les `SecItem` de
@@ -94,6 +115,11 @@ réglages (« Réglages… » dans son menu) règle son cerveau, sa voix et Clau
   un thread à part, résultats relevés à chaque pas de la boucle. `style_setup` écrit le style de
   sortie dans `output-styles/` du dossier de Claude Code ; `claude::Feed` reçoit la ligne du
   miroir, que `banner_view` fait dire par `chat::Chat::relay` quand Capri est libre.
+  `voice_setup::delivery` fait la description de la voix pour la conversation, « Écouter » et
+  `capri voice test` ; un changement fait dans la fenêtre est relu par `Chat::refresh_voice` dès
+  la phrase suivante. `voice_rehearsal` (version de débogage seulement) est `capri voice
+  rehearse` : la vraie voix, avec et sans effets, exercée sans un bruit (ordre, fin, pause, arrêt,
+  repli sur quatre pannes simulées, rendu hors ligne de chaque préréglage).
 
 ## La fenêtre de réglages : ajouter une rubrique
 
@@ -146,7 +172,22 @@ précisément quoi vérifier plutôt que de l'affirmer.
 - **API des crates** : wgpu 30, winit 0.30, objc2 0.6 / objc2-app-kit 0.3 / objc2-avf-audio 0.3 /
   objc2-speech 0.3 / block2 0.6, windows-sys 0.61, tray-icon 0.26, cosmic-text 0.19, ureq 3.5
   (avec `native-tls-no-default` sur macOS et Windows seulement), security-framework 3.7. Une
-  fonction C du système déclarée à la main (`readpassphrase`) se vérifie dans l'en-tête du SDK.
+  fonction C du système déclarée à la main (`readpassphrase`) se vérifie dans l'en-tête du SDK ;
+  de même une méthode qu'objc2-avf-audio ne lie pas (`renderOffline:toBuffer:error:`, appelée par
+  `msg_send!` dans les essais seulement). Les bornes et le comportement des unités d'effet se
+  lisent dans les en-têtes d'AVFAudio du SDK (`AVAudioUnitReverb.h`, `…Delay.h`,
+  `…Distortion.h`, `…EQ.h`, `AVAudioPlayerNode.h`, `AVSpeechSynthesis.h`). Ce que la
+  documentation ne dit pas et qui a été **mesuré** sur ce Mac (à revérifier si le système
+  change) : les paquets de `writeUtterance` arrivent sur le thread principal par sa boucle ; deux
+  énoncés confiés à la suite sont rendus en même temps et peuvent finir dans le désordre (n'en
+  confier qu'un à la fois) ; un paquet vide n'est pas la fin (seul `didFinishSpeechUtterance` du
+  délégué l'est) ; `isSpeaking` reste faux pendant un tel rendu et juste après `speakUtterance`.
+- **Exceptions Objective-C** : AVFAudio en lève sur un format ou un branchement invalide, et Rust
+  ne sait pas les attraper (le processus s'arrête). La fonction `exception` d'objc2 le permettrait
+  mais tire `objc2-exception-helper`, qui compile du C : pas ajoutée. Tout appel qui pourrait en
+  lever est donc précédé de la vérification de ses conditions documentées (formats créés par nous,
+  nœuds attachés avant d'être branchés, paquets au format même du branchement, `play` moteur
+  démarré). Ne pas appeler une API d'AVFAudio sans relire ce qu'elle exige.
   Ces API changent souvent : vérifier dans les sources
   (`~/.cargo/registry/src`) ou docs.rs, pas de mémoire. Même règle pour Claude Code : le format
   des hooks se vérifie dans sa documentation (<https://code.claude.com/docs/en/hooks>).
@@ -170,8 +211,16 @@ précisément quoi vérifier plutôt que de l'affirmer.
   redirection suivie. `http://` seulement vers la machine ou un réseau privé : toute adresse
   passe par `capri_chat::Endpoint`. Ce qui se dit n'est jamais écrit dans le journal.
 - Sa voix : des voix existantes (celles du système pour l'instant), **jamais un clone de la voix
-  de la comédienne de la série**. Rien n'est enregistré ni envoyé. Désactivée par défaut. Les
-  tests ne font aucun bruit : pas de test qui crée une vraie voix.
+  de la comédienne de la série**, aucun modèle de voix téléchargé. Les effets sont un traitement
+  du son appliqué après la synthèse, sur la machine, avec des préréglages écrits par nous (l'idée
+  vient de CapriChooms/CapriCore : ni son code ni ses valeurs). « Naturelle » (le défaut) garde le
+  chemin direct d'avant, inchangé. Rien n'est enregistré ni envoyé. Désactivée par défaut. Les
+  tests ne font aucun bruit et ne créent aucune vraie voix ; la seule exception est le test ignoré
+  `crates/capri-app/tests/voix_en_silence.rs`, qui lance `capri voice rehearse` (version de
+  débogage) : de vraies voix et un vrai moteur, à volume nul ou rendus hors ligne, sans lire aucun
+  réglage. Le relancer après tout changement de la voix :
+  `cargo test -p capri-app --test voix_en_silence -- --ignored`. Ce qu'il ne prouve pas : que
+  c'est agréable à entendre ; cela se vérifie à l'oreille (liste dans le README).
 - Son oreille : le micro n'est ouvert que pendant que l'utilisateur maintient le raccourci, la
   transcription est **exigée sur l'appareil** (`setRequiresOnDeviceRecognition(true)` : jamais
   de repli sur un serveur), rien n'est enregistré. Capri ne demande une permission que si son

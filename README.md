@@ -217,6 +217,79 @@ modèle écrit la suite.
 - macOS seulement pour l'instant. La bulle et la voix avancent chacune à son rythme, et sa
   bouche ne bouge pas.
 
+#### Ses effets de voix
+
+Capri est une construct, une conscience numérique : plutôt que d'imiter une voix, on le fait
+entendre par le son. Un **effet** est un traitement appliqué à sa voix **après** la synthèse, sur
+ta machine, avec les unités d'effet du système (réverbération, délai, distorsion, égaliseur
+d'AVFAudio). Ce n'est ni une autre voix, ni une voix téléchargée, ni un modèle : la même voix du
+système, passée dans une chaîne de traitements, en mémoire. Rien n'est enregistré ni envoyé.
+
+```bash
+./target/release/capri voice effect construct   # natural (aucun), construct, radio, hologram
+./target/release/capri voice intensity 2        # 1 légère, 2 moyenne, 3 forte
+./target/release/capri voice pitch -1           # sa hauteur, de -2 (plus grave) à 2 (plus aiguë)
+./target/release/capri voice rate 1             # son débit, de -2 (lent) à 2 (rapide)
+./target/release/capri voice status             # tout ce qui précède, en clair
+./target/release/capri voice test               # l'écouter, effet compris
+```
+
+Ou, sans terminal, dans l'onglet « Voix » de sa fenêtre de réglages : quatre listes, et
+« Écouter ». Les deux écrivent le même `voice.json`, avec les mêmes noms et les mêmes règles.
+Choisi dans la fenêtre, le changement vaut dès sa phrase suivante, même au milieu d'une réponse ;
+en ligne de commande, dès sa réponse suivante.
+
+| effet | ce qui le compose | ce qu'on devrait entendre |
+| ----- | ----------------- | ------------------------- |
+| **Naturelle** (par défaut) | rien | la voix du système, exactement comme avant les effets |
+| **Construct** | un peu de son « décimé » (moins de bits, moins d'échantillons), une bosse de présence vers 2,8 kHz, une petite salle | un léger grain électronique et un peu d'espace, la voix restant nette |
+| **Liaison radio** | une légère saturation, une bande étroite (environ 400 Hz à 3,4 kHz en intensité moyenne, plus étroite si elle monte), une bosse vers 1,7 kHz | une voix serrée et un peu saturée, comme dans un casque de liaison ; un peu moins forte que les autres |
+| **Hologramme** | du son décimé, des aigus relevés, des échos très rapprochés (22 ms) et réinjectés, une réverbération de plaque | plus marqué : un timbre métallique, en peigne, du grain et une réverbération brillante |
+
+L'**intensité** (légère, moyenne, forte) dose ce qui est mélangé au son d'origine (×0,6, ×1, ×1,5)
+et, pour la radio, resserre la bande. Elle n'agit pas sur « Naturelle ». La **hauteur** et le
+**débit** ont cinq crans chacun, normaux par défaut ; ils valent avec ou sans effet. Les valeurs
+viennent de mesures sur les voix de ce Mac (sans les écouter : fréquence fondamentale et durée
+d'une même phrase) : le système monte la hauteur fidèlement mais la descend moins qu'annoncé sur
+les voix de base (« plus grave » la baisse d'environ 12 %, « plus aiguë » la monte de 14 %), et
+son débit n'est pas linéaire (« lent » : environ ×0,8, « rapide » : environ ×1,25). Une voix
+téléchargée peut y répondre autrement.
+
+Les préréglages sont les nôtres. L'idée d'effets de lecture vient de CapriChooms/CapriCore
+(GPL-3.0) : ni son code ni ses valeurs ne sont repris.
+
+Ce que Capri garantit :
+
+- **« Naturelle » sonne comme avant** : la phrase suit exactement le même chemin qu'avant les
+  effets. À la hauteur et au débit normaux, rien d'autre que la voix n'est demandé au système
+  (même une valeur égale à la normale change le rendu de certaines voix : mesuré) ;
+- **une panne des effets ne la rend jamais muette** : si la chaîne ne peut pas être montée, si le
+  son de la voix est dans un format inattendu, si le moteur audio ne démarre pas ou s'arrête (un
+  casque qu'on branche, par exemple), si le son ne sort pas ou si le système ne rend rien, ce qui
+  n'a pas été joué jusqu'au bout est redit sans effet, avec une ligne dans le journal. Les effets
+  sont retentés à sa réponse suivante ;
+- tout ce que fait sa voix marche aussi avec effets : les phrases s'enchaînent dans l'ordre pendant
+  que la réponse arrive, « La faire taire » coupe net (la queue de réverbération comprise), la
+  cacher met en pause et la montrer reprend, et la ligne de Claude Code attend qu'elle ait fini ;
+- le moteur audio ne tourne que pendant qu'elle parle, plus une seconde et demie pour la queue
+  d'une réverbération.
+
+Limites :
+
+- **personne n'a encore entendu ces effets** : ils ont été composés et mesurés sans être écoutés
+  (voir plus bas ce qu'il faut vérifier à l'oreille) ;
+- avec un effet, une phrase est d'abord rendue en mémoire, puis jouée : le début peut arriver une
+  fraction de seconde plus tard que sans effet. Le passage de la voix mono au moteur stéréo baisse
+  chaque canal d'environ 1,4 dB par rapport au son rendu (mesuré hors ligne) ; comparé au chemin
+  direct, le niveau n'a pas été mesuré ;
+- si le moteur s'arrête au milieu d'une phrase, cette phrase est redite depuis son début, sans
+  effet ;
+- Rust ne sait pas attraper une exception Objective-C, que lève AVFAudio sur un format ou un
+  branchement invalide : chaque condition documentée est vérifiée avant l'appel, mais un
+  changement de sortie audio à l'instant exact où le lecteur démarre reste un risque (non
+  observé) ;
+- macOS seulement, comme sa voix.
+
 ### Lui parler au micro
 
 Maintiens **⌃⌥D** (Ctrl+Alt+D, comme « dicter »), parle, relâche : ce que tu as dit lui est envoyé comme si tu
@@ -345,8 +418,10 @@ dit quoi faire sur place (seules les commandes `capri chat` et `capri voice` gar
 - **Utiliser ce cerveau** l'écrit dans `chat.json` : elle s'en sert dès ta phrase suivante.
 
 **Voix** : la voix activée ou non, le choix parmi les voix françaises installées (avec leur
-qualité ; « Automatique » : la meilleure), et « Écouter ». Mêmes réglages que `capri voice`
-(`voice.json`).
+qualité ; « Automatique » : la meilleure), l'effet (chacun avec ce qu'on devrait entendre), son
+intensité (éteinte pour « Naturelle »), la hauteur et le débit, une note qui dit ce que sont les
+effets et ce qu'ils ne sont pas, et « Écouter », qui fait entendre ce qui est choisi. Mêmes
+réglages que `capri voice` (`voice.json`) ; un changement vaut dès sa phrase suivante.
 
 **Claude Code** : où en est le branchement du hook (dans quel `settings.json`, combien
 d'événements, un binaire `capri-hook` introuvable, `disableAllHooks`), avec « Brancher » et
@@ -390,14 +465,17 @@ Aucune permission système n'est nécessaire. Pour plus de détails dans le term
 
 ```
 crates/
-  capri-core/      logique pure : animation, mouvement, lancer, hit-test, bandeau, parole, et la
-                   description d'un formulaire de réglages (testée)
+  capri-core/      logique pure : animation, mouvement, lancer, hit-test, bandeau, parole, la
+                   description d'un formulaire de réglages, et celle de comment dire une phrase
+                   (sound.rs : voix, hauteur, débit, traitements du son, leurs bornes) (testée)
   capri-claude/    logique pure : hooks de Claude Code, protocole, sessions, settings.json, style
                    de sortie « Capri », miroir, dossiers de Capri et de Claude Code (testée)
   capri-chat/      logique pure : conversation, fournisseurs et format « chat completions », flux
                    de réponse, règles d'adresse et de clé, réglages du cerveau, personnalité,
-                   phrases à dire, dictée, et le modèle de la fenêtre de réglages (settings/ :
-                   rubriques « Cerveau », « Voix » et « Claude Code ») (testée)
+                   phrases à dire, dictée, les effets de voix (voice.rs : préréglages,
+                   intensité, hauteur, débit, voice.json), et le modèle de la fenêtre de
+                   réglages (settings/ : rubriques « Cerveau », « Voix » et « Claude Code »)
+                   (testée)
   capri-net/       le seul crate qui parle au réseau : envoyer la conversation (en https par le TLS
                    du système), lire la réponse au fil de l'eau (testé contre un faux serveur local)
   capri-render/    rendu wgpu : Metal sur macOS, DirectX 12 + DirectComposition sur Windows
@@ -409,7 +487,9 @@ crates/
     settings_window.rs la fenêtre de réglages, qui affiche un formulaire de capri-core ;
                      macos/settings_window.rs : un NSPanel à onglets (refus ailleurs)
     macos/edit_keys.rs ⌘X, ⌘C, ⌘V, ⌘A, ⌘Z dans les champs d'une app sans menu Édition
-    voice.rs         sa voix ; macos/voice.rs : la synthèse vocale du système
+    voice.rs         sa voix ; macos/voice.rs : la synthèse vocale du système, chemin direct et
+                     chemin traité dans une seule file, et le repli ;
+                     macos/voice_stage.rs : la chaîne d'effets (AVAudioEngine)
     ear.rs           son oreille ; macos/ear.rs : le micro et la reconnaissance sur l'appareil
     keychain.rs      le trousseau des clés d'API ; macos/keychain.rs, windows/keychain.rs
     terminal.rs      taper une clé sans qu'elle s'affiche
@@ -425,7 +505,9 @@ crates/
                    voix, écoute, clés, la fenêtre de réglages (settings_view.rs : le modèle, la
                    fenêtre, et ses effets), le style de sortie (style_setup.rs), et les commandes
                    `capri hook` (branchement, miroir, style), `capri chat`, `capri voice`,
-                   `capri ear`
+                   `capri ear` ; en version de débogage, `capri voice rehearse`
+                   (voice_rehearsal.rs : la vraie voix exercée sans bruit, lancée par
+                   tests/voix_en_silence.rs)
 tools/             récupération vérifiée des images, fabrication de Capri.app (macOS)
 ```
 
@@ -436,9 +518,9 @@ Règle : tout ce qui peut être testé sans écran va dans `capri-core`, `capri-
 
 Vérifié automatiquement :
 
-- formatage, `clippy -D warnings` et 352 tests sur **macOS Apple Silicon** (plus 3 qui ne
-  tournent qu'à la main : ils écrivent des images, lisent un vrai `settings.json` ou touchent au
-  vrai trousseau) : animation, lancer et rebonds, hit-test, clics, bandeau, parole en pages, bulle
+- formatage, `clippy -D warnings` et 373 tests sur **macOS Apple Silicon** (plus 4 qui ne
+  tournent qu'à la main : ils écrivent des images, lisent un vrai `settings.json`, touchent au
+  vrai trousseau, ou créent de vraies voix et un vrai moteur audio, sans bruit) : animation, lancer et rebonds, hit-test, clics, bandeau, parole en pages, bulle
   sur plusieurs lignes, conversation, **validation du shader** par le compilateur de wgpu, lecture
   des exemples de hooks de la documentation de Claude Code, suivi des sessions, aller-retour sur
   `settings.json`, socket (droits, connexions simultanées), et le binaire `capri-hook` lancé pour
@@ -462,6 +544,15 @@ Vérifié automatiquement :
   son adresse habituelle ; une clé d'une version précédente, sans adresse, n'est jamais envoyée ;
 - la voix, pour ce qui se teste sans haut-parleur : le découpage en phrases quel que soit le
   rythme d'arrivée du texte, ce qui se prononce ou non, et le choix de la voix ;
+- les effets de voix, pour ce qui se teste sans haut-parleur : la description neutre (chaque
+  réglage ramené dans les bornes d'Apple, ce qui n'est pas un nombre rendu neutre, traitements et
+  bandes en nombre limité) ; les échantillons du système remis en canaux séparés (entiers ou
+  flottants, entrelacés ou non, plus de deux canaux ramenés à un) ; les préréglages (« Naturelle »
+  sans aucun traitement, les autres dans leurs bornes, plus d'effet à mesure que l'intensité
+  monte, aucun identique à un autre) ; `voice.json` (un fichier d'avant les effets donne la voix
+  d'avant, un nom inconnu ou un cran hors bornes ne casse rien) ; la rubrique « Voix » et
+  `capri voice` (mêmes noms, même fichier, chaque choix garde les autres, « Écouter » fait entendre
+  ce qui est choisi) ; un changement fait dans la fenêtre pris en compte dès la phrase suivante ;
 - l'écoute, pour ce qui se teste sans micro : le déroulé d'une prise de parole (texte provisoire,
   dernier mot attendu puis abandonné, silence, abandon) ;
 - la fenêtre de réglages, sans fenêtre : son modèle seul (la destination dite dès qu'un
@@ -532,6 +623,37 @@ fournisseur) :
   Capri d'essai arrive (« Claude Code lui fait dire 33 caractères ») ; le journal ne contient
   jamais le texte de la réponse.
 
+**Vérifié sans un bruit sur ce Mac, pour les effets de voix** (le 11 novembre 2026, sans rien
+écouter) :
+
+- d'abord, dans un projet d'essai à part, ce que fait vraiment le système, et dont tout dépend :
+  `writeUtterance:toBufferCallback:` rend une phrase en paquets sur le thread principal, par sa
+  boucle (sans elle, rien n'arrive), en 20 à 50 ms pour une phrase de deux secondes ; en flottants,
+  mono, à 22,05 kHz (voix « compactes ») ou 16 kHz (« eloquence ») ; deux énoncés confiés à la
+  suite sont rendus en même temps et finissent parfois dans le désordre ; un paquet vide apparaît
+  au milieu d'un long énoncé de plusieurs phrases, et seul `didFinishSpeechUtterance` marque la
+  fin ; `isSpeaking` reste faux pendant un tel rendu, et juste après `speakUtterance` (une dizaine
+  de millisecondes) ; un débit de 0,5 écrit (la valeur par défaut) change le rendu des voix
+  « eloquence » ; la hauteur et le débit agissent sur le rendu en mémoire (durée d'une même
+  phrase, fréquence fondamentale par autocorrélation) ;
+- `capri voice rehearse` (version de débogage), lancé à la main et par le test ignoré
+  `voix_en_silence`, avec des voix d'essai muettes (énoncés à volume nul, mélangeur principal à
+  zéro) ou rendues hors ligne (sans périphérique), sans lire aucun réglage : « Naturelle » passe
+  par le chemin direct sans demander de hauteur ni de débit ; avec chacun des trois effets, trois
+  phrases confiées d'un coup sont rendues puis jouées dans l'ordre, en temps réel, et le moteur
+  s'arrête après la queue ; la pause fige le son et la reprise le relance sans rien perdre ;
+  l'arrêt coupe net, et plus rien n'est rendu ni joué ; une autre voix (16 kHz après 22,05 kHz)
+  puis d'autres effets remontent la chaîne entre deux phrases, dans l'ordre ; une phrase sans effet
+  entre deux phrases avec attend la précédente ; quatre pannes simulées (chaîne impossible à
+  monter, format illisible, moteur qui s'arrête seul, rien de rendu) font redire tout le reste
+  sans effet, dans l'ordre, puis les effets reviennent après un arrêt ; hors ligne, chaque
+  préréglage à chaque intensité change le son (écart de 0,85 à 1,26 fois le son sec), sans
+  saturer (crête de 0,83 à 0,93), à un niveau de -4 à 0 dB du son sec ;
+- la répétition des réglages (`CAPRI_SETTINGS_REHEARSAL=1`, dossiers d'essai) : l'onglet « Voix »
+  s'affiche avec ses nouvelles listes ; un effet, une intensité, une hauteur et un débit choisis
+  dans la vraie fenêtre sont écrits dans `voice.json`, puis « Naturelle » de nouveau. « Écouter »
+  n'y est jamais pressé.
+
 Le rendu réel sous Linux avec un GPU logiciel (le sprite s'affiche, flotte et « bout ») avait été
 vérifié avant le passage à la fenêtre « Overlay » ; il n'a pas été revérifié depuis.
 
@@ -591,6 +713,32 @@ qui demande une vraie session de Claude Code avec le style Capri** (aucune n'a �
 écrive vraiment sa ligne `[Capri]`, que cette ligne arrive dans `last_assistant_message` comme le
 dit la documentation, et que Capri la dise et l'affiche comme prévu.
 
+**Effets de voix : à vérifier à l'oreille** (rien n'a été écouté ; sa voix activée, depuis
+`Capri.app` ou `cargo run --release`) :
+
+1. « Naturelle » (le défaut) : elle sonne exactement comme avant ce changement ;
+2. dans l'onglet « Voix », chaque effet avec « Écouter » : Construct, un léger grain et une petite
+   salle, la voix restant claire ; Liaison radio, une voix serrée et un peu saturée, plus discrète ;
+   Hologramme, un timbre métallique et une réverbération brillante, plus marqué. Aucun ne doit
+   grésiller fort, saturer ni rendre les mots incompréhensibles ;
+3. l'intensité, de « légère » à « forte » : l'effet doit s'entendre davantage, sans devenir
+   pénible ;
+4. la hauteur et le débit, aux deux extrêmes, avec et sans effet : un écart net mais naturel, sans
+   voix de dessin animé ;
+5. une vraie réponse avec un effet : les phrases s'enchaînent dans l'ordre, sans trou gênant entre
+   elles, et le début n'arrive pas nettement plus tard qu'en « Naturelle » ;
+6. « La faire taire » pendant qu'elle parle avec un effet : silence immédiat, sans traîne de
+   réverbération ;
+7. la cacher (⌃⌥C) au milieu d'une phrase traitée, attendre, la montrer : la phrase reprend là
+   où elle s'était arrêtée ;
+8. changer d'effet dans la fenêtre pendant une longue réponse : la phrase suivante prend le nouvel
+   effet ;
+9. le niveau : avec un effet, elle n'est pas nettement moins forte qu'en « Naturelle » ;
+10. brancher ou débrancher un casque pendant qu'elle parle avec un effet : elle continue, sans
+    effet jusqu'à la réponse suivante (une ligne « voix : effets abandonnés » dans le journal) ;
+11. `capri voice test` au terminal, avec un effet : on entend l'effet, et la commande attend la fin
+    de la queue avant de rendre la main.
+
 **Capri dans Claude Code, cas plus fins pas encore regardés un par un** :
 
 1. une réponse dans un sous-agent ne la fait pas parler ; un nouveau prompt envoyé avant qu'elle
@@ -628,8 +776,9 @@ Points à surveiller :
    avec leurs clés dans le trousseau~~, ~~une fenêtre de réglages (macOS)~~, ~~Capri dans Claude
    Code pour qui a un abonnement (un style de sortie et le miroir)~~ (écrit et testé sans Claude
    Code ; reste à l'essayer dans une vraie session), puis l'API d'Anthropic. Sa voix : ~~ses
-   réponses dites à voix haute~~, ~~lui parler au micro~~ (reconnaissance sur la machine), puis un
-   mot d'éveil.
+   réponses dites à voix haute~~, ~~lui parler au micro~~ (reconnaissance sur la machine), ~~des
+   effets de voix, la hauteur et le débit~~ (écrits et vérifiés sans bruit ; restent à écouter),
+   puis un mot d'éveil.
 5. App signée et notarisée (`.app` / installeur), mises à jour.
 
 ## Licence
