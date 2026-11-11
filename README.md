@@ -701,20 +701,20 @@ vérifié avant le passage à la fenêtre « Overlay » ; il n'a pas été revé
 18. sans clé, la bulle le dit et renvoie à « Réglages… », sans commande de terminal ; une clé
     refusée (401) cite la raison que donne le fournisseur.
 
-19. Capri dans Claude Code, dans une vraie session : le style s'installe depuis l'onglet
-    « Claude Code », Claude Code le propose et, une fois choisi, répond avec son ton et termine
-    par la ligne `[Capri] …` ; miroir activé, Capri dit cette ligne sur le bureau.
+19. Capri dans Claude Code, dans une vraie session (le 11 novembre 2026, style installé depuis
+    l'onglet « Claude Code », `/output-style Capri`, miroir activé) : « J'ai vérifié le jalon 4,
+    cela fonctionne très bien », sans retour cas par cas. Le style s'installe depuis l'onglet,
+    Claude Code le propose et, une fois choisi, répond avec son ton et termine par la ligne
+    `[Capri] …` ; miroir activé, Capri dit cette ligne sur le bureau (voir plus bas les cas qui
+    n'ont pas été confirmés un par un).
 
 20. Les effets de voix, écoutés le 11 novembre 2026 depuis `Capri.app` : « cela fonctionne bien »,
     sans retour cas par cas (voir plus bas ceux qui n'ont pas été confirmés un par un).
 
 **Pas encore vérifié** : une vraie conversation avec DeepSeek, ProxyAPI ou Ollama en ligne (ils
 passent par le même code qu'OpenRouter, mais n'ont pas été essayés) ; un vrai LM Studio ; la
-demande d'accès au trousseau quand `Capri.app` lit une clé rangée depuis le terminal ; **tout ce
-qui demande une vraie session de Claude Code avec le style Capri** (aucune n'a été lancée) : que
-`/output-style Capri` le trouve, que Claude en prenne le ton, garde sa façon de travailler et
-écrive vraiment sa ligne `[Capri]`, que cette ligne arrive dans `last_assistant_message` comme le
-dit la documentation, et que Capri la dise et l'affiche comme prévu.
+demande d'accès au trousseau quand `Capri.app` lit une clé rangée depuis le terminal. Capri dans
+une vraie session de Claude Code a été essayée dans l'ensemble (point 19), pas cas par cas.
 
 **Effets de voix, cas pas encore confirmés un par un** (écoutés dans l'ensemble, voir le
 point 20 ; sa voix activée, depuis `Capri.app` ou `cargo run --release`) :
@@ -777,8 +777,8 @@ Points à surveiller :
 4. Le chat avec un modèle d'IA : ~~la saisie et la bulle~~, ~~un modèle local par Ollama~~,
    ~~les fournisseurs à clé compatibles OpenAI (OpenRouter, DeepSeek, ProxyAPI, Ollama en ligne)
    avec leurs clés dans le trousseau~~, ~~une fenêtre de réglages (macOS)~~, ~~Capri dans Claude
-   Code pour qui a un abonnement (un style de sortie et le miroir)~~ (écrit et testé sans Claude
-   Code ; reste à l'essayer dans une vraie session), puis l'API d'Anthropic. Sa voix : ~~ses
+   Code pour qui a un abonnement (un style de sortie et le miroir)~~ (écrit, testé sans Claude
+   Code, puis essayé dans une vraie session le 11 novembre 2026), puis l'API d'Anthropic. Sa voix : ~~ses
    réponses dites à voix haute~~, ~~lui parler au micro~~ (reconnaissance sur la machine), ~~des
    effets de voix, la hauteur et le débit~~ (écrits, vérifiés sans bruit, puis écoutés le 11 novembre 2026),
    puis un mot d'éveil.

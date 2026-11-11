@@ -6,9 +6,10 @@ du projet et la feuille de route ; jalons 1 (elle flotte) et 2 (le bandeau Claud
 jalon 4 (lui parler) en cours : saisie, bulle, modèle local (Ollama, LM Studio), fournisseurs
 compatibles OpenAI avec leur clé dans le trousseau (OpenRouter, DeepSeek, ProxyAPI, Ollama en
 ligne, serveur personnalisé), voix et écoute au micro en place, effets de voix, hauteur et débit
-écrits et vérifiés sans bruit (pas encore écoutés) ; Capri dans Claude Code (un style
-de sortie, et le miroir qui lui fait dire la ligne que Claude écrit pour elle) en place, pas encore
-essayé dans une vraie session ; API d'Anthropic et mot d'éveil à venir. Sur macOS, une fenêtre de
+écrits, vérifiés sans bruit et écoutés dans l'ensemble ; Capri dans Claude Code (un style
+de sortie, et le miroir qui lui fait dire la ligne que Claude écrit pour elle) en place, essayé
+dans une vraie session le 11 novembre 2026 (dans l'ensemble, pas cas par cas) ; API d'Anthropic et
+mot d'éveil à venir. Sur macOS, une fenêtre de
 réglages (« Réglages… » dans son menu) règle son cerveau, sa voix et Claude Code sans terminal.
 
 ## Architecture : où va quoi
