@@ -705,6 +705,9 @@ vérifié avant le passage à la fenêtre « Overlay » ; il n'a pas été revé
     « Claude Code », Claude Code le propose et, une fois choisi, répond avec son ton et termine
     par la ligne `[Capri] …` ; miroir activé, Capri dit cette ligne sur le bureau.
 
+20. Les effets de voix, écoutés le 11 novembre 2026 depuis `Capri.app` : « cela fonctionne bien »,
+    sans retour cas par cas (voir plus bas ceux qui n'ont pas été confirmés un par un).
+
 **Pas encore vérifié** : une vraie conversation avec DeepSeek, ProxyAPI ou Ollama en ligne (ils
 passent par le même code qu'OpenRouter, mais n'ont pas été essayés) ; un vrai LM Studio ; la
 demande d'accès au trousseau quand `Capri.app` lit une clé rangée depuis le terminal ; **tout ce
@@ -713,8 +716,8 @@ qui demande une vraie session de Claude Code avec le style Capri** (aucune n'a �
 écrive vraiment sa ligne `[Capri]`, que cette ligne arrive dans `last_assistant_message` comme le
 dit la documentation, et que Capri la dise et l'affiche comme prévu.
 
-**Effets de voix : à vérifier à l'oreille** (rien n'a été écouté ; sa voix activée, depuis
-`Capri.app` ou `cargo run --release`) :
+**Effets de voix, cas pas encore confirmés un par un** (écoutés dans l'ensemble, voir le
+point 20 ; sa voix activée, depuis `Capri.app` ou `cargo run --release`) :
 
 1. « Naturelle » (le défaut) : elle sonne exactement comme avant ce changement ;
 2. dans l'onglet « Voix », chaque effet avec « Écouter » : Construct, un léger grain et une petite
@@ -777,7 +780,7 @@ Points à surveiller :
    Code pour qui a un abonnement (un style de sortie et le miroir)~~ (écrit et testé sans Claude
    Code ; reste à l'essayer dans une vraie session), puis l'API d'Anthropic. Sa voix : ~~ses
    réponses dites à voix haute~~, ~~lui parler au micro~~ (reconnaissance sur la machine), ~~des
-   effets de voix, la hauteur et le débit~~ (écrits et vérifiés sans bruit ; restent à écouter),
+   effets de voix, la hauteur et le débit~~ (écrits, vérifiés sans bruit, puis écoutés le 11 novembre 2026),
    puis un mot d'éveil.
 5. App signée et notarisée (`.app` / installeur), mises à jour.
 
