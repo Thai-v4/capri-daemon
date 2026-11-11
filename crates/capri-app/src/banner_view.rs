@@ -280,6 +280,12 @@ impl BannerView {
         self.chat.silence();
     }
 
+    /// Ses réglages de la voix ont changé : ce qu'elle dit continue avec les nouveaux.
+    #[cfg(any(target_os = "macos", windows))]
+    pub fn refresh_voice(&mut self) {
+        self.chat.refresh_voice();
+    }
+
     /// Repart de zéro : elle se tait et oublie la conversation.
     #[cfg(any(target_os = "macos", windows))]
     pub fn forget(&mut self) {

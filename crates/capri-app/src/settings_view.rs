@@ -331,7 +331,11 @@ impl Effects {
                 send(Outcome::VoiceLoaded { settings, voices: voice_setup::installed() });
             }
             Effect::SaveVoice(settings) => {
-                log::info!("réglages : voix {}", if settings.enabled { "activée" } else { "coupée" });
+                log::info!(
+                    "réglages : voix {} ({})",
+                    if settings.enabled { "activée" } else { "coupée" },
+                    capri_chat::voice::describe_style(&settings)
+                );
                 let saved = directory
                     .and_then(|directory| voice_setup::save(&directory, &settings).map_err(text))
                     .map(|_| settings.clone());
@@ -759,6 +763,26 @@ mod tests {
         window.settle();
         assert_eq!(changes, [Change::Voice { enabled: true }], "l'app doit accorder son menu");
         assert!(voice_setup::load(&directory).expect("lisible").enabled);
+
+        // l'effet, son intensité, la hauteur et le débit : le même fichier, les mêmes noms
+        use capri_chat::settings::voice::{EFFECT, INTENSITY, PITCH, RATE};
+        use capri_chat::voice::{Intensity, Pitch, Rate, VoiceEffect};
+        for (id, index) in [(EFFECT, 1), (INTENSITY, 0), (PITCH, 3), (RATE, 1)] {
+            let tasks = window.settings.event(FormEvent::Chose { id: id.to_owned(), index });
+            let changes: Vec<Change> =
+                tasks.into_iter().filter_map(|task| window.effects.run(task)).collect();
+            window.settle();
+            assert_eq!(
+                changes,
+                [Change::Voice { enabled: true }],
+                "{id} : l'app en tient compte dès la phrase suivante"
+            );
+        }
+        let read = voice_setup::load(&directory).expect("lisible");
+        assert_eq!(
+            (read.enabled, read.effect, read.intensity, read.pitch, read.rate),
+            (true, VoiceEffect::Construct, Intensity::Light, Pitch::High, Rate::Slow)
+        );
         let _ = std::fs::remove_dir_all(directory);
     }
 

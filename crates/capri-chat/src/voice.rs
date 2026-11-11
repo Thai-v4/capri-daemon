@@ -347,6 +347,14 @@ impl Intensity {
         }
     }
 
+    /// Son niveau (1 à 3) ou son nom (« forte »), comme on le tape au terminal.
+    pub fn parse(text: &str) -> Option<Self> {
+        let wanted = fold(text);
+        Self::ALL
+            .into_iter()
+            .find(|level| wanted == level.level().to_string() || wanted == fold(level.name()))
+    }
+
     /// Ce par quoi multiplier la part d'effet d'un préréglage.
     fn scale(self) -> f32 {
         match self {
@@ -401,6 +409,12 @@ impl Pitch {
             Self::High => "un peu aiguë",
             Self::Higher => "plus aiguë",
         }
+    }
+
+    /// Son cran (-2 à 2) ou son nom (« un peu grave »), comme on le tape au terminal.
+    pub fn parse(text: &str) -> Option<Self> {
+        let wanted = fold(text);
+        Self::ALL.into_iter().find(|level| step_or_name(&wanted, level.step(), level.name()))
     }
 
     /// Le multiplicateur demandé au système. Il monte fidèlement mais descend moins qu'annoncé
@@ -464,6 +478,12 @@ impl Rate {
         }
     }
 
+    /// Son cran (-2 à 2) ou son nom (« posé »), comme on le tape au terminal.
+    pub fn parse(text: &str) -> Option<Self> {
+        let wanted = fold(text);
+        Self::ALL.into_iter().find(|level| step_or_name(&wanted, level.step(), level.name()))
+    }
+
     /// Le débit demandé au système, relatif à sa plage (`capri_core::sound::RATE`). Sa plage
     /// n'est pas linéaire : mesuré sur ce Mac (durée d'une même phrase), -0,26 la dit environ
     /// 1,2 fois plus lentement, -0,12 1,1 fois, quand +0,04 la dit 1,08 fois plus vite et +0,09
@@ -497,6 +517,12 @@ pub fn describe_style(settings: &VoiceSettings) -> String {
         effect => format!("{} (intensité {})", effect.name(), settings.intensity.name()),
     };
     format!("{effect}, hauteur {}, débit {}", settings.pitch.name(), settings.rate.name())
+}
+
+/// Ce qu'on a tapé (déjà replié par [`fold`]) désigne-t-il ce cran, par son nombre (`+1` compris)
+/// ou par son nom ?
+fn step_or_name(wanted: &str, step: i64, name: &str) -> bool {
+    wanted.strip_prefix('+').unwrap_or(wanted) == step.to_string() || wanted == fold(name)
 }
 
 /// En minuscules et sans accents, pour comparer ce qu'on tape à un nom.
@@ -902,6 +928,26 @@ mod tests {
             (Intensity::from_level(-5), Intensity::from_level(99)),
             (Intensity::Light, Intensity::Strong)
         );
+    }
+
+    #[test]
+    fn levels_are_found_by_number_or_by_name() {
+        assert_eq!(Intensity::parse("3"), Some(Intensity::Strong));
+        assert_eq!(Intensity::parse(" Légère "), Some(Intensity::Light));
+        assert_eq!(Intensity::parse("legere"), Some(Intensity::Light));
+        assert_eq!(Pitch::parse("-2"), Some(Pitch::Lower));
+        assert_eq!(Pitch::parse("+1"), Some(Pitch::High));
+        assert_eq!(Pitch::parse("un peu aigue"), Some(Pitch::High));
+        assert_eq!(Pitch::parse("normale"), Some(Pitch::Normal));
+        assert_eq!(Rate::parse("posé"), Some(Rate::Slow));
+        assert_eq!(Rate::parse("2"), Some(Rate::Faster));
+        for wrong in ["4", "0", "fort", ""] {
+            assert_eq!(Intensity::parse(wrong), None, "{wrong:?}");
+        }
+        for wrong in ["3", "-3", "aiguë", "1.5", "++1"] {
+            assert_eq!(Pitch::parse(wrong), None, "{wrong:?}");
+            assert_eq!(Rate::parse(wrong), None, "{wrong:?}");
+        }
     }
 
     #[test]

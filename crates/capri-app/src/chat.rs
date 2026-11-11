@@ -217,6 +217,27 @@ impl Chat {
         self.voice_held = false;
     }
 
+    /// Ses réglages de la voix viennent de changer (la fenêtre de réglages) : la réponse en cours
+    /// continue avec les nouveaux dès sa phrase suivante, ou se tait si sa voix est coupée. Lit
+    /// `voice.json` et les voix installées.
+    #[cfg(any(target_os = "macos", windows, test))]
+    pub fn refresh_voice(&mut self) {
+        let Some(directory) = &self.settings else { return };
+        if self.aloud.is_none() {
+            return;
+        }
+        match voice_setup::load(directory) {
+            Ok(settings) if settings.enabled => {
+                let delivery = voice_setup::delivery(&settings);
+                if let Some(aloud) = &mut self.aloud {
+                    aloud.delivery = delivery;
+                }
+            }
+            Ok(_) => self.silence(),
+            Err(err) => log::warn!("pas de voix : {err:#}"),
+        }
+    }
+
     /// Repart de zéro : elle se tait et oublie ce qui s'est dit.
     #[cfg(any(target_os = "macos", windows))]
     pub fn forget(&mut self) {
@@ -697,6 +718,32 @@ mod tests {
         assert_eq!(messages[1], serde_json::json!({ "role": "user", "content": "Bonjour" }));
         assert!(!request.to_string().contains("tests passent") && !request.to_string().contains("Claude"));
         assert_eq!(chat.turns(), 2);
+        let _ = std::fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn a_voice_changed_in_the_window_applies_from_the_next_sentence() {
+        use capri_chat::voice::{VoiceEffect, VoiceSettings};
+        let directory =
+            std::env::temp_dir().join(format!("capri-test-chat-{}-voix-changee", std::process::id()));
+        let _ = std::fs::remove_dir_all(&directory);
+        let mut chat = Chat::new(Some(directory.clone()));
+        // sans réponse à voix haute en cours, rien à changer
+        chat.refresh_voice();
+        assert!(chat.aloud.is_none());
+
+        // une réponse dite sans effet ; l'effet est choisi pendant qu'elle parle
+        chat.aloud = Some(Aloud { delivery: Delivery::plain(None), sentences: Sentences::new() });
+        let radio = VoiceSettings { enabled: true, effect: VoiceEffect::Radio, ..VoiceSettings::default() };
+        voice_setup::save(&directory, &radio).expect("écrit");
+        chat.refresh_voice();
+        let delivery = &chat.aloud.as_ref().expect("elle parle encore").delivery;
+        assert_eq!(delivery.effects, VoiceEffect::Radio.effects(radio.intensity), "dès la phrase suivante");
+
+        // sa voix coupée dans la fenêtre : elle se tait
+        voice_setup::save(&directory, &VoiceSettings { enabled: false, ..radio }).expect("écrit");
+        chat.refresh_voice();
+        assert!(chat.aloud.is_none());
         let _ = std::fs::remove_dir_all(directory);
     }
 

@@ -429,7 +429,10 @@ impl App {
         for change in changes {
             match change {
                 settings_view::Change::Voice { enabled } => {
-                    if !enabled {
+                    if enabled {
+                        // effet, hauteur, débit ou voix : dès sa phrase suivante
+                        self.with_banner(BannerView::refresh_voice);
+                    } else {
                         self.with_banner(BannerView::silence);
                     }
                     self.refresh_voice_menu();
@@ -445,10 +448,14 @@ impl App {
     /// fenêtre affiche, jamais la clé. Puis, seulement si `CLAUDE_CONFIG_DIR` et
     /// `CAPRI_CONFIG_DIR` désignent des dossiers d'essai, la rubrique « Claude Code » : le style
     /// installé et retiré, Claude Code branché et débranché, le miroir activé et désactivé, par
-    /// les boutons de la vraie fenêtre.
+    /// les boutons de la vraie fenêtre. Enfin, seulement si `CAPRI_CONFIG_DIR` désigne un dossier
+    /// d'essai, la rubrique « Voix » : un effet, son intensité, la hauteur et le débit choisis dans
+    /// la vraie fenêtre, puis « Naturelle » de nouveau ; « Écouter » n'est jamais pressé.
     #[cfg(all(debug_assertions, any(target_os = "macos", windows)))]
     fn rehearse(&mut self, event_loop: &ActiveEventLoop) {
-        use capri_chat::settings::{brain, claude};
+        use capri_chat::settings::{brain, claude, voice};
+        /// L'étape (après les fournisseurs) où commence la rubrique « Voix ».
+        const VOICE_STEPS: usize = 11;
         use capri_core::form::FormEvent;
         let Some(rehearsal) = self.rehearsal.as_mut() else { return };
         if Instant::now() < rehearsal.next {
@@ -501,7 +508,7 @@ impl App {
                     log::info!(
                         "répétition : rubrique Claude Code sautée, faute de CLAUDE_CONFIG_DIR et CAPRI_CONFIG_DIR d'essai"
                     );
-                    rehearsal.step = usize::MAX - 1;
+                    rehearsal.step = providers + 1 + VOICE_STEPS;
                     return;
                 }
                 log::info!("répétition : branchement : {}", note(view, claude::HOOK));
@@ -534,6 +541,29 @@ impl App {
             }
             Some(10) => {
                 log::info!("répétition : miroir décoché : {}", note(view, claude::MIRROR_NOTE));
+            }
+            Some(VOICE_STEPS) => {
+                if !std::env::var_os("CAPRI_CONFIG_DIR").is_some_and(|value| !value.is_empty()) {
+                    log::info!("répétition : rubrique Voix sautée, faute de CAPRI_CONFIG_DIR d'essai");
+                    rehearsal.step = usize::MAX - 1;
+                    return;
+                }
+                log::info!("répétition : voix, {} lignes avant", view.rows());
+                view.rehearse_event(FormEvent::Chose { id: voice::EFFECT.to_owned(), index: 1 });
+            }
+            Some(12..=15) => {
+                log::info!("répétition : voix : {}", note(view, voice::SAVED));
+                let (id, index) = match step - (providers + 1) {
+                    12 => (voice::INTENSITY, 2),
+                    13 => (voice::PITCH, 1),
+                    14 => (voice::RATE, 3),
+                    _ => (voice::EFFECT, 0),
+                };
+                view.rehearse_event(FormEvent::Chose { id: id.to_owned(), index });
+            }
+            Some(16) => {
+                log::info!("répétition : voix : {}", note(view, voice::SAVED));
+                log::info!("répétition : voix, {} lignes après", view.rows());
             }
             Some(_) => {
                 log::info!("répétition finie");

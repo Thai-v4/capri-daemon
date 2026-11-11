@@ -1,16 +1,17 @@
-//! La rubrique « Voix » : dire ses réponses à voix haute ou non, avec quelle voix, et
-//! l'écouter.
+//! La rubrique « Voix » : dire ses réponses à voix haute ou non, avec quelle voix, quel effet,
+//! à quelle hauteur et quel débit, et l'écouter.
 //!
 //! Les mêmes règles que `capri voice` : les voix sont celles du système, la française de
-//! meilleure qualité par défaut ([`pick`]), et le choix est écrit dans `voice.json`. Rien n'est
-//! téléchargé ni envoyé.
+//! meilleure qualité par défaut ([`pick`]), les effets sont les préréglages de
+//! [`crate::voice::VoiceEffect`], et tout est écrit dans `voice.json`. Rien n'est téléchargé ni
+//! envoyé. Un changement vaut dès sa phrase suivante.
 
 use capri_core::form::{Button, Control, FormEvent, Row, Tone};
 
 use super::{Effect, Environment, Outcome, Rubric};
 use crate::voice::{
-    BETTER_VOICES, LANGUAGE, TEST_SENTENCE, VOICE_OFF, VOICE_ON, VoiceInfo, VoiceSettings, delivery, french,
-    pick, quality, speakable,
+    BETTER_VOICES, Intensity, LANGUAGE, Pitch, Rate, TEST_SENTENCE, VOICE_OFF, VOICE_ON, VoiceEffect,
+    VoiceInfo, VoiceSettings, delivery, describe_style, french, pick, quality, speakable,
 };
 
 pub const ID: &str = "voice";
@@ -18,6 +19,11 @@ pub const ID: &str = "voice";
 pub const ENABLED: &str = "voice.enabled";
 pub const CHOICE: &str = "voice.choice";
 pub const NOTE: &str = "voice.note";
+pub const EFFECT: &str = "voice.effect";
+pub const INTENSITY: &str = "voice.intensity";
+pub const PITCH: &str = "voice.pitch";
+pub const RATE: &str = "voice.rate";
+pub const EFFECT_NOTE: &str = "voice.effect.note";
 pub const ACTIONS: &str = "voice.actions";
 pub const LISTEN: &str = "voice.listen";
 pub const SAVED: &str = "voice.saved";
@@ -61,6 +67,70 @@ impl VoiceRubric {
         self.saved = Some((Tone::Busy, "Un instant…".to_owned()));
         vec![Effect::SaveVoice(settings)]
     }
+
+    /// L'effet, son intensité (seulement s'il y a un effet), la hauteur et le débit.
+    fn style_rows(&self, usable: bool) -> Vec<Row> {
+        let settings = self.current().cloned().unwrap_or_default();
+        let choice = |options: Vec<String>, selected: usize, enabled: bool| Control::Choice {
+            options,
+            selected,
+            enabled,
+        };
+        let position = |found: Option<usize>| found.unwrap_or_default();
+        vec![
+            Row::new(
+                EFFECT,
+                "Effet",
+                choice(
+                    VoiceEffect::ALL
+                        .iter()
+                        .map(|effect| format!("{} : {}", effect.name(), effect.summary()))
+                        .collect(),
+                    position(VoiceEffect::ALL.iter().position(|&effect| effect == settings.effect)),
+                    usable,
+                ),
+            ),
+            Row::new(
+                INTENSITY,
+                "Intensité",
+                choice(
+                    Intensity::ALL.iter().map(|level| capitalized(level.name())).collect(),
+                    position(Intensity::ALL.iter().position(|&level| level == settings.intensity)),
+                    usable && settings.effect != VoiceEffect::Natural,
+                ),
+            ),
+            Row::new(
+                PITCH,
+                "Hauteur",
+                choice(
+                    Pitch::ALL.iter().map(|level| capitalized(level.name())).collect(),
+                    position(Pitch::ALL.iter().position(|&level| level == settings.pitch)),
+                    usable,
+                ),
+            ),
+            Row::new(
+                RATE,
+                "Débit",
+                choice(
+                    Rate::ALL.iter().map(|level| capitalized(level.name())).collect(),
+                    position(Rate::ALL.iter().position(|&level| level == settings.rate)),
+                    usable,
+                ),
+            ),
+            Row::new(EFFECT_NOTE, "", Control::Note { text: EFFECTS_ARE.to_owned(), tone: Tone::Quiet }),
+        ]
+    }
+}
+
+/// Ce que sont les effets, et ce qu'ils ne sont pas.
+pub const EFFECTS_ARE: &str = "Les effets traitent le son sur cette machine, après la synthèse : ils font entendre une \
+                               construct, sans imiter la voix de la série. Si le système ne peut pas les appliquer, \
+                               Capri parle sans effet.";
+
+/// « Légère » pour « légère ».
+fn capitalized(text: &str) -> String {
+    let mut chars = text.chars();
+    chars.next().map(|first| first.to_uppercase().chain(chars).collect()).unwrap_or_default()
 }
 
 /// « Amélie (fr-CA, qualité de base) ».
@@ -133,6 +203,7 @@ impl Rubric for VoiceRubric {
         if let Some((tone, text)) = note {
             rows.push(Row::new(NOTE, "", Control::Note { text, tone }));
         }
+        rows.extend(self.style_rows(usable));
         rows.push(Row::new(
             ACTIONS,
             "",
@@ -170,6 +241,26 @@ impl Rubric for VoiceRubric {
                 }
                 self.save(VoiceSettings { voice, ..current })
             }
+            FormEvent::Chose { id, index } if id == EFFECT => match VoiceEffect::ALL.get(index) {
+                Some(&effect) if effect != current.effect => self.save(VoiceSettings { effect, ..current }),
+                _ => Vec::new(),
+            },
+            FormEvent::Chose { id, index } if id == INTENSITY => match Intensity::ALL.get(index) {
+                Some(&intensity)
+                    if intensity != current.intensity && current.effect != VoiceEffect::Natural =>
+                {
+                    self.save(VoiceSettings { intensity, ..current })
+                }
+                _ => Vec::new(),
+            },
+            FormEvent::Chose { id, index } if id == PITCH => match Pitch::ALL.get(index) {
+                Some(&pitch) if pitch != current.pitch => self.save(VoiceSettings { pitch, ..current }),
+                _ => Vec::new(),
+            },
+            FormEvent::Chose { id, index } if id == RATE => match Rate::ALL.get(index) {
+                Some(&rate) if rate != current.rate => self.save(VoiceSettings { rate, ..current }),
+                _ => Vec::new(),
+            },
             FormEvent::Pressed { id, .. } if id == LISTEN => {
                 let voice = self.speaking().map(|voice| voice.id.clone());
                 vec![Effect::SayAloud { delivery: delivery(&current, voice), text: speakable(TEST_SENTENCE) }]
@@ -188,6 +279,8 @@ impl Rubric for VoiceRubric {
                 let before = self.current().cloned();
                 let text = if before.as_ref().is_some_and(|before| before.enabled != settings.enabled) {
                     if settings.enabled { VOICE_ON.to_owned() } else { VOICE_OFF.to_owned() }
+                } else if before.as_ref().is_some_and(|before| before.voice == settings.voice) {
+                    format!("Sa façon de parler : {}. Dès sa prochaine phrase.", describe_style(&settings))
                 } else {
                     match pick(&self.voices, LANGUAGE, settings.voice.as_deref()) {
                         Some(voice) => format!("Sa voix : {}.", label(voice)),
@@ -310,6 +403,95 @@ mod tests {
     }
 
     #[test]
+    fn the_effect_its_intensity_the_pitch_and_the_rate_are_offered_natural_and_normal_first() {
+        let rubric = opened(VoiceSettings::default(), voices());
+        let Some(Control::Choice { options, selected: 0, enabled: true }) = control(&rubric, EFFECT) else {
+            panic!("{:?}", control(&rubric, EFFECT))
+        };
+        assert_eq!(options.len(), VoiceEffect::ALL.len());
+        assert_eq!(options[0], "Naturelle : sans effet, la voix telle que le système la dit");
+        assert!(options[1].starts_with("Construct : "), "{options:?}");
+        assert_eq!(
+            control(&rubric, INTENSITY),
+            Some(Control::Choice {
+                options: vec!["Légère".to_owned(), "Moyenne".to_owned(), "Forte".to_owned()],
+                selected: 1,
+                enabled: false,
+            }),
+            "sans effet, pas d'intensité à régler"
+        );
+        assert_eq!(
+            control(&rubric, PITCH),
+            Some(Control::Choice {
+                options: ["Plus grave", "Un peu grave", "Normale", "Un peu aiguë", "Plus aiguë"]
+                    .map(str::to_owned)
+                    .to_vec(),
+                selected: 2,
+                enabled: true,
+            })
+        );
+        assert!(matches!(control(&rubric, RATE), Some(Control::Choice { selected: 2, enabled: true, .. })));
+        assert_eq!(
+            control(&rubric, EFFECT_NOTE),
+            Some(Control::Note { text: EFFECTS_ARE.to_owned(), tone: Tone::Quiet })
+        );
+        assert!(!EFFECTS_ARE.contains("capri "), "pas de commande de terminal dans la fenêtre");
+    }
+
+    #[test]
+    fn choosing_an_effect_its_intensity_the_pitch_and_the_rate_writes_them_and_listening_uses_them() {
+        let mut rubric = opened(VoiceSettings { enabled: true, ..VoiceSettings::default() }, voices());
+        let choose = |rubric: &mut VoiceRubric, id: &str, index: usize| -> VoiceSettings {
+            let effects = rubric.event(FormEvent::Chose { id: id.to_owned(), index });
+            let [Effect::SaveVoice(saved)] = effects.as_slice() else { panic!("{id} : {effects:?}") };
+            rubric.done(Outcome::VoiceSaved(Ok(saved.clone())));
+            saved.clone()
+        };
+        let saved = choose(&mut rubric, EFFECT, 2);
+        assert_eq!(saved.effect, VoiceEffect::Radio);
+        assert!(matches!(control(&rubric, INTENSITY), Some(Control::Choice { enabled: true, .. })));
+        assert_eq!(
+            control(&rubric, SAVED),
+            Some(Control::Note {
+                text: "Sa façon de parler : Liaison radio (intensité moyenne), hauteur normale, débit normal. Dès sa \
+                       prochaine phrase."
+                    .to_owned(),
+                tone: Tone::Good
+            })
+        );
+        assert_eq!(choose(&mut rubric, INTENSITY, 2).intensity, Intensity::Strong);
+        assert_eq!(choose(&mut rubric, PITCH, 0).pitch, Pitch::Lower);
+        let saved = choose(&mut rubric, RATE, 4);
+        assert_eq!(
+            saved,
+            VoiceSettings {
+                enabled: true,
+                voice: None,
+                effect: VoiceEffect::Radio,
+                intensity: Intensity::Strong,
+                pitch: Pitch::Lower,
+                rate: Rate::Faster,
+            },
+            "chaque choix garde les autres"
+        );
+        // « Écouter » fait entendre ce qui est choisi
+        let effects = rubric.event(FormEvent::Pressed { id: LISTEN.to_owned(), secret: None });
+        let [Effect::SayAloud { delivery: heard, .. }] = effects.as_slice() else { panic!("{effects:?}") };
+        assert_eq!(heard, &delivery(&saved, Some("voix.fr.deux".to_owned())));
+        assert!(!heard.effects.is_empty() && heard.pitch < 1.0 && heard.rate > 0.0);
+        // ne rien changer ne réécrit rien, une option qui n'existe pas non plus
+        assert!(rubric.event(FormEvent::Chose { id: EFFECT.to_owned(), index: 2 }).is_empty());
+        assert!(rubric.event(FormEvent::Chose { id: PITCH.to_owned(), index: 9 }).is_empty());
+        // revenir à « Naturelle » : l'intensité n'est plus à régler, et n'est pas changée
+        assert_eq!(choose(&mut rubric, EFFECT, 0).effect, VoiceEffect::Natural);
+        assert!(matches!(
+            control(&rubric, INTENSITY),
+            Some(Control::Choice { enabled: false, selected: 2, .. })
+        ));
+        assert!(rubric.event(FormEvent::Chose { id: INTENSITY.to_owned(), index: 0 }).is_empty());
+    }
+
+    #[test]
     fn a_voice_gone_since_or_no_french_voice_at_all_is_said() {
         let rubric = opened(
             VoiceSettings {
@@ -335,6 +517,10 @@ mod tests {
         let mut rubric = VoiceRubric::new(&Environment { keychain: None, tls: false, voice: false });
         rubric.done(Outcome::VoiceLoaded { settings: Ok(VoiceSettings::default()), voices: Vec::new() });
         assert!(matches!(control(&rubric, ENABLED), Some(Control::Check { enabled: false, .. })));
+        for id in [EFFECT, INTENSITY, PITCH, RATE] {
+            assert!(matches!(control(&rubric, id), Some(Control::Choice { enabled: false, .. })), "{id}");
+            assert!(rubric.event(FormEvent::Chose { id: id.to_owned(), index: 1 }).is_empty(), "{id}");
+        }
         assert!(rubric.event(FormEvent::Toggled { id: ENABLED.to_owned(), checked: true }).is_empty());
         assert!(rubric.event(FormEvent::Pressed { id: LISTEN.to_owned(), secret: None }).is_empty());
 
