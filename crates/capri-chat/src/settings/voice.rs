@@ -268,7 +268,7 @@ mod tests {
         let mut rubric = opened(VoiceSettings::default(), voices());
         let effects = rubric.event(FormEvent::Toggled { id: ENABLED.to_owned(), checked: true });
         let [Effect::SaveVoice(saved)] = effects.as_slice() else { panic!("{effects:?}") };
-        assert_eq!(saved, &VoiceSettings { enabled: true, voice: None });
+        assert_eq!(saved, &VoiceSettings { enabled: true, ..VoiceSettings::default() });
         rubric.done(Outcome::VoiceSaved(Ok(saved.clone())));
         assert_eq!(
             control(&rubric, SAVED),
@@ -277,7 +277,14 @@ mod tests {
 
         let effects = rubric.event(FormEvent::Chose { id: CHOICE.to_owned(), index: 2 });
         let [Effect::SaveVoice(saved)] = effects.as_slice() else { panic!("{effects:?}") };
-        assert_eq!(saved, &VoiceSettings { enabled: true, voice: Some("voix.fr.une".to_owned()) });
+        assert_eq!(
+            saved,
+            &VoiceSettings {
+                enabled: true,
+                voice: Some("voix.fr.une".to_owned()),
+                ..VoiceSettings::default()
+            }
+        );
         rubric.done(Outcome::VoiceSaved(Ok(saved.clone())));
         assert!(matches!(control(&rubric, CHOICE), Some(Control::Choice { selected: 2, .. })));
         assert_eq!(
@@ -304,7 +311,14 @@ mod tests {
 
     #[test]
     fn a_voice_gone_since_or_no_french_voice_at_all_is_said() {
-        let rubric = opened(VoiceSettings { enabled: true, voice: Some("voix.partie".to_owned()) }, voices());
+        let rubric = opened(
+            VoiceSettings {
+                enabled: true,
+                voice: Some("voix.partie".to_owned()),
+                ..VoiceSettings::default()
+            },
+            voices(),
+        );
         assert!(matches!(control(&rubric, CHOICE), Some(Control::Choice { selected: 0, .. })));
         assert!(matches!(control(&rubric, NOTE), Some(Control::Note { text, .. })
             if text.starts_with("La voix choisie, « voix.partie », n'est plus installée")));

@@ -203,7 +203,8 @@ mod tests {
             "sans fichier : pas de voix"
         );
 
-        let settings = VoiceSettings { enabled: true, voice: Some("une.voix".to_owned()) };
+        let settings =
+            VoiceSettings { enabled: true, voice: Some("une.voix".to_owned()), ..VoiceSettings::default() };
         let file = save(&directory, &settings).expect("écrit");
         assert_eq!(file, directory.join("voice.json"));
         assert_eq!(load(&directory).expect("lisible"), settings);

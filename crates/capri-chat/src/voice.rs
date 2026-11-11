@@ -4,10 +4,20 @@
 //!   peut être dite pendant que le modèle écrit encore la suite ;
 //! - [`speakable`] donne ce qu'une voix doit prononcer d'une phrase affichée (sans émojis) ;
 //! - [`pick`] choisit une voix parmi celles du système ;
+//! - [`VoiceEffect`], [`Intensity`], [`Pitch`] et [`Rate`] sont ce qu'on règle de sa façon de
+//!   parler : des préréglages d'effets écrits pour elle, et des niveaux nommés ;
+//! - [`delivery`] en fait la description neutre que la voix du système applique
+//!   (`capri_core::sound::Delivery`) ;
 //! - [`VoiceSettings`] est le contenu du fichier de réglages.
+//!
+//! Les effets sont un traitement du son appliqué après la synthèse, sur la machine : ils font
+//! entendre que Capri est une construct, une conscience numérique, sans imiter la voix de la
+//! comédienne de la série (ce qu'on ne fera pas). L'idée d'effets de lecture vient de
+//! CapriChooms/CapriCore ; les préréglages ci-dessous sont les nôtres, ni son code ni ses valeurs.
 //!
 //! Faire parler la machine est le travail de `capri_platform::Voice`.
 
+use capri_core::sound::{self, Band, Delivery, DistortionKind, Filter, Room};
 use serde_json::{Value, json};
 
 /// Une voix installée sur le système, telle que `capri-platform` la décrit.
@@ -186,34 +196,374 @@ fn is_pictograph(c: char) -> bool {
     )
 }
 
+/// Un traitement de sa voix, appliqué après la synthèse. « Naturelle » n'en applique aucun : la
+/// voix du système, exactement comme sans ce réglage.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum VoiceEffect {
+    #[default]
+    Natural,
+    /// Discret : un léger grain électronique et une petite salle.
+    Construct,
+    /// Une voix serrée et un peu saturée, comme dans un casque de liaison.
+    Radio,
+    /// Plus marqué : des échos métalliques rapprochés, du grain et une réverbération brillante.
+    Hologram,
+}
+
+impl VoiceEffect {
+    pub const ALL: [Self; 4] = [Self::Natural, Self::Construct, Self::Radio, Self::Hologram];
+
+    /// Son nom dans `voice.json` et en ligne de commande. Ne jamais le changer : un fichier
+    /// existant ne serait plus compris.
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::Natural => "natural",
+            Self::Construct => "construct",
+            Self::Radio => "radio",
+            Self::Hologram => "hologram",
+        }
+    }
+
+    /// Son nom affiché.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Natural => "Naturelle",
+            Self::Construct => "Construct",
+            Self::Radio => "Liaison radio",
+            Self::Hologram => "Hologramme",
+        }
+    }
+
+    /// Ce qu'on devrait entendre, en quelques mots.
+    pub fn summary(self) -> &'static str {
+        match self {
+            Self::Natural => "sans effet, la voix telle que le système la dit",
+            Self::Construct => "un léger grain électronique et une petite salle",
+            Self::Radio => "une voix serrée et un peu saturée, comme dans un casque de liaison",
+            Self::Hologram => "des échos métalliques rapprochés, du grain et une réverbération brillante",
+        }
+    }
+
+    /// Son identifiant, ou son nom en français, sans tenir compte de la casse ni des accents.
+    pub fn parse(text: &str) -> Option<Self> {
+        let wanted = fold(text);
+        Self::ALL.into_iter().find(|effect| wanted == effect.id() || wanted == fold(effect.name())).or(
+            match wanted.as_str() {
+                "aucun" | "sans" | "naturel" => Some(Self::Natural),
+                "hologramme" => Some(Self::Hologram),
+                _ => None,
+            },
+        )
+    }
+
+    /// Les traitements de ce préréglage, à cette intensité, dans l'ordre où le son les traverse.
+    /// Les valeurs sont les nôtres, choisies pour une voix française d'environ 16 à 22 kHz.
+    pub fn effects(self, intensity: Intensity) -> Vec<sound::Effect> {
+        use sound::Effect::{Delay, Distortion, Equalizer, Reverb};
+        let k = intensity.scale();
+        let band = |filter, frequency, bandwidth, gain| Band { filter, frequency, bandwidth, gain };
+        match self {
+            Self::Natural => Vec::new(),
+            Self::Construct => vec![
+                // le grain : un peu de son « décimé » (moins de bits, moins d'échantillons)
+                Distortion { kind: DistortionKind::MultiDecimated1, pre_gain: -6.0, mix: 8.0 * k },
+                Equalizer {
+                    bands: vec![
+                        band(Filter::HighPass, 110.0, 1.0, 0.0),
+                        // un peu de présence, comme une voix qui sort d'un circuit
+                        band(Filter::Parametric, 2_800.0, 1.2, 2.0 * k),
+                    ],
+                    gain: 0.0,
+                },
+                Reverb { room: Room::SmallRoom, mix: 10.0 * k },
+            ],
+            Self::Radio => vec![
+                Distortion { kind: DistortionKind::MultiDistortedCubed, pre_gain: -6.0, mix: 12.0 * k },
+                Equalizer {
+                    bands: vec![
+                        // la bande d'un émetteur : plus étroite à mesure que l'intensité monte
+                        band(Filter::HighPass, 250.0 + 150.0 * k, 1.0, 0.0),
+                        band(Filter::LowPass, 4_200.0 - 800.0 * k, 1.0, 0.0),
+                        band(Filter::Parametric, 1_700.0, 1.0, 4.0 * k),
+                    ],
+                    gain: 4.0,
+                },
+            ],
+            Self::Hologram => vec![
+                Distortion { kind: DistortionKind::MultiDecimated2, pre_gain: -6.0, mix: 10.0 * k },
+                Equalizer {
+                    bands: vec![
+                        band(Filter::HighPass, 160.0, 1.0, 0.0),
+                        band(Filter::HighShelf, 5_000.0, 1.0, 3.0 * k),
+                    ],
+                    gain: 0.0,
+                },
+                // des échos très rapprochés et réinjectés : un timbre de peigne, métallique
+                Delay { seconds: 0.022, feedback: 40.0 * k, cutoff: 7_000.0, mix: 25.0 * k },
+                Reverb { room: Room::Plate, mix: 14.0 * k },
+            ],
+        }
+    }
+}
+
+/// L'intensité d'un effet.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Intensity {
+    Light,
+    #[default]
+    Medium,
+    Strong,
+}
+
+impl Intensity {
+    pub const ALL: [Self; 3] = [Self::Light, Self::Medium, Self::Strong];
+
+    /// Son niveau dans `voice.json` et en ligne de commande : de 1 à 3.
+    pub fn level(self) -> i64 {
+        match self {
+            Self::Light => 1,
+            Self::Medium => 2,
+            Self::Strong => 3,
+        }
+    }
+
+    /// Le niveau le plus proche de `level`.
+    pub fn from_level(level: i64) -> Self {
+        match level {
+            ..=1 => Self::Light,
+            2 => Self::Medium,
+            3.. => Self::Strong,
+        }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Light => "légère",
+            Self::Medium => "moyenne",
+            Self::Strong => "forte",
+        }
+    }
+
+    /// Ce par quoi multiplier la part d'effet d'un préréglage.
+    fn scale(self) -> f32 {
+        match self {
+            Self::Light => 0.6,
+            Self::Medium => 1.0,
+            Self::Strong => 1.5,
+        }
+    }
+}
+
+/// La hauteur de sa voix, par rapport à celle de la voix du système.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Pitch {
+    Lower,
+    Low,
+    #[default]
+    Normal,
+    High,
+    Higher,
+}
+
+impl Pitch {
+    pub const ALL: [Self; 5] = [Self::Lower, Self::Low, Self::Normal, Self::High, Self::Higher];
+
+    /// Son cran dans `voice.json` et en ligne de commande : de -2 à 2.
+    pub fn step(self) -> i64 {
+        match self {
+            Self::Lower => -2,
+            Self::Low => -1,
+            Self::Normal => 0,
+            Self::High => 1,
+            Self::Higher => 2,
+        }
+    }
+
+    /// Le cran le plus proche de `step`.
+    pub fn from_step(step: i64) -> Self {
+        match step {
+            ..=-2 => Self::Lower,
+            -1 => Self::Low,
+            0 => Self::Normal,
+            1 => Self::High,
+            2.. => Self::Higher,
+        }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Lower => "plus grave",
+            Self::Low => "un peu grave",
+            Self::Normal => "normale",
+            Self::High => "un peu aiguë",
+            Self::Higher => "plus aiguë",
+        }
+    }
+
+    /// Le multiplicateur demandé au système. Il monte fidèlement mais descend moins qu'annoncé
+    /// sur les voix françaises de base : mesuré sur ce Mac (fréquence fondamentale des voix
+    /// « compactes » Amélie et Thomas), 0,8 la baisse d'environ 5 %, 0,55 d'environ 12 %, quand
+    /// 1,06 la monte de 6 % et 1,14 de 14 %. Les voix « eloquence » descendent davantage.
+    pub fn multiplier(self) -> f32 {
+        match self {
+            Self::Lower => 0.55,
+            Self::Low => 0.8,
+            Self::Normal => 1.0,
+            Self::High => 1.06,
+            Self::Higher => 1.14,
+        }
+    }
+}
+
+/// Son débit, par rapport à celui de la voix du système.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Rate {
+    Slower,
+    Slow,
+    #[default]
+    Normal,
+    Fast,
+    Faster,
+}
+
+impl Rate {
+    pub const ALL: [Self; 5] = [Self::Slower, Self::Slow, Self::Normal, Self::Fast, Self::Faster];
+
+    /// Son cran dans `voice.json` et en ligne de commande : de -2 à 2.
+    pub fn step(self) -> i64 {
+        match self {
+            Self::Slower => -2,
+            Self::Slow => -1,
+            Self::Normal => 0,
+            Self::Fast => 1,
+            Self::Faster => 2,
+        }
+    }
+
+    /// Le cran le plus proche de `step`.
+    pub fn from_step(step: i64) -> Self {
+        match step {
+            ..=-2 => Self::Slower,
+            -1 => Self::Slow,
+            0 => Self::Normal,
+            1 => Self::Fast,
+            2.. => Self::Faster,
+        }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Slower => "lent",
+            Self::Slow => "posé",
+            Self::Normal => "normal",
+            Self::Fast => "vif",
+            Self::Faster => "rapide",
+        }
+    }
+
+    /// Le débit demandé au système, relatif à sa plage (`capri_core::sound::RATE`). Sa plage
+    /// n'est pas linéaire : mesuré sur ce Mac (durée d'une même phrase), -0,26 la dit environ
+    /// 1,2 fois plus lentement, -0,12 1,1 fois, quand +0,04 la dit 1,08 fois plus vite et +0,09
+    /// 1,23 fois.
+    pub fn relative(self) -> f32 {
+        match self {
+            Self::Slower => -0.26,
+            Self::Slow => -0.12,
+            Self::Normal => 0.0,
+            Self::Fast => 0.04,
+            Self::Faster => 0.09,
+        }
+    }
+}
+
+/// Comment dire ses phrases avec ces réglages et cette voix (`None` : celle du système).
+/// « Naturelle », à la hauteur et au débit normaux, ne demande rien de plus que la voix.
+pub fn delivery(settings: &VoiceSettings, voice: Option<String>) -> Delivery {
+    Delivery {
+        voice,
+        pitch: settings.pitch.multiplier(),
+        rate: settings.rate.relative(),
+        effects: settings.effect.effects(settings.intensity),
+    }
+}
+
+/// « Construct (intensité moyenne), hauteur un peu grave, débit normal ».
+pub fn describe_style(settings: &VoiceSettings) -> String {
+    let effect = match settings.effect {
+        VoiceEffect::Natural => VoiceEffect::Natural.name().to_owned(),
+        effect => format!("{} (intensité {})", effect.name(), settings.intensity.name()),
+    };
+    format!("{effect}, hauteur {}, débit {}", settings.pitch.name(), settings.rate.name())
+}
+
+/// En minuscules et sans accents, pour comparer ce qu'on tape à un nom.
+fn fold(text: &str) -> String {
+    text.trim()
+        .to_lowercase()
+        .chars()
+        .map(|c| match c {
+            'à' | 'â' | 'ä' => 'a',
+            'é' | 'è' | 'ê' | 'ë' => 'e',
+            'î' | 'ï' => 'i',
+            'ô' | 'ö' => 'o',
+            'ù' | 'û' | 'ü' => 'u',
+            'ç' => 'c',
+            c => c,
+        })
+        .collect()
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
 #[error("les réglages de la voix ne sont pas du JSON valide")]
 pub struct InvalidVoiceSettings;
 
 /// Le contenu du fichier de réglages de la voix. Sans fichier, Capri ne parle pas à voix haute.
+/// Un fichier écrit avant les effets, sans `effect`, `intensity`, `pitch` ni `rate`, donne la
+/// voix d'avant : naturelle, à sa hauteur et à son débit.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct VoiceSettings {
     pub enabled: bool,
     /// La voix choisie, par identifiant ou par nom. `None` : la meilleure voix française.
     pub voice: Option<String>,
+    pub effect: VoiceEffect,
+    pub intensity: Intensity,
+    pub pitch: Pitch,
+    pub rate: Rate,
 }
 
 impl VoiceSettings {
     /// Lit le fichier de réglages. Ce qui manque prend sa valeur par défaut, ce qui est inconnu
-    /// est ignoré.
+    /// est ignoré, un niveau hors bornes est ramené au plus proche.
     pub fn from_json(text: &str) -> Result<Self, InvalidVoiceSettings> {
         let settings: Value = serde_json::from_str(text).map_err(|_| InvalidVoiceSettings)?;
         if !settings.is_object() {
             return Err(InvalidVoiceSettings);
         }
+        // un nombre, même écrit 2.0 ; arrondi, et rien d'autre
+        let level = |key: &str| {
+            settings[key].as_i64().or_else(|| {
+                settings[key].as_f64().filter(|value| value.is_finite()).map(|value| value.round() as i64)
+            })
+        };
         Ok(Self {
             enabled: settings["enabled"].as_bool().unwrap_or(false),
             voice: settings["voice"].as_str().map(str::trim).filter(|v| !v.is_empty()).map(str::to_owned),
+            effect: settings["effect"].as_str().and_then(VoiceEffect::parse).unwrap_or_default(),
+            intensity: level("intensity").map(Intensity::from_level).unwrap_or_default(),
+            pitch: level("pitch").map(Pitch::from_step).unwrap_or_default(),
+            rate: level("rate").map(Rate::from_step).unwrap_or_default(),
         })
     }
 
     pub fn to_json(&self) -> String {
-        let settings = json!({ "enabled": self.enabled, "voice": self.voice });
+        let settings = json!({
+            "enabled": self.enabled,
+            "voice": self.voice,
+            "effect": self.effect.id(),
+            "intensity": self.intensity.level(),
+            "pitch": self.pitch.step(),
+            "rate": self.rate.step(),
+        });
         let mut text =
             serde_json::to_string_pretty(&settings).expect("un objet JSON simple s'écrit toujours");
         text.push('\n');
@@ -390,22 +740,185 @@ mod tests {
     fn voice_settings_are_written_and_read_back() {
         assert_eq!(
             VoiceSettings::default(),
-            VoiceSettings { enabled: false, voice: None },
-            "muette par défaut"
+            VoiceSettings {
+                enabled: false,
+                voice: None,
+                effect: VoiceEffect::Natural,
+                intensity: Intensity::Medium,
+                pitch: Pitch::Normal,
+                rate: Rate::Normal,
+            },
+            "muette par défaut, et naturelle"
         );
         for settings in [
-            VoiceSettings { enabled: true, voice: None },
-            VoiceSettings { enabled: false, voice: Some("com.apple.voice.compact.fr-CA.Amelie".to_owned()) },
+            VoiceSettings { enabled: true, ..VoiceSettings::default() },
+            VoiceSettings {
+                voice: Some("com.apple.voice.compact.fr-CA.Amelie".to_owned()),
+                ..VoiceSettings::default()
+            },
         ] {
             assert_eq!(VoiceSettings::from_json(&settings.to_json()), Ok(settings));
+        }
+        // toutes les combinaisons
+        for effect in VoiceEffect::ALL {
+            for intensity in Intensity::ALL {
+                for (pitch, rate) in Pitch::ALL.into_iter().zip(Rate::ALL.into_iter().rev()) {
+                    let settings =
+                        VoiceSettings { enabled: true, voice: None, effect, intensity, pitch, rate };
+                    assert_eq!(VoiceSettings::from_json(&settings.to_json()), Ok(settings));
+                }
+            }
         }
         assert_eq!(VoiceSettings::from_json("{}"), Ok(VoiceSettings::default()));
         assert_eq!(
             VoiceSettings::from_json(r#"{"enabled":true,"voice":"  ","futur":1}"#),
-            Ok(VoiceSettings { enabled: true, voice: None })
+            Ok(VoiceSettings { enabled: true, ..VoiceSettings::default() })
         );
         for broken in ["", "pas du json", "[]", "true"] {
             assert_eq!(VoiceSettings::from_json(broken), Err(InvalidVoiceSettings), "{broken:?}");
         }
+    }
+
+    #[test]
+    fn a_file_written_before_the_effects_gives_the_voice_of_before() {
+        let before = r#"{
+  "enabled": true,
+  "voice": "com.apple.voice.compact.fr-CA.Amelie"
+}
+"#;
+        let settings = VoiceSettings::from_json(before).expect("lisible");
+        assert_eq!(settings.effect, VoiceEffect::Natural);
+        let delivery = delivery(&settings, Some("com.apple.voice.compact.fr-CA.Amelie".to_owned()));
+        assert_eq!(delivery, Delivery::plain(Some("com.apple.voice.compact.fr-CA.Amelie".to_owned())));
+        assert!(delivery.natural_prosody(), "rien n'est demandé de plus au système");
+    }
+
+    #[test]
+    fn unknown_or_out_of_range_values_break_nothing() {
+        let settings = VoiceSettings::from_json(
+            r#"{"enabled":true,"effect":"chorale","intensity":9,"pitch":-40,"rate":2.6}"#,
+        )
+        .expect("lisible");
+        assert_eq!(
+            (settings.effect, settings.intensity, settings.pitch, settings.rate),
+            (VoiceEffect::Natural, Intensity::Strong, Pitch::Lower, Rate::Faster)
+        );
+        let settings =
+            VoiceSettings::from_json(r#"{"effect":42,"intensity":"fort","pitch":null,"rate":[1],"voice":7}"#)
+                .expect("lisible");
+        assert_eq!(settings, VoiceSettings::default(), "d'autres types : les valeurs par défaut");
+        let settings =
+            VoiceSettings::from_json(r#"{"intensity":0,"pitch":1.4,"rate":-1e300}"#).expect("lisible");
+        assert_eq!(
+            (settings.intensity, settings.pitch, settings.rate),
+            (Intensity::Light, Pitch::High, Rate::Slower)
+        );
+        assert_eq!(
+            VoiceSettings::from_json(r#"{"effect":" Hologramme "}"#).map(|settings| settings.effect),
+            Ok(VoiceEffect::Hologram),
+            "un nom français, mal tapé, est compris"
+        );
+    }
+
+    #[test]
+    fn effects_are_named_and_found_by_id_or_french_name() {
+        for effect in VoiceEffect::ALL {
+            assert_eq!(VoiceEffect::parse(effect.id()), Some(effect));
+            assert_eq!(VoiceEffect::parse(&effect.name().to_uppercase()), Some(effect));
+        }
+        assert_eq!(VoiceEffect::parse("liaison radio"), Some(VoiceEffect::Radio));
+        assert_eq!(VoiceEffect::parse("hologramme"), Some(VoiceEffect::Hologram));
+        assert_eq!(VoiceEffect::parse("aucun"), Some(VoiceEffect::Natural));
+        assert_eq!(VoiceEffect::parse("chorale"), None);
+        assert_eq!(VoiceEffect::parse(""), None);
+        let ids: Vec<&str> = VoiceEffect::ALL.iter().map(|effect| effect.id()).collect();
+        assert_eq!(
+            ids,
+            ["natural", "construct", "radio", "hologram"],
+            "ces noms sont écrits dans voice.json"
+        );
+    }
+
+    #[test]
+    fn natural_is_no_processing_at_all_and_the_others_stay_within_bounds() {
+        for intensity in Intensity::ALL {
+            assert!(VoiceEffect::Natural.effects(intensity).is_empty());
+        }
+        for effect in [VoiceEffect::Construct, VoiceEffect::Radio, VoiceEffect::Hologram] {
+            let chains: Vec<Vec<sound::Effect>> =
+                Intensity::ALL.iter().map(|&intensity| effect.effects(intensity)).collect();
+            for chain in &chains {
+                assert!(!chain.is_empty() && chain.len() <= sound::MAX_EFFECTS);
+                let delivery = Delivery { effects: chain.clone(), ..Delivery::plain(None) };
+                assert_eq!(delivery.bounded(), delivery, "{effect:?} : rien n'est hors bornes");
+            }
+            // plus d'intensité, plus d'effet mélangé au son d'origine
+            let mixed = |chain: &Vec<sound::Effect>| -> f32 {
+                chain
+                    .iter()
+                    .map(|effect| match effect {
+                        sound::Effect::Reverb { mix, .. }
+                        | sound::Effect::Delay { mix, .. }
+                        | sound::Effect::Distortion { mix, .. } => *mix,
+                        sound::Effect::Equalizer { .. } => 0.0,
+                    })
+                    .sum()
+            };
+            assert!(
+                mixed(&chains[0]) < mixed(&chains[1]) && mixed(&chains[1]) < mixed(&chains[2]),
+                "{effect:?}"
+            );
+        }
+        let all: Vec<Vec<sound::Effect>> =
+            VoiceEffect::ALL.iter().map(|effect| effect.effects(Intensity::Medium)).collect();
+        for (i, a) in all.iter().enumerate() {
+            for b in &all[i + 1..] {
+                assert_ne!(a, b, "deux préréglages identiques");
+            }
+        }
+    }
+
+    #[test]
+    fn levels_are_ordered_and_normal_asks_nothing() {
+        let pitches: Vec<f32> = Pitch::ALL.iter().map(|pitch| pitch.multiplier()).collect();
+        assert!(pitches.windows(2).all(|pair| pair[0] < pair[1]), "{pitches:?}");
+        assert!(pitches.iter().all(|pitch| sound::PITCH.contains(pitch)));
+        let rates: Vec<f32> = Rate::ALL.iter().map(|rate| rate.relative()).collect();
+        assert!(rates.windows(2).all(|pair| pair[0] < pair[1]), "{rates:?}");
+        assert!(rates.iter().all(|rate| sound::RATE.contains(rate)));
+        assert_eq!((Pitch::Normal.multiplier(), Rate::Normal.relative()), (1.0, 0.0));
+        for step in -2..=2 {
+            assert_eq!(Pitch::from_step(step).step(), step);
+            assert_eq!(Rate::from_step(step).step(), step);
+        }
+        for level in 1..=3 {
+            assert_eq!(Intensity::from_level(level).level(), level);
+        }
+        assert_eq!((Pitch::from_step(i64::MIN), Rate::from_step(i64::MAX)), (Pitch::Lower, Rate::Faster));
+        assert_eq!(
+            (Intensity::from_level(-5), Intensity::from_level(99)),
+            (Intensity::Light, Intensity::Strong)
+        );
+    }
+
+    #[test]
+    fn the_settings_become_a_description_for_the_system() {
+        let settings = VoiceSettings {
+            enabled: true,
+            voice: None,
+            effect: VoiceEffect::Radio,
+            intensity: Intensity::Strong,
+            pitch: Pitch::Low,
+            rate: Rate::Fast,
+        };
+        let delivery = delivery(&settings, Some("une.voix".to_owned()));
+        assert_eq!(delivery.voice.as_deref(), Some("une.voix"));
+        assert_eq!((delivery.pitch, delivery.rate), (Pitch::Low.multiplier(), Rate::Fast.relative()));
+        assert_eq!(delivery.effects, VoiceEffect::Radio.effects(Intensity::Strong));
+        assert_eq!(
+            describe_style(&settings),
+            "Liaison radio (intensité forte), hauteur un peu grave, débit vif"
+        );
+        assert_eq!(describe_style(&VoiceSettings::default()), "Naturelle, hauteur normale, débit normal");
     }
 }
