@@ -320,7 +320,7 @@ Deux façons de lui parler avec **⌃⌥D** (Ctrl+Alt+D, comme « dicter »). Ce
 envoyé comme si tu l'avais tapé, et une bulle bleue montre ce qu'elle comprend pendant que tu
 parles.
 
-- **un appui bref** (moins d'une demi-seconde), puis tu parles : le micro reste ouvert, et c'est
+- **un appui bref** (relâché en moins d'un tiers de seconde), puis tu parles : le micro reste ouvert, et c'est
   elle qui comprend que tu as fini et l'envoie. Tu peux aussi finir toi-même, en appuyant une
   seconde fois : elle envoie tout de suite ce qu'elle a compris ;
 - **maintenir** la touche, parler, relâcher : comme avant, c'est le relâchement qui termine.
@@ -561,7 +561,7 @@ Règle : tout ce qui peut être testé sans écran va dans `capri-core`, `capri-
 
 Vérifié automatiquement :
 
-- formatage, `clippy -D warnings` et 404 tests sur **macOS Apple Silicon** (plus 4 qui ne
+- formatage, `clippy -D warnings` et 405 tests sur **macOS Apple Silicon** (plus 4 qui ne
   tournent qu'à la main : ils écrivent des images, lisent un vrai `settings.json`, touchent au
   vrai trousseau, ou créent de vraies voix et un vrai moteur audio, sans bruit) : animation, lancer et rebonds, hit-test, clics, bandeau, parole en pages, bulle
   sur plusieurs lignes, conversation, **validation du shader** par le compilateur de wgpu, lecture

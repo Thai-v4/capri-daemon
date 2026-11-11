@@ -40,8 +40,9 @@ pub const TAP_MS: u64 = 350;
 pub const SILENCE_MS: u64 = 1_500;
 
 /// En écoute libre, temps au bout duquel, sans un seul mot compris, le micro se ferme et rien
-/// n'est envoyé. Compté depuis l'ouverture du micro : le temps de lire la bulle « Je t'écoute… »
-/// puis de commencer. À diminuer si un appui par erreur laisse le micro ouvert trop longtemps.
+/// n'est envoyé. Compté depuis l'ouverture du micro (ou depuis que le système a retiré ce qu'il
+/// avait compris) : le temps de lire la bulle « Je t'écoute… » puis de commencer. À diminuer si
+/// un appui par erreur laisse le micro ouvert trop longtemps.
 pub const NOTHING_HEARD_MS: u64 = 7_000;
 
 /// Borne dure : une écoute ne dure jamais plus que cela, maintenue ou libre, et ce qui a été
@@ -151,8 +152,11 @@ impl Dictation {
             (Mode::Free, false) => {
                 (now_ms.saturating_sub(*changed_ms) >= SILENCE_MS).then_some(EndOfSpeech::Silence)
             }
+            // depuis le début, ou depuis que le système a retiré ce qu'il avait compris : sans
+            // cela, un texte retiré tard fermerait le micro à l'instant même, au milieu d'une
+            // hésitation
             (Mode::Free, true) => {
-                (now_ms.saturating_sub(*started_ms) >= NOTHING_HEARD_MS).then_some(EndOfSpeech::NothingHeard)
+                (now_ms.saturating_sub(*changed_ms) >= NOTHING_HEARD_MS).then_some(EndOfSpeech::NothingHeard)
             }
         }
     }
@@ -434,7 +438,23 @@ mod tests {
         let mut dictation = free_hearing("Euh", 1_000);
         dictation.transcribed("", false, 2_000);
         assert_eq!(dictation.due(1_000 + SILENCE_MS), None, "plus rien de compris : on n'envoie pas du vide");
-        assert_eq!(dictation.due(NOTHING_HEARD_MS), Some(EndOfSpeech::NothingHeard));
+        assert_eq!(
+            dictation.due(NOTHING_HEARD_MS),
+            None,
+            "l'attente d'un premier mot repart du moment où le texte a été retiré"
+        );
+        assert_eq!(dictation.due(2_000 + NOTHING_HEARD_MS - 1), None);
+        assert_eq!(dictation.due(2_000 + NOTHING_HEARD_MS), Some(EndOfSpeech::NothingHeard));
+    }
+
+    #[test]
+    fn a_text_retracted_late_does_not_close_the_microphone_at_once() {
+        let mut dictation = free_hearing("Euh", NOTHING_HEARD_MS + 3_000);
+        dictation.transcribed("", false, NOTHING_HEARD_MS + 3_500);
+        assert_eq!(dictation.due(NOTHING_HEARD_MS + 3_600), None, "on lui laisse le temps de reprendre");
+        dictation.transcribed("Quelle heure est-il", false, NOTHING_HEARD_MS + 4_500);
+        assert_eq!(dictation.due(NOTHING_HEARD_MS + 4_600), None);
+        assert_eq!(dictation.due(NOTHING_HEARD_MS + 4_500 + SILENCE_MS), Some(EndOfSpeech::Silence));
     }
 
     #[test]
