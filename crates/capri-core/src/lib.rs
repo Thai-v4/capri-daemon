@@ -6,6 +6,8 @@
 //!
 //! [`form`] décrit un formulaire de réglages (rubriques, lignes, événements) sans rien savoir de
 //! l'écran : le modèle des réglages le produit, la fenêtre de `capri-platform` l'affiche.
+//! [`sound`] décrit de même comment dire une phrase (voix, hauteur, débit, traitements du son)
+//! sans rien savoir du système : `capri-chat` la compose, la voix de `capri-platform` l'applique.
 
 pub mod anim;
 pub mod banner;
@@ -14,6 +16,7 @@ pub mod form;
 pub mod geom;
 pub mod input;
 pub mod mask;
+pub mod sound;
 pub mod speech;
 
 pub use anim::{FRAME_RATE, Sheet, frame_at};
