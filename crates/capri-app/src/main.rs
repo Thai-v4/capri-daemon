@@ -79,7 +79,7 @@ fn main() -> Result<()> {
         // en version de débogage : la vraie liste des fenêtres, sans rien afficher
         #[cfg(debug_assertions)]
         Some("perch") => std::process::exit(perch_rehearsal::run_cli(&args[1..])),
-        // en version de débogage : un son joue-t-il ? (oui ou non, sans rien jouer)
+        // en version de débogage : une annonce d'essai d'un lecteur, guettée comme Capri le fait
         #[cfg(debug_assertions)]
         Some("music") => std::process::exit(music_rehearsal::run_cli(&args[1..])),
         Some(_) => {
@@ -176,6 +176,9 @@ struct App {
     /// La répétition du suivi d'une fenêtre (`CAPRI_PERCH_REHEARSAL`, version de débogage).
     #[cfg(debug_assertions)]
     follow: Option<perch_rehearsal::Follow>,
+    /// La répétition des annonces de musique (`CAPRI_MUSIC_REHEARSAL`, version de débogage).
+    #[cfg(debug_assertions)]
+    music_rehearsal: Option<music_rehearsal::InApp>,
     fatal: Option<anyhow::Error>,
 }
 
@@ -214,7 +217,7 @@ struct Running {
     banner: BannerView,
     /// S'asseoir sur les fenêtres : quand lire leur liste, et ce qu'elle en fait.
     perch: perch_view::PerchView,
-    /// Se balancer sur la musique, assise : quand écouter, et ce qu'elle en conclut.
+    /// Se balancer sur la musique, assise : les annonces des lecteurs, et ce qu'elle en conclut.
     music: music_view::MusicView,
     /// Image d'animation courante.
     frame: u64,
@@ -265,7 +268,7 @@ impl ApplicationHandler for App {
         if let Some(r) = self.running.as_mut() {
             if self.hidden {
                 r.banner.listen_only();
-                r.music.tick(Instant::now(), false); // cachée, elle n'écoute pas
+                r.music.tick(Instant::now(), false); // cachée, elle ne se balance pas
             } else if r.step_due() {
                 r.tick();
             }
@@ -276,6 +279,12 @@ impl ApplicationHandler for App {
         #[cfg(debug_assertions)]
         if let (Some(follow), Some(r)) = (self.follow.as_mut(), self.running.as_mut())
             && follow.step(r)
+        {
+            event_loop.exit();
+        }
+        #[cfg(debug_assertions)]
+        if let (Some(rehearsal), Some(r)) = (self.music_rehearsal.as_mut(), self.running.as_ref())
+            && rehearsal.step(r)
         {
             event_loop.exit();
         }
@@ -358,7 +367,16 @@ impl App {
         #[cfg(debug_assertions)]
         {
             self.follow = perch_rehearsal::Follow::from_env();
+            self.music_rehearsal = music_rehearsal::InApp::from_env();
         }
+        // abonnée aux annonces des lecteurs dès le lancement, si c'est permis (sur ce thread)
+        #[cfg(debug_assertions)]
+        let music = match &self.music_rehearsal {
+            Some(rehearsal) => rehearsal.view(music_enabled),
+            None => music_view::MusicView::new(music_enabled),
+        };
+        #[cfg(not(debug_assertions))]
+        let music = music_view::MusicView::new(music_enabled);
         let refresh = overlay.refresh_rate();
         log::info!("écran : {refresh:?} Hz");
 
@@ -374,7 +392,7 @@ impl App {
             click_through: true,
             banner: BannerView::new(),
             perch: perch_view::PerchView::new(perch_enabled),
-            music: music_view::MusicView::new(music_enabled),
+            music,
             frame: 0,
             drawn: None,
             refresh,

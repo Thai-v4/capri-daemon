@@ -77,6 +77,8 @@ objc2-foundation = { version = "0.3.2", default-features = false, features = [
     "NSArray",
     "NSBundle", # l'app a-t-elle le droit de demander le micro ?
     "NSDate", # avec NSRunLoop : laisser la voix finir, en ligne de commande
+    "NSDictionary", # l'état d'un lecteur, seule clé lue de son annonce
+    "NSDistributedNotificationCenter", # les annonces des lecteurs de musique connus
     "NSError",
     "NSLocale",
     "NSGeometry",
@@ -104,7 +106,7 @@ objc2-app-kit = { version = "0.3.2", default-features = false, features = [
     "NSPopUpButton",
     "NSPopUpButtonCell",
     "NSResponder",
-    "NSRunningApplication", # en version de débogage : la fenêtre d'essai, sans icône dans le Dock
+    "NSRunningApplication", # un lecteur cru en lecture tourne-t-il encore ? (et la fenêtre d'essai)
     "NSScreen",
     "NSScrollView",
     "NSClipView",

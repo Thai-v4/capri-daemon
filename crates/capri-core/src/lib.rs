@@ -12,7 +12,7 @@
 //! rectangles, que la liste des fenêtres de `capri-platform` lui décrit. [`sheets`] décrit les
 //! planches de ses poses assise et debout (cases, dessins, où passe le bord de la fenêtre), et
 //! [`look`] dit lequel montrer à chaque image, où, et ce qui l'attrape. [`music`] décide,
-//! d'après une suite d'écoutes oui/non, si de la musique joue.
+//! d'après l'état que les lecteurs connus ont annoncé, si de la musique joue.
 //! [`pace`] dit quand la boucle se réveille : ses dessins restent à 24 i/s, mais sa position suit
 //! le curseur ou sa fenêtre à la cadence de l'écran.
 //! [`scale`] dit sa taille, choisie par l'utilisateur : une échelle rapportée à sa hauteur debout,

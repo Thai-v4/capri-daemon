@@ -14,8 +14,9 @@
 //! - ailleurs (`winit_overlay.rs`) : une fenêtre winit, réglée par `windows.rs` ou `other.rs`.
 //!
 //! C'est encore ici qu'est lue la liste des fenêtres des autres apps ([`desk`] : numéros et
-//! rectangles seulement, sans aucune permission), pour qu'elle s'assoie dessus ; et si un son
-//! sort d'une autre app ([`music`] : un oui ou un non, sans permission, sans titre ni nom d'app).
+//! rectangles seulement, sans aucune permission), pour qu'elle s'assoie dessus ; et les annonces des
+//! lecteurs de musique connus ([`music`] : Spotify et Musique, dont seul l'état est lu, sans
+//! permission ; jamais le titre, l'artiste ni l'album qu'elles transportent).
 //!
 //! C'est aussi ici que vivent sa voix ([`Voice`], la synthèse vocale du système), son oreille
 //! ([`Ear`], le micro et la reconnaissance vocale sur l'appareil), le trousseau où sont rangées

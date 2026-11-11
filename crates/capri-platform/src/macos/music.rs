@@ -1,184 +1,236 @@
-//! macOS : un son sort-il d'une autre app, d'après CoreAudio, sans aucune permission.
+//! macOS : les annonces des lecteurs, par `NSDistributedNotificationCenter`, sans aucune
+//! permission.
 //!
-//! Deux fonctions C de CoreAudio, déclarées à la main d'après `AudioHardware.h` (SDK de macOS) :
-//! aucun crate de plus, rien qui compile du C. `AudioObjectGetPropertyDataSize` dit combien
-//! d'octets occupe une propriété ; `AudioObjectGetPropertyData` la copie dans notre tampon, dont
-//! `ioDataSize` donne la taille à l'entrée et la part utilisée à la sortie. Le qualificatif est
-//! vide (taille 0, pointeur nul) : « not all properties require qualification, in which case
-//! this value will be NULL ».
+//! Ce que dit `NSDistributedNotificationCenter.h` (SDK de macOS), et qui décide de tout ici :
+//! - les notifications distribuées arrivent **sur le thread principal**, par sa boucle (« always
+//!   delivered to the main thread », dans un mode « common ») : l'observateur ne vit que là ;
+//! - « `NSApplication` automatically suspends distributed notification delivery when the
+//!   application is not active » : Capri est une app accessoire, jamais active. Abonnée
+//!   ordinairement, elle ne recevrait rien. D'où
+//!   `NSNotificationSuspensionBehaviorDeliverImmediately` : « The server will deliver
+//!   notifications matching this registration irrespective of whether setSuspended:YES has been
+//!   called » ;
+//! - « The receiver does not retain observer. Therefore, you should always send
+//!   `removeObserver:` [...] before releasing the observer » : le guetteur se désabonne en
+//!   disparaissant (`Drop`), avant de lâcher son observateur ;
+//! - les données d'une annonce viennent de n'importe quel processus : « treat any data passed in
+//!   the notification as untrusted ». La valeur de l'état n'est prise que si c'est une chaîne
+//!   (`downcast`), et seules trois valeurs exactes comptent (`capri_core::music`).
 //!
-//! Les propriétés lues, et rien d'autre (toutes `UInt32` ou tableaux d'`AudioObjectID`, sauf le
-//! PID, un `pid_t`) :
-//! - de l'objet système (`kAudioObjectSystemObject`, 1) : `kAudioHardwarePropertyDevices`
-//!   (`'dev#'`, « all the devices currently available ») et
-//!   `kAudioHardwarePropertyProcessObjectList` (`'prs#'`, « all client processes currently
-//!   connected ») ;
-//! - de chaque appareil : `kAudioDevicePropertyDeviceIsRunningSomewhere` (`'gone'`, « 1 means
-//!   that the AudioDevice is running in at least one process ») ;
-//! - de chaque client : `kAudioProcessPropertyIsRunningOutput` (`'piro'`) et
-//!   `kAudioProcessPropertyIsRunningInput` (`'piri'`), « 1 [...] the process is running IO and
-//!   there is at least one active output [input] stream » ; et `kAudioProcessPropertyPID`
-//!   (`'ppid'`), comparé au nôtre puis oublié.
+//! **Rien d'autre n'est lu de l'annonce** : ni son objet, ni les autres clés de son dictionnaire
+//! (titre, artiste, album…), qui n'est jamais parcouru ; jamais de `Debug` ni de `description` de
+//! l'annonce ou de son dictionnaire, qui les écriraient. Le nom de l'annonce est comparé aux
+//! nôtres, rien de plus.
 //!
-//! Jamais `kAudioProcessPropertyBundleID` (`'pbid'`), qui nommerait l'app. La seule permission
-//! dont parlent ces en-têtes concerne la capture du son (`AudioHardwareTapping.h`, les « taps ») :
-//! rien n'est capturé ici, aucun échantillon n'est lu. Sur un système plus ancien que
-//! macOS 14.2, qui n'a pas la liste des clients, la lecture échoue et elle ne sait pas.
+//! Le lecteur disparu : `+[NSRunningApplication runningApplicationsWithBundleIdentifier:]`
+//! (« An array of currently running applications with the given bundle identifier, or an empty
+//! array if no apps match »), avec notre identifiant ; seul le nombre d'apps rendues compte.
 
-use std::ffi::c_void;
+use std::cell::Cell;
 
-use super::{Heard, MusicError};
+use objc2::rc::Retained;
+use objc2::runtime::{NSObject, NSObjectProtocol};
+use objc2::{DefinedClass, MainThreadMarker, MainThreadOnly, define_class, msg_send, sel};
+use objc2_app_kit::NSRunningApplication;
+use objc2_foundation::{
+    NSDistributedNotificationCenter, NSNotification, NSNotificationSuspensionBehavior, NSString,
+};
 
-/// `AudioObjectPropertyAddress` (`AudioHardwareBase.h`) : trois `UInt32`.
-#[repr(C)]
-struct Address {
-    selector: u32,
-    scope: u32,
-    element: u32,
+use super::{MusicError, Player, PlayerState, Watched};
+use capri_core::music::STATE_KEY;
+
+/// Un lecteur guetté, et son dernier état annoncé.
+struct Entry {
+    player: Player,
+    announcement: Retained<NSString>,
+    bundle: Retained<NSString>,
+    state: Cell<PlayerState>,
+    /// En version de débogage : combien d'annonces de ce lecteur sont arrivées.
+    #[cfg(debug_assertions)]
+    received: Cell<u32>,
 }
 
-#[link(name = "CoreAudio", kind = "framework")]
-unsafe extern "C" {
-    /// `OSStatus AudioObjectGetPropertyDataSize(AudioObjectID, const AudioObjectPropertyAddress*,
-    /// UInt32, const void* __nullable, UInt32*)`.
-    fn AudioObjectGetPropertyDataSize(
-        object: u32,
-        address: *const Address,
-        qualifier_size: u32,
-        qualifier: *const c_void,
-        size: *mut u32,
-    ) -> i32;
+define_class!(
+    // SAFETY: NSObject n'impose rien à ses sous-classes, et `Observer` n'implémente pas `Drop`.
+    // Il ne vit que sur le thread principal, où le centre lui livre les annonces (d'après
+    // l'en-tête) : ses `Cell` ne sont jamais touchées d'un autre thread.
+    #[unsafe(super(NSObject))]
+    #[thread_kind = MainThreadOnly]
+    #[name = "CapriAnnouncementObserver"]
+    #[ivars = Vec<Entry>]
+    struct Observer;
 
-    /// `OSStatus AudioObjectGetPropertyData(AudioObjectID, const AudioObjectPropertyAddress*,
-    /// UInt32, const void* __nullable, UInt32*, void*)`.
-    fn AudioObjectGetPropertyData(
-        object: u32,
-        address: *const Address,
-        qualifier_size: u32,
-        qualifier: *const c_void,
-        size: *mut u32,
-        data: *mut c_void,
-    ) -> i32;
-}
+    // SAFETY: NSObjectProtocol n'a rien à implémenter de plus pour un NSObject.
+    unsafe impl NSObjectProtocol for Observer {}
 
-const fn code(name: &[u8; 4]) -> u32 {
-    u32::from_be_bytes(*name)
-}
-
-/// `kAudioObjectSystemObject`.
-const SYSTEM: u32 = 1;
-/// `kAudioObjectPropertyScopeGlobal`.
-const GLOBAL: u32 = code(b"glob");
-/// `kAudioObjectPropertyElementMain`.
-const MAIN: u32 = 0;
-const DEVICES: u32 = code(b"dev#");
-const CLIENTS: u32 = code(b"prs#");
-const RUNNING_SOMEWHERE: u32 = code(b"gone");
-const RUNNING_OUTPUT: u32 = code(b"piro");
-const RUNNING_INPUT: u32 = code(b"piri");
-const PID: u32 = code(b"ppid");
-
-/// Au-delà, une liste n'est pas lue (un garde-fou : il y en a quelques dizaines).
-const MAX_OBJECTS: u32 = 4096;
-
-fn address(selector: u32) -> Address {
-    Address { selector, scope: GLOBAL, element: MAIN }
-}
-
-/// Une propriété de 4 octets (`UInt32` ou `pid_t`).
-fn word(object: u32, selector: u32) -> Option<u32> {
-    let address = address(selector);
-    let mut value = 0u32;
-    let mut size = size_of::<u32>() as u32;
-    // SAFETY: `address` est un `AudioObjectPropertyAddress` valide le temps de l'appel ; pas de
-    // qualificatif (taille 0, pointeur nul, permis par l'en-tête) ; `value` est un tampon de
-    // `size` = 4 octets, qui ne peut pas être dépassé puisque l'en-tête dit que `size` en donne
-    // la taille à l'entrée.
-    let status = unsafe {
-        AudioObjectGetPropertyData(object, &address, 0, std::ptr::null(), &mut size, (&raw mut value).cast())
-    };
-    (status == 0 && size == size_of::<u32>() as u32).then_some(value)
-}
-
-/// Une propriété tableau d'`AudioObjectID`.
-fn objects(object: u32, selector: u32) -> Option<Vec<u32>> {
-    let address = address(selector);
-    let mut size = 0u32;
-    // SAFETY: mêmes arguments valides que ci-dessus ; `size` reçoit le nombre d'octets.
-    let status = unsafe { AudioObjectGetPropertyDataSize(object, &address, 0, std::ptr::null(), &mut size) };
-    if status != 0 || size > MAX_OBJECTS * 4 {
-        return None;
+    impl Observer {
+        /// Une annonce d'un lecteur guetté : seul l'état est lu.
+        #[unsafe(method(announced:))]
+        fn announced(&self, notification: &NSNotification) {
+            let name = notification.name();
+            let Some(entry) = self.ivars().iter().find(|entry| *entry.announcement == *name) else { return };
+            let key = NSString::from_str(STATE_KEY);
+            let value = notification
+                .userInfo()
+                .and_then(|info| info.objectForKey(&key))
+                .and_then(|value| value.downcast::<NSString>().ok())
+                .map(|value| value.to_string());
+            entry.state.set(PlayerState::announced(value.as_deref()));
+            #[cfg(debug_assertions)]
+            entry.received.set(entry.received.get().saturating_add(1));
+        }
     }
-    let mut list = vec![0u32; size as usize / 4];
-    let mut size = (list.len() * 4) as u32;
-    if size == 0 {
-        return Some(list);
-    }
-    // SAFETY: `list` a `size` octets, alignés pour des `u32` ; l'en-tête dit que l'appel n'en
-    // écrit pas plus que `size` à l'entrée, et dit combien il en a écrit à la sortie.
-    let status = unsafe {
-        AudioObjectGetPropertyData(object, &address, 0, std::ptr::null(), &mut size, list.as_mut_ptr().cast())
-    };
-    if status != 0 {
-        return None;
-    }
-    list.truncate(size as usize / 4);
-    Some(list)
-}
+);
 
-#[derive(Default)]
 pub struct Watch {
-    /// Le dernier client trouvé en train de jouer : un numéro opaque de CoreAudio.
-    last: Option<u32>,
+    observer: Retained<Observer>,
 }
 
 impl Watch {
-    pub fn listen(&mut self, thoroughly: bool) -> Result<Heard, MusicError> {
-        let devices = objects(SYSTEM, DEVICES).ok_or(MusicError::Refused)?;
-        let devices_running =
-            devices.iter().filter(|&&device| word(device, RUNNING_SOMEWHERE) == Some(1)).count();
-        let clients = objects(SYSTEM, CLIENTS).ok_or(MusicError::Refused)?;
-        let mut heard = Heard { playing: false, devices_running, clients: clients.len(), asked: 0 };
-        // aucun appareil en marche : personne ne sort de son, inutile d'interroger les clients
-        if devices_running == 0 && !thoroughly {
-            self.last = None;
-            return Ok(heard);
-        }
-        let me = std::process::id();
-        let mut plays = |client: u32| {
-            heard.asked += 1;
-            word(client, RUNNING_OUTPUT) == Some(1)
-                && word(client, RUNNING_INPUT) != Some(1)
-                && word(client, PID).is_some_and(|pid| pid != me)
-        };
-        let found = match self.last.filter(|&client| clients.contains(&client)) {
-            Some(client) if plays(client) => Some(client),
-            last => {
-                clients.iter().copied().filter(|&client| Some(client) != last).find(|&client| plays(client))
+    /// S'abonne à l'annonce de chaque lecteur de `watched`, avec la livraison immédiate si
+    /// `immediately`, sinon comme une app ordinaire (pour comparer, en répétition).
+    pub fn new(watched: &[Watched<'_>], immediately: bool) -> Result<Self, MusicError> {
+        let mtm = MainThreadMarker::new().ok_or(MusicError::NotMainThread)?;
+        let entries = watched
+            .iter()
+            .map(|watched| Entry {
+                player: watched.player,
+                announcement: NSString::from_str(watched.announcement),
+                bundle: NSString::from_str(watched.bundle),
+                state: Cell::new(PlayerState::Unknown),
+                #[cfg(debug_assertions)]
+                received: Cell::new(0),
+            })
+            .collect();
+        let observer = mtm.alloc::<Observer>().set_ivars(entries);
+        // SAFETY: l'initialiseur de NSObject, sur un objet tout juste alloué.
+        let observer: Retained<Observer> = unsafe { msg_send![super(observer), init] };
+        let center = NSDistributedNotificationCenter::defaultCenter();
+        for entry in observer.ivars() {
+            let behavior = if immediately {
+                NSNotificationSuspensionBehavior::DeliverImmediately
+            } else {
+                NSNotificationSuspensionBehavior::Coalesce
+            };
+            // SAFETY: `observer` est un objet valide, non nul, dont la méthode `announced:`,
+            // définie plus haut, prend bien une NSNotification ; le sélecteur n'est pas nul ; le
+            // nom est une NSString. Le centre ne retient pas l'observateur : `Drop` le désabonne
+            // avant de le lâcher, comme l'exige l'en-tête.
+            unsafe {
+                center.addObserver_selector_name_object_suspensionBehavior(
+                    &observer,
+                    sel!(announced:),
+                    Some(&entry.announcement),
+                    None,
+                    behavior,
+                );
             }
-        };
-        self.last = found;
-        heard.playing = found.is_some();
-        Ok(heard)
+        }
+        Ok(Self { observer })
     }
 
-    /// Pour les essais : combien d'autres clients jouent (sortie en marche, micro fermé), et si
-    /// ce processus-ci a lui-même une sortie en marche. Rien d'autre n'est lu.
-    #[cfg(debug_assertions)]
-    pub fn count(&mut self) -> Result<super::Playing, MusicError> {
-        let clients = objects(SYSTEM, CLIENTS).ok_or(MusicError::Refused)?;
-        let me = std::process::id();
-        let mut playing = super::Playing::default();
-        for client in clients {
-            if word(client, RUNNING_OUTPUT) != Some(1) {
-                continue;
-            }
-            match word(client, PID) {
-                Some(pid) if pid == me => playing.ours = true,
-                Some(_) if word(client, RUNNING_INPUT) != Some(1) => playing.others += 1,
-                _ => {}
+    pub fn states(&self) -> impl Iterator<Item = (Player, PlayerState)> + '_ {
+        self.observer.ivars().iter().map(|entry| (entry.player, entry.state.get()))
+    }
+
+    pub fn forget_gone(&self) -> usize {
+        let mut forgotten = 0;
+        for entry in self.observer.ivars().iter().filter(|entry| entry.state.get().plays()) {
+            if !running(&entry.bundle) {
+                entry.state.set(PlayerState::Unknown);
+                forgotten += 1;
             }
         }
-        Ok(playing)
+        forgotten
     }
+
+    #[cfg(debug_assertions)]
+    pub fn received(&self) -> impl Iterator<Item = (Player, u32)> + '_ {
+        self.observer.ivars().iter().map(|entry| (entry.player, entry.received.get()))
+    }
+}
+
+/// Une app de cet identifiant de bundle tourne-t-elle ? Seul le nombre d'apps rendues compte.
+fn running(bundle: &NSString) -> bool {
+    NSRunningApplication::runningApplicationsWithBundleIdentifier(bundle).count() > 0
+}
+
+#[cfg(debug_assertions)]
+pub fn is_running(bundle: &str) -> bool {
+    running(&NSString::from_str(bundle))
+}
+
+impl Drop for Watch {
+    fn drop(&mut self) {
+        // SAFETY: `observer` est l'objet abonné plus haut, encore vivant (nous le tenons) ; le
+        // retirer de toutes ses entrées (nom et objet nuls) est ce que l'en-tête demande avant de
+        // le lâcher.
+        unsafe {
+            NSDistributedNotificationCenter::defaultCenter().removeObserver_name_object(
+                &self.observer,
+                None,
+                None,
+            );
+        }
+    }
+}
+
+/// Poste une annonce d'essai, sans livraison immédiate (voir `super::announce`).
+#[cfg(debug_assertions)]
+pub fn announce(announcement: &str, state: Option<&str>, others: &[(&str, &str)]) {
+    use objc2::runtime::AnyObject;
+    use objc2_foundation::NSDictionary;
+
+    let mut pairs: Vec<(Retained<NSString>, Retained<NSString>)> =
+        others.iter().map(|(key, value)| (NSString::from_str(key), NSString::from_str(value))).collect();
+    if let Some(state) = state {
+        pairs.push((NSString::from_str(STATE_KEY), NSString::from_str(state)));
+    }
+    let keys: Vec<&NSString> = pairs.iter().map(|(key, _)| &**key).collect();
+    let values: Vec<&NSString> = pairs.iter().map(|(_, value)| &**value).collect();
+    let info = NSDictionary::from_slices(&keys, &values);
+    let name = NSString::from_str(announcement);
+    // SAFETY: des clés et des valeurs NSString se lisent aussi bien comme des objets quelconques
+    // (`AnyObject`), le type que prend l'appel ; le dictionnaire n'est fait que de chaînes, que le
+    // centre sait sérialiser en liste de propriétés (l'en-tête l'exige) ; le nom n'est pas nul.
+    unsafe {
+        let info: &NSDictionary<AnyObject, AnyObject> = info.cast_unchecked();
+        NSDistributedNotificationCenter::defaultCenter()
+            .postNotificationName_object_userInfo_deliverImmediately(&name, None, Some(info), false);
+    }
+}
+
+/// Fait tourner la boucle du thread courant pendant `duration`.
+#[cfg(debug_assertions)]
+pub fn run_for(duration: std::time::Duration) {
+    use objc2_foundation::{NSDate, NSRunLoop};
+
+    let until = std::time::Instant::now() + duration;
+    let run_loop = NSRunLoop::currentRunLoop();
+    while let Some(left) =
+        until.checked_duration_since(std::time::Instant::now()).filter(|left| !left.is_zero())
+    {
+        let started = std::time::Instant::now();
+        run_loop.runUntilDate(&NSDate::dateWithTimeIntervalSinceNow(left.as_secs_f64().min(0.05)));
+        // sans source sur la boucle, elle rend la main tout de suite : ne pas tourner à vide
+        if started.elapsed() < std::time::Duration::from_millis(1) {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+    }
+}
+
+#[cfg(debug_assertions)]
+pub fn set_suspended(suspended: bool) {
+    NSDistributedNotificationCenter::defaultCenter().setSuspended(suspended);
+}
+
+#[cfg(debug_assertions)]
+pub fn delivery() -> Option<super::Delivery> {
+    use objc2_app_kit::NSApplication;
+
+    let mtm = MainThreadMarker::new()?;
+    Some(super::Delivery {
+        app_active: NSApplication::sharedApplication(mtm).isActive(),
+        suspended: NSDistributedNotificationCenter::defaultCenter().suspended(),
+    })
 }

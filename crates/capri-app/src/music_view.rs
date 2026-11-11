@@ -1,67 +1,89 @@
-//! Elle se balance sur ta musique, assise : quand écouter si un son sort d'une autre app, et ce
-//! qu'elle en conclut. L'écoute est dans `capri_platform::music` (un oui ou un non, sans
-//! permission, sans titre ni nom d'app), la décision dans `capri_core::music::Groove`.
+//! Elle se balance sur ta musique, assise : l'abonnement aux annonces des lecteurs connus, et ce
+//! qu'elle en conclut. Le guetteur est dans `capri_platform::music` (Spotify et Musique, dont
+//! seul l'état est lu, sans permission), la décision dans `capri_core::music`.
 //!
-//! **L'écoute ne tourne que quand elle sert** : elle est assise (avec sa pose assise), visible, et
-//! c'est permis (« Se balancer sur la musique » dans son menu). Une fois par seconde
-//! ([`LISTEN_EVERY`]), sur un thread à elle (« capri-musique ») : la première écoute d'un processus
-//! prend environ 70 ms (mesuré), elle ne doit pas retenir une image. Dès qu'elle ne sert plus,
-//! plus rien n'est demandé, et ce qui avait été entendu est oublié. Le thread attend, endormi,
-//! qu'on lui demande d'écouter de nouveau.
+//! **L'abonnement existe tant que c'est permis** (« Se balancer sur la musique » dans son menu),
+//! dès le lancement, qu'elle soit assise ou non : une annonce ne coûte rien, et l'état doit être
+//! connu quand elle s'assoit. Décoché, elle se désabonne et oublie ce qu'elle savait. Elle ne se
+//! balance qu'assise, visible, avec ses planches.
 //!
-//! **Sa propre voix ne compte pas** : le système l'attribue à son propre processus, que l'écoute
-//! écarte (mesuré par `capri music rehearse`, sans effet comme avec, sans un bruit).
+//! **Ce qu'elle ne sait pas** : une musique déjà en cours quand elle s'abonne (au lancement, ou
+//! quand on recoche la case). Elle ne se balance pas avant la prochaine annonce du lecteur.
 //!
-//! Le journal n'en dit que des oui et des non. Windows et ailleurs : elle ne sait pas, et ne se
-//! balance pas.
+//! **Le lecteur disparu** : tant qu'un lecteur est cru en lecture, elle demande toutes les
+//! quelques secondes (`capri_core::music::ALIVE_EVERY`) s'il tourne encore, et l'oublie sinon.
+//!
+//! Le journal n'en dit que « se balance » et « ne se balance plus » : jamais le lecteur, ni rien de
+//! l'annonce. Windows et ailleurs : elle ne sait pas, et ne se balance pas.
 
-use std::sync::mpsc::{Receiver, Sender, TryRecvError, channel};
 use std::time::Instant;
 
-use capri_core::music::{Groove, LISTEN_EVERY};
-use capri_platform::music::{self, MusicError, SoundWatch};
+use capri_core::music::{self, Alive};
+use capri_platform::music::{Announcements, MusicError};
 
-/// Ce qui écoute vraiment : une écoute, rendue comme un oui, un non, ou ce que le système refuse.
-type Listener = Box<dyn FnMut() -> Result<bool, MusicError> + Send>;
+/// Ce qui guette les annonces : de la musique joue-t-elle d'après les états connus, et l'oubli
+/// des lecteurs disparus. Le vrai guetteur, ou un faux pour les essais.
+pub trait Source {
+    fn playing(&self) -> bool;
+    /// Oublie les lecteurs crus en lecture qui ne tournent plus ; rend combien.
+    fn forget_gone(&self) -> usize;
+}
+
+impl Source for Announcements {
+    fn playing(&self) -> bool {
+        music::playing(self.states().map(|(_, state)| state))
+    }
+
+    fn forget_gone(&self) -> usize {
+        Announcements::forget_gone(self)
+    }
+}
+
+/// S'abonner : rend le guetteur, ou ce que le système refuse.
+type Subscribe = Box<dyn FnMut() -> Result<Box<dyn Source>, MusicError>>;
 
 pub struct MusicView {
     enabled: bool,
-    groove: Groove,
-    /// Le thread d'écoute, lancé à la première écoute utile.
-    worker: Option<Worker>,
-    /// Une écoute demandée n'a pas encore répondu.
-    pending: bool,
-    /// Pas d'écoute avant cet instant.
-    next: Option<Instant>,
-    /// Ce qui écoutera, tant que le thread n'est pas lancé.
-    listener: Option<Listener>,
-    /// Elle ne sait pas écouter ici (ou le thread n'a pas pu être lancé) : elle n'essaie plus.
+    subscribe: Subscribe,
+    /// Le guetteur, tant que c'est permis.
+    source: Option<Box<dyn Source>>,
+    /// Elle ne sait pas guetter ici (ou le système a refusé) : elle n'essaie plus.
     unavailable: bool,
-}
-
-struct Worker {
-    requests: Sender<Instant>,
-    answers: Receiver<(Instant, Result<bool, MusicError>)>,
+    alive: Alive,
+    /// De la musique joue, au dernier pas (qu'elle soit assise ou non).
+    playing: bool,
+    /// Elle se balance, au dernier pas.
+    swaying: bool,
 }
 
 impl MusicView {
-    /// `enabled` : le réglage de son menu.
+    /// `enabled` : le réglage de son menu. Sur le thread principal (le guetteur y vit).
     pub fn new(enabled: bool) -> Self {
-        let mut watch = SoundWatch::new();
-        let listener: Listener = Box::new(move || watch.listen().map(|heard| heard.playing));
-        Self::with_listener(enabled, music::AVAILABLE, listener)
+        Self::with(enabled, Box::new(|| Ok(Box::new(Announcements::new()?))))
     }
 
-    fn with_listener(enabled: bool, available: bool, listener: Listener) -> Self {
-        Self {
+    /// En version de débogage, pour la répétition dans la vraie app : le seul lecteur d'essai (un
+    /// vrai lecteur qui jouerait pendant ce temps ne la trouble pas).
+    #[cfg(debug_assertions)]
+    pub fn rehearsal(enabled: bool, announcement: String, bundle: &'static str) -> Self {
+        Self::with(
             enabled,
-            groove: Groove::new(),
-            worker: None,
-            pending: false,
-            next: None,
-            listener: Some(listener),
-            unavailable: !available,
-        }
+            Box::new(move || Ok(Box::new(Announcements::rehearsal(&announcement, bundle, false)?))),
+        )
+    }
+
+    fn with(enabled: bool, subscribe: Subscribe) -> Self {
+        let mut view = Self {
+            enabled,
+            subscribe,
+            source: None,
+            unavailable: false,
+            alive: Alive::new(),
+            playing: false,
+            swaying: false,
+        };
+        view.sync();
+        view
     }
 
     /// Le réglage se change dans son menu, qui n'existe que sur macOS et Windows.
@@ -70,207 +92,200 @@ impl MusicView {
         self.enabled
     }
 
-    /// Le lui permettre, ou le lui interdire : elle cesse aussitôt d'écouter.
-    #[cfg(any(target_os = "macos", windows))]
+    /// Le lui permettre (elle s'abonne), ou le lui interdire (elle se désabonne et oublie).
+    #[cfg(any(target_os = "macos", windows, test))]
     pub fn set_enabled(&mut self, enabled: bool) {
         self.enabled = enabled;
+        self.sync();
     }
 
-    /// À chaque pas, à l'instant `now` : `wanted`, elle est assise et visible. Rend : de la musique
-    /// joue-t-elle (de quoi se balancer) ?
-    pub fn tick(&mut self, now: Instant, wanted: bool) -> bool {
-        let listening = wanted && self.enabled && !self.unavailable;
-        self.collect(listening);
-        if !listening {
-            if self.groove.on() {
-                log::debug!("musique : elle ne se balance plus (elle n'écoute plus)");
+    /// Abonnée si et seulement si c'est permis.
+    fn sync(&mut self) {
+        if !self.enabled {
+            if self.source.take().is_some() {
+                log::debug!("musique : elle ne guette plus les annonces");
             }
-            self.groove.reset();
-            self.next = None;
-            return false;
+            self.alive = Alive::new();
+            self.playing = false;
+            return;
         }
-        if !self.pending && self.next.is_none_or(|next| now >= next) {
-            self.ask(now);
+        if self.source.is_some() || self.unavailable {
+            return;
         }
-        self.groove.on()
-    }
-
-    /// Relève les écoutes revenues ; elles ne comptent que si elle écoute encore.
-    fn collect(&mut self, listening: bool) {
-        let Some(worker) = &self.worker else { return };
-        let mut answers = Vec::new();
-        let stopped = loop {
-            match worker.answers.try_recv() {
-                Ok(answer) => answers.push(answer),
-                Err(TryRecvError::Empty) => break false,
-                Err(TryRecvError::Disconnected) => break true,
+        match (self.subscribe)() {
+            Ok(source) => {
+                log::debug!("musique : elle guette les annonces des lecteurs");
+                self.source = Some(source);
             }
-        };
-        if stopped {
-            log::warn!("musique : l'écoute s'est arrêtée, elle ne se balancera pas");
-            self.unavailable = true;
-        }
-        if !answers.is_empty() || stopped {
-            self.pending = false;
-        }
-        if listening {
-            for (at, heard) in answers {
-                self.hear(at, heard);
-            }
-        }
-    }
-
-    fn hear(&mut self, at: Instant, heard: Result<bool, MusicError>) {
-        let was = self.groove.on();
-        let now = match heard {
-            Ok(playing) => self.groove.hear(at, Some(playing)),
             Err(MusicError::Unavailable) => {
-                log::info!("musique : elle ne sait pas, sur ce système, si un son joue");
+                log::info!("musique : elle ne sait pas, sur ce système, si de la musique joue");
                 self.unavailable = true;
-                self.groove.hear(at, None)
             }
             Err(err) => {
-                log::debug!("musique : {err}");
-                self.groove.hear(at, None)
-            }
-        };
-        if now != was {
-            log::debug!("musique : elle {}", if now { "se balance" } else { "ne se balance plus" });
-        }
-    }
-
-    /// Demande une écoute, à faire tout de suite, sur le thread d'écoute (lancé s'il ne l'est pas).
-    fn ask(&mut self, now: Instant) {
-        if self.worker.is_none() {
-            self.worker = self.listener.take().and_then(spawn);
-            if self.worker.is_none() {
+                log::warn!("musique : {err}, elle ne se balancera pas");
                 self.unavailable = true;
-                return;
             }
-        }
-        let Some(worker) = &self.worker else { return };
-        if worker.requests.send(now).is_ok() {
-            self.pending = true;
-            self.next = Some(now + LISTEN_EVERY);
         }
     }
 
-    /// Pour les essais : attend la réponse à l'écoute demandée, et la prend en compte.
-    #[cfg(test)]
-    fn wait(&mut self) {
-        let Some(worker) = self.worker.as_ref().filter(|_| self.pending) else { return };
-        if let Ok((at, heard)) = worker.answers.recv_timeout(std::time::Duration::from_secs(5)) {
-            self.pending = false;
-            self.hear(at, heard);
-        }
-    }
-}
-
-/// Lance le thread d'écoute : il écoute à chaque demande, et rend l'instant de la demande avec ce
-/// qu'il a entendu. Il s'arrête quand la vue disparaît.
-fn spawn(mut listen: Listener) -> Option<Worker> {
-    let (requests, asked) = channel::<Instant>();
-    let (answer, answers) = channel();
-    let spawned = std::thread::Builder::new().name("capri-musique".to_owned()).spawn(move || {
-        for at in asked {
-            if answer.send((at, listen())).is_err() {
-                return;
+    /// À chaque pas, à l'instant `now` : `wanted`, elle est assise (avec ses planches) et visible.
+    /// Rend : se balance-t-elle ?
+    pub fn tick(&mut self, now: Instant, wanted: bool) -> bool {
+        self.playing = self.source.as_ref().is_some_and(|source| {
+            let playing = source.playing();
+            if self.alive.due(now, playing) && source.forget_gone() > 0 {
+                return source.playing();
             }
+            playing
+        });
+        let swaying = wanted && self.playing;
+        if swaying != self.swaying {
+            log::debug!("musique : elle {}", if swaying { "se balance" } else { "ne se balance plus" });
+            self.swaying = swaying;
         }
-    });
-    match spawned {
-        Ok(_) => Some(Worker { requests, answers }),
-        Err(err) => {
-            log::warn!("musique : pas d'écoute ({err}), elle ne se balancera pas");
-            None
-        }
+        swaying
+    }
+
+    /// En version de débogage, pour la répétition : de la musique joue-t-elle, au dernier pas,
+    /// qu'elle soit assise ou non ?
+    #[cfg(debug_assertions)]
+    pub fn playing(&self) -> bool {
+        self.playing
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::cell::Cell;
+    use std::rc::Rc;
     use std::time::Duration;
+
+    use capri_core::music::ALIVE_EVERY;
 
     use super::*;
 
-    /// Une écoute qui répond toujours `playing`, et compte combien de fois on l'a appelée.
-    fn counting(playing: bool) -> (Listener, Arc<AtomicUsize>) {
-        let count = Arc::new(AtomicUsize::new(0));
-        let seen = Arc::clone(&count);
-        (
-            Box::new(move || {
-                seen.fetch_add(1, Ordering::SeqCst);
-                Ok(playing)
-            }),
-            count,
-        )
+    /// Ce que le faux guetteur sait, partagé avec l'essai.
+    #[derive(Default)]
+    struct Fake {
+        playing: Cell<bool>,
+        /// Le lecteur tourne-t-il encore ?
+        gone: Cell<bool>,
+        subscribed: Cell<usize>,
+        alive: Cell<usize>,
+        checks: Cell<usize>,
     }
 
-    /// Un pas par seconde pendant `seconds` secondes, l'écoute attendue à chaque fois ; rend ce
-    /// qu'elle en conclut à la fin.
-    fn listen_for(view: &mut MusicView, t0: Instant, from: u64, seconds: u64, wanted: bool) -> bool {
-        for s in from..from + seconds {
-            view.tick(t0 + Duration::from_secs(s), wanted);
-            view.wait();
+    struct FakeSource(Rc<Fake>);
+
+    impl Source for FakeSource {
+        fn playing(&self) -> bool {
+            self.0.playing.get()
         }
-        view.groove.on()
+
+        fn forget_gone(&self) -> usize {
+            self.0.checks.set(self.0.checks.get() + 1);
+            if self.0.gone.get() && self.0.playing.get() {
+                self.0.playing.set(false);
+                return 1;
+            }
+            0
+        }
+    }
+
+    impl Drop for FakeSource {
+        fn drop(&mut self) {
+            self.0.alive.set(self.0.alive.get() - 1);
+        }
+    }
+
+    fn view(enabled: bool) -> (MusicView, Rc<Fake>) {
+        let fake = Rc::new(Fake::default());
+        let shared = Rc::clone(&fake);
+        let subscribe: Subscribe = Box::new(move || {
+            shared.subscribed.set(shared.subscribed.get() + 1);
+            shared.alive.set(shared.alive.get() + 1);
+            Ok(Box::new(FakeSource(Rc::clone(&shared))))
+        });
+        (MusicView::with(enabled, subscribe), fake)
     }
 
     #[test]
-    fn she_listens_once_a_second_only_when_seated_visible_and_allowed() {
-        let (listener, count) = counting(true);
-        let mut view = MusicView::with_listener(true, true, listener);
+    fn subscribed_from_the_start_seated_or_not_and_sways_only_when_wanted() {
+        let (mut view, fake) = view(true);
+        assert_eq!(fake.subscribed.get(), 1, "abonnée dès le lancement");
         let t0 = Instant::now();
-        // debout ou cachée : aucune écoute, pas même de thread
+        assert!(!view.tick(t0, true), "rien d'annoncé : elle ne se balance pas");
+        // une annonce de lecture alors qu'elle est debout : l'état est connu, elle ne se balance pas
+        fake.playing.set(true);
         assert!(!view.tick(t0, false));
-        assert!(view.worker.is_none());
-        // assise : une écoute par seconde, pas une de plus entre deux
-        view.tick(t0, true);
-        view.wait();
-        view.tick(t0 + Duration::from_millis(400), true);
-        view.tick(t0 + Duration::from_millis(900), true);
-        std::thread::sleep(Duration::from_millis(50));
-        assert_eq!(count.load(Ordering::SeqCst), 1);
-        // trois secondes de son : de la musique
-        assert!(listen_for(&mut view, t0, 1, 3, true));
-        assert_eq!(count.load(Ordering::SeqCst), 4);
-        // elle se lève : plus d'écoute, et ce qu'elle avait entendu est oublié
-        assert!(!view.tick(t0 + Duration::from_secs(5), false));
-        std::thread::sleep(Duration::from_millis(50));
-        assert_eq!(count.load(Ordering::SeqCst), 4);
-        assert!(!view.tick(t0 + Duration::from_secs(6), true), "elle repart de zéro");
+        assert!(view.playing());
+        // elle s'assoit : tout de suite
+        assert!(view.tick(t0 + Duration::from_millis(16), true));
+        // la pause : tout de suite
+        fake.playing.set(false);
+        assert!(!view.tick(t0 + Duration::from_millis(32), true));
+        assert_eq!(fake.subscribed.get(), 1, "un seul abonnement");
     }
 
     #[test]
-    fn forbidden_or_unavailable_she_never_listens_nor_sways() {
-        let (listener, count) = counting(true);
-        let mut view = MusicView::with_listener(false, true, listener);
-        assert!(!listen_for(&mut view, Instant::now(), 0, 6, true));
-        assert_eq!(count.load(Ordering::SeqCst), 0, "interdit : aucune écoute");
+    fn unchecked_she_unsubscribes_and_forgets_rechecked_she_knows_nothing() {
+        let (mut view, fake) = view(true);
+        fake.playing.set(true);
+        assert!(view.tick(Instant::now(), true));
+        view.set_enabled(false);
+        assert_eq!(fake.alive.get(), 0, "désabonnée");
+        assert!(!view.tick(Instant::now(), true));
+        assert!(!view.playing());
+        // recochée : un nouvel abonnement, qui ne sait rien de la musique en cours
+        fake.playing.set(false);
+        view.set_enabled(true);
+        assert_eq!((fake.subscribed.get(), fake.alive.get()), (2, 1));
+        assert!(!view.tick(Instant::now(), true));
+    }
 
-        let (listener, count) = counting(true);
-        let mut view = MusicView::with_listener(true, false, listener);
-        assert!(!listen_for(&mut view, Instant::now(), 0, 6, true));
-        assert_eq!(count.load(Ordering::SeqCst), 0, "ce système ne sait pas : aucune écoute");
+    #[test]
+    fn forbidden_she_never_subscribes() {
+        let (mut view, fake) = view(false);
+        fake.playing.set(true);
+        assert!(!view.tick(Instant::now(), true));
+        assert_eq!(fake.subscribed.get(), 0);
+    }
 
-        // le système dit qu'il ne sait pas : elle n'essaie plus
-        let tries = Arc::new(AtomicUsize::new(0));
-        let seen = Arc::clone(&tries);
-        let listener: Listener = Box::new(move || {
-            seen.fetch_add(1, Ordering::SeqCst);
+    #[test]
+    fn unavailable_she_tries_once_and_never_sways() {
+        let tries = Rc::new(Cell::new(0));
+        let seen = Rc::clone(&tries);
+        let subscribe: Subscribe = Box::new(move || {
+            seen.set(seen.get() + 1);
             Err(MusicError::Unavailable)
         });
-        let mut view = MusicView::with_listener(true, true, listener);
-        assert!(!listen_for(&mut view, Instant::now(), 0, 6, true));
-        assert_eq!(tries.load(Ordering::SeqCst), 1);
+        let mut view = MusicView::with(true, subscribe);
+        view.set_enabled(false);
+        view.set_enabled(true);
+        assert!(!view.tick(Instant::now(), true));
+        assert_eq!(tries.get(), 1);
     }
 
     #[test]
-    fn a_short_sound_does_not_make_her_sway() {
-        let (listener, _) = counting(false);
-        let mut view = MusicView::with_listener(true, true, listener);
-        assert!(!listen_for(&mut view, Instant::now(), 0, 10, true));
+    fn a_vanished_player_is_forgotten_within_a_check() {
+        let (mut view, fake) = view(true);
+        let t0 = Instant::now();
+        fake.playing.set(true);
+        assert!(view.tick(t0, true));
+        // il tourne encore : vérifié une fois par intervalle, rien n'est oublié
+        let step = Duration::from_millis(16);
+        for t in [t0 + step, t0 + ALIVE_EVERY, t0 + ALIVE_EVERY + step, t0 + ALIVE_EVERY * 2] {
+            assert!(view.tick(t, true));
+        }
+        assert_eq!(fake.checks.get(), 2, "une vérification par intervalle");
+        // il a planté sans rien annoncer : oublié à la vérification suivante, pas avant
+        fake.gone.set(true);
+        assert!(view.tick(t0 + ALIVE_EVERY * 2 + step, true));
+        assert!(!view.tick(t0 + ALIVE_EVERY * 3, true));
+        assert!(!view.playing());
+        assert_eq!(fake.checks.get(), 3);
+        // sans lecture, plus aucune vérification
+        assert!(!view.tick(t0 + ALIVE_EVERY * 10, true));
+        assert_eq!(fake.checks.get(), 3);
     }
 }
