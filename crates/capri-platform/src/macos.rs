@@ -30,6 +30,9 @@ use winit::event::{MouseButton, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, EventLoopBuilder};
 use winit::platform::macos::{ActivationPolicy, EventLoopBuilderExtMacOS};
 
+use capri_core::geom::{Rect, Vec2};
+use capri_core::perch::DeskFrame;
+
 use crate::{OverlayError, OverlayEvent};
 
 pub fn configure_event_loop<T: 'static>(builder: &mut EventLoopBuilder<T>) {
@@ -287,6 +290,15 @@ impl Overlay {
         self.panel.setIgnoresMouseEvents(through);
     }
 
+    pub fn desk_frame(&self) -> DeskFrame {
+        let mtm = MainThreadMarker::from(&*self.view);
+        let panel = self.panel.frame();
+        // l'overlay est sur l'écran principal : à défaut de le trouver, sa hauteur est la sienne
+        let primary_height =
+            primary_screen(mtm).map_or(panel.size.height, |screen| screen.frame().size.height);
+        DeskFrame::from_appkit(appkit_rect(panel), primary_height as f32, self.shared.scale.get() as f32)
+    }
+
     pub fn set_shown(&self, shown: bool) {
         if shown {
             // au premier plan sans activer l'app (contrairement à makeKeyAndOrderFront)
@@ -346,6 +358,24 @@ fn view_handle(view: &OverlayView) -> WindowHandle<'_> {
 /// L'écran qui porte la barre des menus, à l'origine du repère global.
 fn primary_screen(mtm: MainThreadMarker) -> Option<Retained<NSScreen>> {
     NSScreen::screens(mtm).firstObject()
+}
+
+/// Un cadre d'AppKit tel quel (origine en bas à gauche, y vers le haut), en `Rect`.
+fn appkit_rect(frame: NSRect) -> Rect {
+    Rect::new(
+        Vec2::new(frame.origin.x as f32, frame.origin.y as f32),
+        Vec2::new(frame.size.width as f32, frame.size.height as f32),
+    )
+}
+
+/// Où serait l'overlay (il couvre l'écran principal), et sa taille en pixels, sans le créer : pour
+/// `capri perch rehearse`. `None` hors du thread principal.
+#[cfg(debug_assertions)]
+pub(crate) fn main_screen_desk() -> Option<(DeskFrame, (u32, u32))> {
+    let screen = primary_screen(MainThreadMarker::new()?)?;
+    let (frame, scale) = (screen.frame(), screen.backingScaleFactor());
+    let desk = DeskFrame::from_appkit(appkit_rect(frame), frame.size.height as f32, scale as f32);
+    Some((desk, physical_size(frame, scale)))
 }
 
 fn physical_size(frame: NSRect, scale: f64) -> (u32, u32) {

@@ -68,6 +68,10 @@ impl Overlay {
         imp::set_click_through(&self.window, through);
     }
 
+    pub fn desk_frame(&self) -> capri_core::perch::DeskFrame {
+        imp::desk_frame(&self.window)
+    }
+
     pub fn set_shown(&self, shown: bool) {
         imp::set_shown(&self.window, shown);
     }

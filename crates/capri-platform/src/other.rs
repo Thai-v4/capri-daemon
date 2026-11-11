@@ -1,6 +1,8 @@
 //! Autres systèmes (Linux…) : pas encore pris en charge. Capri s'affiche, les clics passent
 //! toujours au travers, mais on ne peut pas l'attraper.
 
+use capri_core::geom::Vec2;
+use capri_core::perch::DeskFrame;
 use winit::event_loop::EventLoopBuilder;
 use winit::window::{Window, WindowAttributes};
 
@@ -22,4 +24,9 @@ pub fn set_click_through(window: &Window, through: bool) {
 
 pub fn set_shown(window: &Window, shown: bool) {
     window.set_visible(shown);
+}
+
+/// Pas de liste des fenêtres ici (voir `desk`) : un repère sans décalage, qui ne sert pas.
+pub fn desk_frame(_window: &Window) -> DeskFrame {
+    DeskFrame { origin: Vec2::ZERO, pixels_per_unit: 1.0 }
 }

@@ -13,6 +13,9 @@
 //! - macOS (`macos.rs`) : un `NSPanel` non activant créé par nos soins, sans fenêtre winit ;
 //! - ailleurs (`winit_overlay.rs`) : une fenêtre winit, réglée par `windows.rs` ou `other.rs`.
 //!
+//! C'est encore ici qu'est lue la liste des fenêtres des autres apps ([`desk`] : numéros et
+//! rectangles seulement, sans aucune permission), pour qu'elle s'assoie dessus.
+//!
 //! C'est aussi ici que vivent sa voix ([`Voice`], la synthèse vocale du système), son oreille
 //! ([`Ear`], le micro et la reconnaissance vocale sur l'appareil), le trousseau où sont rangées
 //! les clés d'API ([`keychain`]), la saisie d'une clé sans l'afficher ([`terminal`]) et la
@@ -23,6 +26,7 @@ use raw_window_handle::{HandleError, HasDisplayHandle, HasWindowHandle, WindowHa
 use winit::event::{MouseButton, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, EventLoopBuilder};
 
+pub mod desk;
 mod ear;
 pub mod keychain;
 pub mod settings_window;
@@ -130,6 +134,12 @@ impl Overlay {
     /// Position du curseur dans la fenêtre, en pixels physiques, même quand elle ignore la souris.
     pub fn cursor(&self) -> Option<(f64, f64)> {
         self.0.cursor()
+    }
+
+    /// Où est l'overlay dans le repère de la liste des fenêtres ([`desk`]) : son coin haut gauche,
+    /// et combien de ses pixels font une unité de ce repère.
+    pub fn desk_frame(&self) -> capri_core::perch::DeskFrame {
+        self.0.desk_frame()
     }
 
     /// `true` : les clics traversent la fenêtre ; `false` : elle les reçoit.

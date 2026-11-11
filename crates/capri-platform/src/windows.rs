@@ -5,6 +5,8 @@
 //! surface DirectComposition. On gère donc les styles nous-mêmes : la fenêtre est layered (et
 //! opaque au sens layered) dès le départ, et seul `WS_EX_TRANSPARENT` bascule ensuite.
 
+use capri_core::geom::Vec2;
+use capri_core::perch::DeskFrame;
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use windows_sys::Win32::Foundation::{HWND, POINT};
 use windows_sys::Win32::Graphics::Gdi::ScreenToClient;
@@ -49,6 +51,13 @@ pub fn cursor_in_window(window: &Window) -> Option<(f64, f64)> {
     // winit déclare l'app « per-monitor DPI aware » : les coordonnées sont en pixels physiques.
     let ok = unsafe { GetCursorPos(&mut pt) != 0 && ScreenToClient(hwnd, &mut pt) != 0 };
     ok.then(|| (f64::from(pt.x), f64::from(pt.y)))
+}
+
+/// La liste des fenêtres (`desk`) est en pixels physiques de l'écran virtuel, comme la position de
+/// l'overlay que donne winit : seul le décalage compte.
+pub fn desk_frame(window: &Window) -> DeskFrame {
+    let origin = window.inner_position().map_or(Vec2::ZERO, |p| Vec2::new(p.x as f32, p.y as f32));
+    DeskFrame { origin, pixels_per_unit: 1.0 }
 }
 
 pub fn set_click_through(window: &Window, through: bool) {

@@ -15,6 +15,21 @@ thiserror = "2"
 winit = "0.30.13"
 
 [target.'cfg(target_os = "macos")'.dependencies]
+# La liste des fenêtres des autres apps (CGWindowListCopyWindowInfo), sans aucune permission. Déjà
+# tirés par wgpu et AppKit : aucun crate de plus, et rien qui compile du C.
+objc2-core-foundation = { version = "0.3.2", default-features = false, features = [
+    "std",
+    "CFArray",
+    "CFCGTypes",
+    "CFDictionary",
+    "CFNumber",
+    "CFString",
+] }
+objc2-core-graphics = { version = "0.3.2", default-features = false, features = [
+    "std",
+    "CGGeometry",
+    "CGWindow",
+] }
 # Le trousseau de session (SecItem…). Déjà tiré par le TLS du système (native-tls) : aucun
 # crate de plus.
 security-framework = { version = "3.7.0", default-features = false }
@@ -108,9 +123,12 @@ objc2-app-kit = { version = "0.3.2", default-features = false, features = [
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61.2", features = [
     "Win32_Foundation",
+    "Win32_Graphics_Dwm", # le cadre réel d'une fenêtre, et si elle est sur un autre bureau
     "Win32_Graphics_Gdi",
     "Win32_Security_Credentials", # le Gestionnaire d'identification, pour les clés d'API
     "Win32_System_Console", # lire une clé sans l'afficher
+    "Win32_System_Threading", # le numéro de notre processus : nos fenêtres ne comptent pas
+    "Win32_UI_Input_KeyboardAndMouse", # un bouton de la souris enfoncé : une fenêtre bouge peut-être
     "Win32_UI_WindowsAndMessaging",
 ] }
 
