@@ -396,8 +396,10 @@ mod tests {
         assert_eq!(c.stance(), Stance::Floating);
     }
 
+    const SPOT: Spot = Spot { window: 7, along: 120.0, left: 780.0, width: 600.0 };
+
     fn perch_at(x: f32, y: f32) -> Perch {
-        Perch { spot: Spot { window: 7, along: 120.0 }, feet: Vec2::new(x, y) }
+        Perch { spot: SPOT, feet: Vec2::new(x, y) }
     }
 
     #[test]
@@ -406,7 +408,7 @@ mod tests {
         c.set_feet(Vec2::new(0.6, 1.0));
         c.step(0.0, 10);
         c.land(perch_at(900.0, 700.0));
-        assert_eq!(c.perched(), Some(Spot { window: 7, along: 120.0 }));
+        assert_eq!(c.perched(), Some(SPOT));
         assert_eq!(c.feet(), Vec2::new(900.0, 700.0));
         assert_eq!(c.position(), Vec2::new(900.0 - 96.0, 400.0));
 
@@ -440,7 +442,7 @@ mod tests {
         let mut c = capri();
         c.step(0.0, 0);
         c.land(perch_at(900.0, 700.0));
-        c.ride(Perch { spot: Spot { window: 7, along: 150.0 }, feet: Vec2::new(930.0, 720.0) });
+        c.ride(Perch { spot: Spot { along: 150.0, ..SPOT }, feet: Vec2::new(930.0, 720.0) });
         assert_eq!(c.feet(), Vec2::new(930.0, 720.0));
         assert_eq!(c.perched().map(|spot| spot.along), Some(150.0));
 

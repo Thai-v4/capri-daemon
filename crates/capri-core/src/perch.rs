@@ -184,12 +184,43 @@ pub struct Stature {
     pub feet: Vec2,
 }
 
-/// Où elle est posée : sur quelle fenêtre, et à quelle distance du bord gauche de cette fenêtre
-/// (pixels de l'overlay) se trouve le milieu de ses pieds.
+/// Où elle est posée : sur quelle fenêtre, à quelle distance du bord gauche de cette fenêtre se
+/// trouve le milieu de ses pieds, et où étaient alors les côtés de la fenêtre (de quoi savoir, à la
+/// lecture suivante, si elle a été déplacée ou tirée par un côté). Pixels de l'overlay.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Spot {
     pub window: u64,
     pub along: f32,
+    pub left: f32,
+    pub width: f32,
+}
+
+impl Spot {
+    fn on(window: &Seen, x: f32) -> Self {
+        Self {
+            window: window.id,
+            along: x - window.rect.min.x,
+            left: window.rect.min.x,
+            width: window.rect.size.x,
+        }
+    }
+
+    /// Le milieu de ses pieds sur le bord de `window` (nouvelle lecture de sa fenêtre), avant
+    /// d'être borné : déplacée, ou tirée par la droite, elle garde sa distance au côté gauche ; tirée
+    /// par la gauche, sa distance au côté droit (le morceau de bord sous elle n'a pas bougé) ;
+    /// changée des deux côtés à la fois, sa proportion le long du bord.
+    fn x_on(&self, window: Rect) -> f32 {
+        let same = |a: f32, b: f32| (a - b).abs() < 0.5;
+        let (left, right) = (window.min.x, window.max().x);
+        let old_right = self.left + self.width;
+        if same(window.size.x, self.width) || same(left, self.left) {
+            left + self.along
+        } else if same(right, old_right) {
+            right - (self.width - self.along)
+        } else {
+            left + self.along * window.size.x / self.width.max(1.0)
+        }
+    }
 }
 
 /// Une place sur un bord : la fenêtre, et où mettre ses pieds.
@@ -247,10 +278,7 @@ pub fn landing(seen: &[Seen], screen: Rect, stature: Stature, feet: Vec2) -> Opt
                 continue;
             }
             let x = feet.x.clamp(lo, hi);
-            let perch = Perch {
-                spot: Spot { window: window.id, along: x - window.rect.min.x },
-                feet: Vec2::new(x, y),
-            };
+            let perch = Perch { spot: Spot::on(window, x), feet: Vec2::new(x, y) };
             if best.is_none_or(|(closest, _)| gap < closest) {
                 best = Some((gap, perch));
             }
@@ -264,21 +292,18 @@ pub fn landing(seen: &[Seen], screen: Rect, stature: Stature, feet: Vec2) -> Opt
 /// l'écran), ou pourquoi elle repart.
 pub fn follow(seen: &[Seen], screen: Rect, stature: Stature, spot: Spot) -> Result<Perch, Leave> {
     let index = seen.iter().position(|window| window.id == spot.window).ok_or(Leave::Gone)?;
-    let window = seen[index].rect;
-    let (lo, hi) = room(window, screen, stature).ok_or(Leave::NoRoom)?;
-    // `room` garantit lo <= hi, deux nombres ; `along` qui ne serait pas un nombre donne un x qui
+    let window = &seen[index];
+    let (lo, hi) = room(window.rect, screen, stature).ok_or(Leave::NoRoom)?;
+    // `room` garantit lo <= hi, deux nombres ; une place qui ne serait pas un nombre donne un x qui
     // n'en est pas un, et aucun morceau visible ne le contient
-    let x = (window.min.x + spot.along).clamp(lo, hi);
+    let x = spot.x_on(window.rect).clamp(lo, hi);
     let foot = FOOT * stature.size.y;
     let free =
         visible_edge(seen, index, screen).into_iter().any(|(from, to)| from <= x - foot && x + foot <= to);
     if !free {
         return Err(Leave::Covered);
     }
-    Ok(Perch {
-        spot: Spot { window: spot.window, along: x - window.min.x },
-        feet: Vec2::new(x, window.min.y),
-    })
+    Ok(Perch { spot: Spot::on(window, x), feet: Vec2::new(x, window.rect.min.y) })
 }
 
 /// Où peut aller le milieu de ses pieds le long du bord supérieur de `window` : sur le bord, à
@@ -499,7 +524,8 @@ mod tests {
         let windows = [front, back];
         // les pieds 40 pixels au-dessus du bord de `back` : elle descend s'y poser
         let perch = landing(&windows, screen(), capri(), Vec2::new(700.0, 960.0)).expect("posée");
-        assert_eq!(perch, Perch { spot: Spot { window: 1, along: 500.0 }, feet: Vec2::new(700.0, 1000.0) });
+        let spot = Spot { window: 1, along: 500.0, left: 200.0, width: 1600.0 };
+        assert_eq!(perch, Perch { spot, feet: Vec2::new(700.0, 1000.0) });
         // 60 pixels dans la barre de titre : elle remonte
         let perch = landing(&windows, screen(), capri(), Vec2::new(700.0, 1060.0)).expect("posée");
         assert_eq!(perch.feet, Vec2::new(700.0, 1000.0));
@@ -550,16 +576,33 @@ mod tests {
 
     #[test]
     fn she_follows_her_window_when_it_moves_or_is_resized() {
-        let spot = Spot { window: 1, along: 500.0 };
-        // la fenêtre a glissé de 300 pixels vers la droite et de 100 vers le bas
+        // posée à 500 pixels du côté gauche d'une fenêtre qui va de 200 à 1800
+        let spot = Spot { window: 1, along: 500.0, left: 200.0, width: 1600.0 };
+        // immobile : rien ne change
+        let still = [seen(1, rect(200.0, 1000.0, 1600.0, 800.0))];
+        assert_eq!(
+            follow(&still, screen(), capri(), spot),
+            Ok(Perch { spot, feet: Vec2::new(700.0, 1000.0) })
+        );
+        // la fenêtre a glissé de 300 pixels vers la droite et de 100 vers le bas : elle la suit
         let moved = [seen(1, rect(500.0, 1100.0, 1600.0, 800.0))];
         let perch = follow(&moved, screen(), capri(), spot).expect("elle suit");
-        assert_eq!(perch, Perch { spot, feet: Vec2::new(1000.0, 1100.0) });
-        // redimensionnée par la droite, plus étroite qu'elle n'était loin : bornée au bout du bord
+        assert_eq!(perch.feet, Vec2::new(1000.0, 1100.0));
+        assert_eq!(perch.spot, Spot { left: 500.0, ..spot });
+        // tirée par la gauche : le bord sous elle n'a pas bougé, elle non plus
+        let wider = [seen(1, rect(0.0, 1000.0, 1800.0, 800.0))];
+        let perch = follow(&wider, screen(), capri(), spot).expect("elle suit");
+        assert_eq!(perch.feet.x, 700.0);
+        assert_eq!(perch.spot, Spot { window: 1, along: 700.0, left: 0.0, width: 1800.0 });
+        // tirée par la droite, plus étroite qu'elle n'était loin : bornée au bout du bord
         let narrow = [seen(1, rect(200.0, 1000.0, 400.0, 800.0))];
         let perch = follow(&narrow, screen(), capri(), spot).expect("elle suit");
         assert_eq!(perch.feet.x, 600.0 - 36.0);
         assert_eq!(perch.spot.along, 400.0 - 36.0, "sa nouvelle place est retenue");
+        // changée des deux côtés (rangée par un gestionnaire de fenêtres) : même proportion
+        let tiled = [seen(1, rect(1000.0, 1000.0, 1000.0, 800.0))];
+        let perch = follow(&tiled, screen(), capri(), spot).expect("elle suit");
+        assert_eq!(perch.feet.x, 1000.0 + 500.0 * 1000.0 / 1600.0);
         // à moitié sortie de l'écran par la gauche : bornée à ce qui reste dans l'écran
         let out = [seen(1, rect(-1000.0, 1000.0, 1600.0, 800.0))];
         let perch = follow(&out, screen(), capri(), spot).expect("elle suit");
@@ -568,7 +611,7 @@ mod tests {
 
     #[test]
     fn she_leaves_when_her_window_goes_or_her_edge_is_covered_or_has_no_room() {
-        let spot = Spot { window: 1, along: 500.0 };
+        let spot = Spot { window: 1, along: 500.0, left: 200.0, width: 1600.0 };
         let w = seen(1, rect(200.0, 1000.0, 1600.0, 800.0));
         assert_eq!(follow(&[seen(2, w.rect)], screen(), capri(), spot), Err(Leave::Gone));
         // une autre fenêtre passe devant, sur ses pieds
@@ -591,7 +634,7 @@ mod tests {
         let away = seen(1, rect(3100.0, 1000.0, 1600.0, 800.0));
         assert_eq!(follow(&[away], screen(), capri(), spot), Err(Leave::NoRoom));
         // une place qui n'est pas un nombre ne la fait pas tomber en panne
-        let odd = Spot { window: 1, along: f32::NAN };
+        let odd = Spot { along: f32::NAN, ..spot };
         assert_eq!(follow(&[w], screen(), capri(), odd), Err(Leave::Covered));
     }
 
