@@ -22,7 +22,7 @@ use crate::endpoint::{Endpoint, Reach};
 use crate::key::{ApiKey, KeyAccount, key_endpoint};
 use crate::phrases::{
     NO_BRAIN, NO_MORE_BRAIN, TEST_QUESTION, destination, goes_on_internet, how_to_get, is_ollama_cloud_model,
-    key_forgotten, key_stored, legacy_key_removed, no_key_in_clear, not_a_key, of_provider, server,
+    key_forgotten, key_hint, key_stored, legacy_key_removed, no_key_in_clear, not_a_key, of_provider, server,
     thinks_now_with, thinks_with,
 };
 
@@ -370,6 +370,10 @@ impl BrainRubric {
             ),
             (_, _, KeyState::Unreadable(problem)) => (Tone::Bad, problem.clone()),
         };
+        if let (KeyState::Absent { .. }, Some(hint)) = (&self.key, key_hint(provider)) {
+            text.push(' ');
+            text.push_str(hint);
+        }
         if legacy {
             text.push_str(&format!(
                 " Une ancienne clé {}, rangée sans adresse par une version précédente de Capri, n'est jamais \

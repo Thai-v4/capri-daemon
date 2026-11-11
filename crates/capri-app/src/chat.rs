@@ -576,6 +576,50 @@ mod tests {
     }
 
     #[test]
+    fn with_anthropic_she_answers_and_a_refusal_is_said_and_not_kept() {
+        let (address, requests) = fake_server::serve(vec![
+            fake_server::anthropic_reply("Salut.", "end_turn"),
+            fake_server::anthropic_reply("Je comm", "refusal"),
+            fake_server::anthropic_reply("D'accord.", "end_turn"),
+        ]);
+        let directory = settings_with("anthropic", capri_chat::Provider::Anthropic, address);
+        let url = format!("http://{address}/v1");
+        let keys = Arc::new(keys::memory::MemoryKeys::with(capri_chat::Provider::Anthropic, &url, KEY));
+        let mut chat = Chat::with_keys(Some(directory.clone()), keys);
+
+        chat.say("Bonjour");
+        assert_eq!(listen(&mut chat), "Salut.");
+        let (head, body) = requests.recv_timeout(Duration::from_secs(5)).expect("une requête");
+        assert!(head.starts_with("POST /v1/messages HTTP/1.1\r\n"), "{head}");
+        assert_eq!(header(&head, "x-api-key").as_deref(), Some(KEY));
+        assert_eq!(header(&head, "authorization"), None);
+        let body: serde_json::Value = serde_json::from_str(&body).expect("du JSON");
+        assert_eq!(body["system"], capri_chat::persona::DEFAULT, "sa personnalité, à la racine");
+        assert_eq!(body["messages"], serde_json::json!([{ "role": "user", "content": "Bonjour" }]));
+
+        // le modèle décline : elle le dit, et ni la question ni le début de réponse ne restent
+        chat.say("Et ça ?");
+        assert_eq!(
+            listen(&mut chat),
+            "Je comm — Le modèle d'Anthropic a décliné cette demande. Essaie de la dire autrement."
+        );
+        assert_eq!(chat.turns(), 2);
+        chat.say("Autre chose");
+        assert_eq!(listen(&mut chat), "D'accord.");
+        let _ = requests.recv_timeout(Duration::from_secs(5)).expect("la deuxième");
+        let third = body_of(requests.recv_timeout(Duration::from_secs(5)).expect("la troisième"));
+        assert_eq!(
+            third["messages"],
+            serde_json::json!([
+                { "role": "user", "content": "Bonjour" },
+                { "role": "assistant", "content": "Salut." },
+                { "role": "user", "content": "Autre chose" },
+            ])
+        );
+        let _ = std::fs::remove_dir_all(directory);
+    }
+
+    #[test]
     fn without_its_key_she_says_so_and_contacts_nobody() {
         let (address, requests) = fake_provider(1);
         // aucune clé pour OpenRouter

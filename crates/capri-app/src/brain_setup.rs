@@ -20,7 +20,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result, anyhow, bail};
 use capri_chat::brain::{MAX_LISTED_MODELS, has_model, printable, search_models};
 use capri_chat::phrases::{
-    NO_BRAIN, NO_MORE_BRAIN, TEST_QUESTION, destination, how_to_get, key_forgotten, key_stored,
+    NO_BRAIN, NO_MORE_BRAIN, TEST_QUESTION, destination, how_to_get, key_forgotten, key_hint, key_stored,
     legacy_key_removed, no_key_in_clear, not_a_key, of_provider, server, thinks_now_with,
 };
 use capri_chat::plain::PlainStream;
@@ -53,7 +53,7 @@ usage : capri chat status                  quel cerveau Capri utilise, et où pa
         capri chat off                     lui retirer son cerveau (les clés restent)
 
 fournisseurs : ollama, lmstudio      sur ta machine, sans compte
-               openrouter, deepseek, proxyapi, ollama-cloud
+               openrouter, deepseek, proxyapi, ollama-cloud, anthropic
                                      sur Internet, avec une clé d'API
                custom                un autre serveur compatible, avec --url (clé facultative)";
 
@@ -491,6 +491,9 @@ impl Cli<'_> {
                 "{} Il faut une adresse en https (capri chat key {id} --url https://…).",
                 no_key_in_clear(address)
             );
+        }
+        if let Some(hint) = key_hint(provider) {
+            writeln!(self.out, "{hint}")?;
         }
         let prompt = format!("Clé d'API {of} pour {address} (elle ne s'affiche pas pendant la frappe) : ");
         let key = ApiKey::parse(&(self.read_key)(&prompt)?).map_err(|err| anyhow!(not_a_key(err)))?;
@@ -1233,6 +1236,65 @@ mod tests {
             !ran.out.contains(KEY) && !any_file_contains(&directory, KEY),
             "la clé n'est écrite nulle part"
         );
+        let _ = std::fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn anthropic_is_chosen_tried_and_listed_with_its_key_in_its_own_header() {
+        let directory = scratch_dir("anthropic");
+        // sans clé : rien n'est demandé à personne, et la commande dit comment la donner
+        let ran = run(&directory, &MemoryKeys::default(), None, &["use", "anthropic", "--model", "m"]);
+        assert_eq!(
+            ran.error.as_deref(),
+            Some(
+                "Anthropic demande une clé, et il n'y en a pas pour api.anthropic.com:443. Range-la d'abord : capri \
+                 chat key anthropic"
+            )
+        );
+        // la clé : ce qu'il faut savoir avant de la donner, puis elle est rangée pour son adresse
+        let keys = MemoryKeys::default();
+        let ran = run(&directory, &keys, Some(KEY), &["key", "anthropic"]);
+        assert_eq!(ran.error, None);
+        assert!(ran.out.starts_with("Une clé d'API, créée dans la Console d'Anthropic"), "{}", ran.out);
+        assert!(ran.out.contains("ne se sert jamais de ton abonnement Claude"), "{}", ran.out);
+        assert!(ran.out.contains("pour api.anthropic.com:443 seulement"), "{}", ran.out);
+        assert_eq!(keys.accounts(), ["anthropic@api.anthropic.com:443"]);
+        assert!(!ran.out.contains(KEY));
+
+        // un serveur de cette machine à la place d'Anthropic, avec sa propre clé
+        let (address, requests) = fake_server::serve(vec![
+            fake_server::anthropic_listing(&["modele-a", "modele-de-test"]),
+            fake_server::anthropic_reply("Salut, **toi**.", "end_turn"),
+            fake_server::anthropic_listing(&["modele-de-test"]),
+        ]);
+        let url = format!("http://{address}/v1");
+        keys.add(Provider::Anthropic, &url, KEY);
+        let ran =
+            run(&directory, &keys, None, &["use", "anthropic", "--url", &url, "--model", "modele-de-test"]);
+        assert_eq!(ran.error, None);
+        assert!(
+            ran.out
+                .starts_with(&format!("Capri pense maintenant avec modele-de-test (Anthropic, {address}).")),
+            "{}",
+            ran.out
+        );
+        let (head, _) = next(&requests);
+        assert!(head.starts_with("GET /v1/models?limit=1000 HTTP/1.1\r\n"), "{head}");
+        assert_eq!(header(&head, "x-api-key").as_deref(), Some(KEY));
+        assert_eq!(header(&head, "authorization"), None);
+
+        let ran = run(&directory, &keys, None, &["test"]);
+        assert_eq!(ran.error, None);
+        assert_eq!(ran.out, "> Présente-toi en une phrase.\nSalut, toi.\n", "comme sa bulle");
+        let (head, body) = next(&requests);
+        assert!(head.starts_with("POST /v1/messages HTTP/1.1\r\n"), "{head}");
+        assert_eq!(header(&head, "x-api-key").as_deref(), Some(KEY));
+        assert_eq!(header(&head, "anthropic-version").as_deref(), Some("2026-10-21"));
+        assert!(!body.contains(KEY));
+
+        let ran = run(&directory, &keys, None, &["models", "anthropic", "--url", &url]);
+        assert!(ran.out.starts_with("modele-de-test\n"), "{}", ran.out);
+        assert!(!any_file_contains(&directory, KEY), "la clé n'est écrite nulle part");
         let _ = std::fs::remove_dir_all(directory);
     }
 

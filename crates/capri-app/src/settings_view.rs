@@ -747,6 +747,77 @@ mod tests {
     }
 
     #[test]
+    fn anthropic_is_set_up_from_the_window_without_contacting_it_on_its_own() {
+        let directory = scratch_dir("anthropic");
+        let keys = Arc::new(MemoryKeys::default());
+        let mut window = Harness::open(&directory, Arc::clone(&keys));
+        window.choose_provider(Provider::Anthropic);
+        assert_eq!(
+            window.note(rubric::WHERE),
+            "Attention : ce que tu lui dis partira chez Anthropic (api.anthropic.com:443), sur Internet, à chaque \
+             message, avec sa personnalité. Rien d'autre de ta machine : ni ce que fait Claude Code, ni tes fichiers."
+        );
+        let status = window.note(rubric::KEY_STATUS);
+        assert!(
+            status.starts_with("Aucune clé pour cette adresse : Anthropic en demande une. Une clé d'API"),
+            "{status}"
+        );
+        assert!(!status.contains("capri "), "pas de commande de terminal : {status}");
+
+        // la clé, rangée pour son adresse : rien n'est demandé de soi-même à un serveur sur Internet
+        let tasks = window.settings.event(FormEvent::Pressed {
+            id: rubric::KEY_SAVE.to_owned(),
+            secret: Some(Secret::new(KEY.to_owned())),
+        });
+        assert!(
+            tasks.iter().all(|task| !matches!(task.effect, Effect::ListModels { .. } | Effect::Talk { .. })),
+            "{tasks:?}"
+        );
+        window.run(tasks);
+        window.settle();
+        assert_eq!(keys.accounts(), ["anthropic@api.anthropic.com:443"]);
+        assert!(window.note(rubric::KEY_STATUS).starts_with("Une clé est rangée pour api.anthropic.com:443"));
+        assert_eq!(
+            window.note(rubric::MODELS_NOTE),
+            "La liste des modèles n'a pas encore été demandée à Anthropic (api.anthropic.com:443)."
+        );
+
+        // la même chose sur un serveur de cette machine : la liste, l'essai, avec la clé de son adresse
+        let (address, requests) = fake_server::serve(vec![
+            fake_server::anthropic_listing(&["modele-de-test"]),
+            fake_server::anthropic_reply("Salut.", "end_turn"),
+            fake_server::anthropic_reply("", "refusal"),
+        ]);
+        let url = format!("http://{address}/v1");
+        window.act(FormEvent::Committed { id: rubric::URL.to_owned(), value: url.clone() });
+        assert!(window.note(rubric::KEY_STATUS).starts_with("Aucune clé pour cette adresse"));
+        window.press(rubric::KEY_SAVE, Some(KEY));
+        let (head, _) = next(&requests);
+        assert!(head.starts_with("GET /v1/models?limit=1000 HTTP/1.1"), "{head}");
+        assert_eq!(header(&head, "x-api-key").as_deref(), Some(KEY));
+        window.press(rubric::TALK, None);
+        assert_eq!(window.note(rubric::TALK_TEXT), "> Présente-toi en une phrase.\nSalut.");
+        let (head, body) = next(&requests);
+        assert_eq!(header(&head, "x-api-key").as_deref(), Some(KEY));
+        assert!(header(&head, "authorization").is_none() && !body.contains(KEY));
+        window.press(rubric::TALK, None);
+        assert_eq!(
+            window.note(rubric::TALK_NOTE),
+            "Le modèle d'Anthropic a décliné cette demande. Essaie de la dire autrement."
+        );
+        window.press(rubric::USE, None);
+        let chosen = brain_setup::load(&directory).expect("lisible").expect("un cerveau").brain;
+        assert_eq!(chosen, Brain::new(Provider::Anthropic, Some(&url), "modele-de-test").expect("valable"));
+
+        window.press(rubric::KEY_FORGET, None);
+        assert_eq!(keys.accounts(), ["anthropic@api.anthropic.com:443"], "seule celle de cette adresse part");
+        assert!(
+            !any_file_contains(&directory, KEY) && !format!("{:?}", window.settings.form()).contains(KEY)
+        );
+        let _ = std::fs::remove_dir_all(directory);
+    }
+
+    #[test]
     fn the_voice_switched_in_the_window_is_what_capri_voice_reads() {
         let directory = scratch_dir("voix");
         let mut window = Harness::open(&directory, Arc::new(MemoryKeys::default()));

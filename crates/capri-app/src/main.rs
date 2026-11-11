@@ -443,8 +443,10 @@ impl App {
     }
 
     /// Un pas de la répétition des réglages, s'il y en a une : chaque fournisseur, du dernier au
-    /// premier, puis une clé factice collée dans le champ secret d'OpenRouter, rangée (dans le
-    /// trousseau que désigne `CAPRI_KEYCHAIN_SERVICE`) et retirée. Le journal dit ce que la
+    /// premier, puis une clé factice collée dans le champ secret d'Anthropic, le dernier
+    /// fournisseur venu, rangée (dans le trousseau que désigne `CAPRI_KEYCHAIN_SERVICE`) et
+    /// retirée. Personne n'est contacté : Anthropic est sur Internet, et la fenêtre ne lui demande
+    /// rien d'elle-même. Le journal dit ce que la
     /// fenêtre affiche, jamais la clé. Puis, seulement si `CLAUDE_CONFIG_DIR` et
     /// `CAPRI_CONFIG_DIR` désignent des dossiers d'essai, la rubrique « Claude Code » : le style
     /// installé et retiré, Claude Code branché et débranché, le miroir activé et désactivé, par
@@ -466,10 +468,9 @@ impl App {
             return event_loop.exit();
         };
         let providers = capri_chat::Provider::ALL.len();
-        let openrouter = 1 + capri_chat::Provider::ALL
-            .iter()
-            .position(|&provider| provider == capri_chat::Provider::OpenRouter)
-            .unwrap_or_default();
+        let keyed = capri_chat::Provider::Anthropic;
+        let keyed_index =
+            1 + capri_chat::Provider::ALL.iter().position(|&provider| provider == keyed).unwrap_or_default();
         let step = rehearsal.step;
         rehearsal.step += 1;
         rehearsal.next = Instant::now() + Duration::from_millis(700);
@@ -485,8 +486,8 @@ impl App {
                 log::info!("répétition : fournisseur n° {provider} choisi, {} lignes", view.rows());
             }
             Some(0) => {
-                view.rehearse(openrouter);
-                log::info!("répétition : OpenRouter choisi");
+                view.rehearse(keyed_index);
+                log::info!("répétition : {} choisi", keyed.name());
             }
             Some(1) => {
                 log::info!("répétition : clé avant : {}", note(view, brain::KEY_STATUS));

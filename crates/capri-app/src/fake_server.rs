@@ -66,3 +66,60 @@ pub fn listing(models: &[&str]) -> String {
     let data: Vec<_> = models.iter().map(|id| serde_json::json!({ "id": id, "object": "model" })).collect();
     response("200 OK", "application/json", &serde_json::json!({ "object": "list", "data": data }).to_string())
 }
+
+/// Une réponse en flux d'Anthropic qui dit `text` après un bloc de réflexion vide, puis s'arrête
+/// pour `stop_reason` (`end_turn`, `refusal`…). La forme de sa documentation
+/// (<https://platform.claude.com/docs/en/build-with-claude/streaming>).
+pub fn anthropic_reply(text: &str, stop_reason: &str) -> String {
+    use serde_json::json;
+    let events = [
+        (
+            "message_start",
+            json!({ "type": "message_start", "message": { "id": "msg_test", "type": "message",
+            "role": "assistant", "content": [], "model": "modele-de-test", "stop_reason": null } }),
+        ),
+        ("ping", json!({ "type": "ping" })),
+        (
+            "content_block_start",
+            json!({ "type": "content_block_start", "index": 0,
+            "content_block": { "type": "thinking", "thinking": "", "signature": "" } }),
+        ),
+        (
+            "content_block_delta",
+            json!({ "type": "content_block_delta", "index": 0,
+            "delta": { "type": "signature_delta", "signature": "EqQBCgIYAh" } }),
+        ),
+        ("content_block_stop", json!({ "type": "content_block_stop", "index": 0 })),
+        (
+            "content_block_start",
+            json!({ "type": "content_block_start", "index": 1,
+            "content_block": { "type": "text", "text": "" } }),
+        ),
+        (
+            "content_block_delta",
+            json!({ "type": "content_block_delta", "index": 1,
+            "delta": { "type": "text_delta", "text": text } }),
+        ),
+        ("content_block_stop", json!({ "type": "content_block_stop", "index": 1 })),
+        (
+            "message_delta",
+            json!({ "type": "message_delta",
+            "delta": { "stop_reason": stop_reason, "stop_sequence": null }, "usage": { "output_tokens": 9 } }),
+        ),
+        ("message_stop", json!({ "type": "message_stop" })),
+    ];
+    let stream: String =
+        events.iter().map(|(name, data)| format!("event: {name}\ndata: {data}\n\n")).collect();
+    response("200 OK", "text/event-stream", &stream)
+}
+
+/// La liste de modèles d'Anthropic (`GET /v1/models`), en une seule page.
+pub fn anthropic_listing(models: &[&str]) -> String {
+    let data: Vec<_> = models
+        .iter()
+        .map(|id| serde_json::json!({ "type": "model", "id": id, "display_name": id, "max_tokens": 128000 }))
+        .collect();
+    let body = serde_json::json!({ "data": data, "has_more": false, "first_id": models.first(),
+        "last_id": models.last() });
+    response("200 OK", "application/json", &body.to_string())
+}
