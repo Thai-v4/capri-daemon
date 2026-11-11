@@ -118,6 +118,11 @@ commercial seulement). Leur description (cases, dessins tenus en deux, ligne du 
 est dans `capri_core::sheets`, leur chargement dans `assets::perch::load` : sans elles, elle se pose
 debout comme aujourd'hui. **Rien ne les affiche encore.**
 
+Pareil pour sa pose debout, du même artiste, dans `assets/capri/stand/` (la boucle, son clignement,
+sa bouche) : décrite dans `capri_core::sheets::stand`, chargée par `assets::stand::load`. Elle
+remplacera son dessin actuel, d'un autre style, qui reste là quand ces planches manquent. **Rien ne
+les affiche encore.**
+
 De même, sur macOS, elle sait déjà dire si **un son sort d'une autre app** (`capri_platform::music`,
 décidé par `capri_core::music`), pour se balancer quand tu mets de la musique : **un oui ou un non,
 rien d'autre**. Elle demande à CoreAudio quelles apps ont un flux de sortie en marche, sans aucune

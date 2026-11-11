@@ -3,8 +3,9 @@
 # vérifie l'empreinte SHA-256 de chaque fichier. Voir CREDITS.md pour leur provenance.
 #
 # - mochiiwuff/capri-desktop : le dessin debout, les visages, l'introduction (assets/capri/) ;
-# - lachydotmcg/capri-desktop : sa pose assise, dessinée par l'artiste de ce projet
-#   (assets/capri/perch/). PolyForm Noncommercial 1.0.0 : usage non commercial seulement.
+# - lachydotmcg/capri-desktop : sa pose assise et sa pose debout, dessinées par l'artiste de ce
+#   projet (assets/capri/perch/, assets/capri/stand/). PolyForm Noncommercial 1.0.0 : usage non
+#   commercial seulement.
 set -euo pipefail
 
 DEST="$(cd "$(dirname "$0")/.." && pwd)/assets/capri"
@@ -68,6 +69,13 @@ bb67abb8470fb0e006daba804d120d846805da55431691d05fbb95cd99800233  perch_blink.pn
 61027b971f66b966e99247283636a8545070ad7d33fa5d7cf797536d1386ab78  perch_leave.png
 358a49b783ada47453f3a64113310121a2e6379749492109f31a5c943fe0cf15  perch_music.png
 0f2cdeb193b805dd379d05cb8fc6a8ea1dcba1b197ad3c0731204d91862069d7  perch_talk.png
+LIST
+
+# même dépôt, même révision ; seulement sa pose debout, la boucle que le dépôt attribue à l'artiste
+fetch lachydotmcg/capri-desktop 6f719c4269b0fa0e841587f072a1b1594eebcb91 assets/sprites "$DEST/stand" <<'LIST'
+a3657cdd00c8b730b215510a8ed3599b6c646a4b2e953d68399ac8afaf9cd0a1  idle.png
+16dddd29ff55790654f974298845f43f28d978ea18c21a28727fafb531a9a178  idle_blink.png
+e8c3e5fbdeb1647406da3149e4f24ff129d723e905d4b42585fca89efdcba75f  idle_mouth.png
 LIST
 
 echo "Images prêtes dans $DEST"
