@@ -31,6 +31,8 @@ mod menu;
 #[cfg(any(target_os = "macos", windows))]
 mod settings_view;
 mod style_setup;
+#[cfg(debug_assertions)]
+mod voice_rehearsal;
 mod voice_setup;
 
 use std::time::{Duration, Instant};

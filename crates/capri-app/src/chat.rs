@@ -31,7 +31,7 @@ use capri_chat::voice::{Sentences, speakable};
 use capri_chat::{Conversation, Place, ReplyEvent, Role, Turn, echo, reply};
 use capri_core::Speech;
 use capri_net::{Ask, Client};
-use capri_platform::Voice;
+use capri_platform::{Delivery, Voice};
 
 use crate::keys::{self, KeyStore};
 use crate::{brain_setup, voice_setup};
@@ -79,15 +79,15 @@ enum Origin {
 
 /// Ce que le thread du cerveau envoie.
 enum Thought {
-    /// Cette réponse se dit aussi à voix haute, avec cette voix (`None` : celle du système).
-    /// Envoyé avant le premier mot, et seulement si sa voix est activée.
-    Aloud(Option<String>),
+    /// Cette réponse se dit aussi à voix haute, ainsi (voix, hauteur, débit, effets). Envoyé
+    /// avant le premier mot, et seulement si sa voix est activée.
+    Aloud(Delivery),
     Reply(ReplyEvent),
 }
 
 /// La réponse en cours, côté voix.
 struct Aloud {
-    voice_id: Option<String>,
+    delivery: Delivery,
     /// Le texte reçu, découpé en phrases : une phrase n'est dite qu'une fois entière.
     sentences: Sentences,
 }
@@ -240,11 +240,11 @@ impl Chat {
         loop {
             let Some(reply) = &self.reply else { return };
             match reply.events.try_recv() {
-                Ok(Thought::Aloud(voice_id)) => {
+                Ok(Thought::Aloud(delivery)) => {
                     if self.voice.is_none() {
                         self.voice = Voice::new();
                     }
-                    self.aloud = Some(Aloud { voice_id, sentences: Sentences::new() });
+                    self.aloud = Some(Aloud { delivery, sentences: Sentences::new() });
                 }
                 Ok(Thought::Reply(ReplyEvent::Delta(piece))) => {
                     if let Some(speech) = &mut self.speech {
@@ -282,7 +282,7 @@ impl Chat {
         for sentence in ready {
             let spoken = speakable(&sentence);
             if !spoken.is_empty() {
-                voice.say(&spoken, aloud.voice_id.as_deref());
+                voice.say(&spoken, &aloud.delivery);
             }
         }
     }
@@ -396,12 +396,13 @@ fn think(
     client.answer(&ask, cancelled, &mut |event| plain.filter(event, &mut emit));
 }
 
-/// Si sa voix est activée, l'annonce avec la voix choisie : elle doit être connue avant le premier
-/// mot. Lit les réglages et les voix installées : hors du thread principal.
+/// Si sa voix est activée, l'annonce, avec la voix choisie et sa façon de parler : elles doivent
+/// être connues avant le premier mot. Lit les réglages et les voix installées : hors du thread
+/// principal.
 fn announce_voice(settings: Option<&Path>, sender: &Sender<Thought>) {
     match settings.map(voice_setup::load) {
         Some(Ok(voice)) if voice.enabled => {
-            let _ = sender.send(Thought::Aloud(voice_setup::chosen_voice(&voice)));
+            let _ = sender.send(Thought::Aloud(voice_setup::delivery(&voice)));
         }
         Some(Err(err)) => log::warn!("pas de voix : {err:#}"),
         _ => {}

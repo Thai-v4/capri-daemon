@@ -286,7 +286,9 @@ impl VoiceEffect {
                         band(Filter::LowPass, 4_200.0 - 800.0 * k, 1.0, 0.0),
                         band(Filter::Parametric, 1_700.0, 1.0, 4.0 * k),
                     ],
-                    gain: 4.0,
+                    // le filtrage enlève de l'énergie, la bosse de présence en rend : à peine de gain en plus,
+                    // sans saturer (crête mesurée sous 1 à chaque intensité)
+                    gain: 0.5,
                 },
             ],
             Self::Hologram => vec![
@@ -296,7 +298,8 @@ impl VoiceEffect {
                         band(Filter::HighPass, 160.0, 1.0, 0.0),
                         band(Filter::HighShelf, 5_000.0, 1.0, 3.0 * k),
                     ],
-                    gain: 0.0,
+                    // un peu de marge : les échos réinjectés montent les crêtes
+                    gain: -1.0,
                 },
                 // des échos très rapprochés et réinjectés : un timbre de peigne, métallique
                 Delay { seconds: 0.022, feedback: 40.0 * k, cutoff: 7_000.0, mix: 25.0 * k },

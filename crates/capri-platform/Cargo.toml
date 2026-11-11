@@ -30,9 +30,18 @@ objc2-avf-audio = { version = "0.3.2", default-features = false, features = [
     "AVAudioEngine",
     "AVAudioFormat",
     "AVAudioIONode",
+    "AVAudioMixerNode", # la voix traitée : lecteur, mélangeur et unités d'effet
+    "AVAudioMixing",
     "AVAudioNode",
+    "AVAudioPlayerNode",
     "AVAudioTime",
     "AVAudioTypes",
+    "AVAudioUnit",
+    "AVAudioUnitDelay",
+    "AVAudioUnitDistortion",
+    "AVAudioUnitEQ",
+    "AVAudioUnitEffect",
+    "AVAudioUnitReverb",
     "AVSpeechSynthesis",
 ] }
 # L'écoute : la reconnaissance vocale du système, faite sur l'appareil.
@@ -49,6 +58,7 @@ objc2-speech = { version = "0.3.2", default-features = false, features = [
 ] }
 objc2-foundation = { version = "0.3.2", default-features = false, features = [
     "std",
+    "block2", # le minuteur de la voix traitée
     "NSArray",
     "NSBundle", # l'app a-t-elle le droit de demander le micro ?
     "NSDate", # avec NSRunLoop : laisser la voix finir, en ligne de commande
@@ -58,6 +68,8 @@ objc2-foundation = { version = "0.3.2", default-features = false, features = [
     "NSNotification",
     "NSRunLoop",
     "NSString",
+    "NSThread", # les rappels de la voix traitée arrivent-ils sur le thread principal ?
+    "NSTimer",
     "NSUndoManager", # oublier ce qu'on pourrait annuler dans un champ secret vidé
 ] }
 objc2-app-kit = { version = "0.3.2", default-features = false, features = [

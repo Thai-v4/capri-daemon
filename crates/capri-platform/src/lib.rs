@@ -30,7 +30,9 @@ pub mod terminal;
 mod voice;
 pub use ear::{Access, Ear, EarError, EarEvent, EarStatus, Permission};
 pub use settings_window::{SettingsWindow, SettingsWindowError};
-pub use voice::{SystemVoice, Voice};
+#[cfg(debug_assertions)]
+pub use voice::{Breakage, Rehearsal, Rehearsed};
+pub use voice::{Delivery, SystemVoice, Voice};
 
 #[cfg(target_os = "macos")]
 mod macos;

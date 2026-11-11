@@ -339,10 +339,10 @@ impl Effects {
                 send(Outcome::VoiceSaved(saved));
                 return change;
             }
-            Effect::SayAloud { voice, text } => {
+            Effect::SayAloud { delivery, text } => {
                 if let Some(speaker) = &self.voice {
                     speaker.stop();
-                    speaker.say(&text, voice.as_deref());
+                    speaker.say(&text, &delivery);
                 }
             }
             Effect::LoadClaude => {

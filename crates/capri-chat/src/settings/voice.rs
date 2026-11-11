@@ -9,8 +9,8 @@ use capri_core::form::{Button, Control, FormEvent, Row, Tone};
 
 use super::{Effect, Environment, Outcome, Rubric};
 use crate::voice::{
-    BETTER_VOICES, LANGUAGE, TEST_SENTENCE, VOICE_OFF, VOICE_ON, VoiceInfo, VoiceSettings, french, pick,
-    quality, speakable,
+    BETTER_VOICES, LANGUAGE, TEST_SENTENCE, VOICE_OFF, VOICE_ON, VoiceInfo, VoiceSettings, delivery, french,
+    pick, quality, speakable,
 };
 
 pub const ID: &str = "voice";
@@ -172,7 +172,7 @@ impl Rubric for VoiceRubric {
             }
             FormEvent::Pressed { id, .. } if id == LISTEN => {
                 let voice = self.speaking().map(|voice| voice.id.clone());
-                vec![Effect::SayAloud { voice, text: speakable(TEST_SENTENCE) }]
+                vec![Effect::SayAloud { delivery: delivery(&current, voice), text: speakable(TEST_SENTENCE) }]
             }
             _ => Vec::new(),
         }
@@ -298,8 +298,8 @@ mod tests {
 
         let effects = rubric.event(FormEvent::Pressed { id: LISTEN.to_owned(), secret: None });
         assert!(
-            matches!(effects.as_slice(), [Effect::SayAloud { voice: Some(id), text }]
-                if id == "voix.fr.une" && text == TEST_SENTENCE),
+            matches!(effects.as_slice(), [Effect::SayAloud { delivery, text }]
+                if delivery.voice.as_deref() == Some("voix.fr.une") && text == TEST_SENTENCE),
             "{effects:?}"
         );
         // revenir au choix automatique

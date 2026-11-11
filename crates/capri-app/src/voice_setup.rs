@@ -9,10 +9,10 @@ use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 use capri_chat::voice::{
-    BETTER_VOICES, LANGUAGE, TEST_SENTENCE, VOICE_OFF, VOICE_ON, VoiceInfo, VoiceSettings, describe, french,
-    pick, speakable,
+    BETTER_VOICES, LANGUAGE, TEST_SENTENCE, VOICE_OFF, VOICE_ON, VoiceInfo, VoiceSettings, describe,
+    describe_style, french, pick, speakable,
 };
-use capri_platform::Voice;
+use capri_platform::{Delivery, Voice};
 
 use crate::brain_setup::{config_dir, read_text, write_file};
 
@@ -55,6 +55,12 @@ pub fn chosen_voice(settings: &VoiceSettings) -> Option<String> {
     pick(&installed(), LANGUAGE, settings.voice.as_deref()).map(|voice| voice.id.clone())
 }
 
+/// Comment dire ses phrases d'après ces réglages : la voix choisie, sa hauteur, son débit et son
+/// effet. Lit les voix installées.
+pub fn delivery(settings: &VoiceSettings) -> Delivery {
+    capri_chat::voice::delivery(settings, chosen_voice(settings))
+}
+
 /// La commande `capri voice <action>`. Rend le code de sortie du processus.
 pub fn run_cli(args: &[String]) -> i32 {
     let args: Vec<&str> = args.iter().map(String::as_str).collect();
@@ -65,6 +71,9 @@ pub fn run_cli(args: &[String]) -> i32 {
         ["list"] => list(),
         ["use", name] => choose(name),
         ["test", words @ ..] => test(&words.join(" ")),
+        // en version de débogage : la vraie voix, avec et sans effets, exercée sans un bruit
+        #[cfg(debug_assertions)]
+        ["rehearse"] => return crate::voice_rehearsal::run(),
         _ => {
             eprintln!("{USAGE}");
             return 2;
@@ -178,7 +187,9 @@ fn test(sentence: &str) -> Result<()> {
         Some(chosen) => println!("{} dit : {spoken}", describe(chosen)),
         None => println!("la voix par défaut du système dit : {spoken}"),
     }
-    voice.say(&spoken, chosen.map(|voice| voice.id.as_str()));
+    println!("façon de parler : {}", describe_style(&settings));
+    let delivery = capri_chat::voice::delivery(&settings, chosen.map(|voice| voice.id.clone()));
+    voice.say(&spoken, &delivery);
     if !voice.wait(Duration::from_secs(60)) {
         voice.stop();
         bail!("la voix parlait encore au bout d'une minute : arrêtée");

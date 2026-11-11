@@ -21,6 +21,7 @@
 use capri_claude::settings::Status;
 use capri_claude::style::{Installed, Removed, StyleState};
 use capri_core::form::{Form, FormEvent, Row, Section};
+use capri_core::sound::Delivery;
 
 use crate::brain::{Brain, Provider};
 use crate::endpoint::Endpoint;
@@ -74,8 +75,8 @@ pub enum Effect {
     LoadVoice,
     /// Écrire ces réglages de la voix : [`Outcome::VoiceSaved`].
     SaveVoice(VoiceSettings),
-    /// Dire `text` à voix haute, avec cette voix (`None` : celle du système). Sans résultat.
-    SayAloud { voice: Option<String>, text: String },
+    /// Dire `text` à voix haute, ainsi (voix, hauteur, débit, effets). Sans résultat.
+    SayAloud { delivery: Delivery, text: String },
     /// Relire ce que sait la rubrique « Claude Code » (`capri hook status`) : le branchement dans
     /// `settings.json`, le miroir, le style : [`Outcome::ClaudeLoaded`].
     LoadClaude,
