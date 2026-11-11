@@ -122,6 +122,89 @@ pub mod perch {
     }
 }
 
+/// Les planches de sa pose debout (`assets/capri/stand/`, voir CREDITS.md et
+/// `capri_core::sheets::stand`), du même artiste que sa pose assise.
+pub mod stand {
+    #![allow(dead_code, reason = "branché par le lot qui la dessinera debout avec ces planches")]
+
+    use std::path::Path;
+
+    use capri_core::sheets::stand::{self, Strip};
+
+    /// Une planche remise en grille (`stand::repack`) : RGBA 8 bits non prémultiplié, de taille
+    /// `strip.grid_size()` ; la case `i` a son coin haut gauche en `strip.cell_origin(i)`.
+    pub struct StandStrip {
+        pub strip: Strip,
+        pub width: u32,
+        pub height: u32,
+        pub rgba: Vec<u8>,
+    }
+
+    /// Les trois planches de sa pose debout, chacune à la bonne taille.
+    pub struct StandSheets {
+        /// Dans l'ordre de `Strip::ALL`.
+        strips: Vec<StandStrip>,
+    }
+
+    impl StandSheets {
+        pub fn get(&self, strip: Strip) -> &StandStrip {
+            let index = Strip::ALL.iter().position(|&s| s == strip).unwrap_or(0);
+            &self.strips[index]
+        }
+    }
+
+    /// **Tolérant** : s'il en manque une, si l'une est illisible ou n'a pas la taille attendue,
+    /// rend `None` (une ligne dans le journal, sans rien d'autre que le nom du fichier et des
+    /// nombres), et elle garde son dessin debout d'avant (`capri-cutout.png`). Environ 13 Mo en
+    /// mémoire une fois lues (la boucle seule en fait 10,7) : à lâcher dès qu'elles sont confiées
+    /// au GPU.
+    pub fn load() -> Option<StandSheets> {
+        load_from(&super::assets_dir()?)
+    }
+
+    pub(super) fn load_from(dir: &Path) -> Option<StandSheets> {
+        let folder = dir.join(stand::DIR);
+        let mut strips = Vec::with_capacity(Strip::ALL.len());
+        for strip in Strip::ALL {
+            let path = folder.join(strip.file());
+            if !path.is_file() {
+                log::info!("pose debout : {} absente, elle garde son dessin d'avant", strip.file());
+                return None;
+            }
+            let image = match image::open(&path) {
+                Ok(image) => image.to_rgba8(),
+                Err(err) => {
+                    log::warn!(
+                        "pose debout : {} illisible ({err}), elle garde son dessin d'avant",
+                        strip.file()
+                    );
+                    return None;
+                }
+            };
+            let (width, height) = image.dimensions();
+            match stand::repack(strip, width, height, image.as_raw()) {
+                Ok(rgba) => {
+                    let (width, height) = strip.grid_size();
+                    strips.push(StandStrip { strip, width, height, rgba });
+                }
+                Err(wrong) => {
+                    log::warn!(
+                        "pose debout : {} mesure {} × {} au lieu de {} × {}, elle garde son dessin d'avant",
+                        strip.file(),
+                        wrong.found.0,
+                        wrong.found.1,
+                        wrong.expected.0,
+                        wrong.expected.1
+                    );
+                    return None;
+                }
+            }
+        }
+        log::info!("pose debout : {} planches", strips.len());
+        Some(StandSheets { strips })
+    }
+}
+
 fn assets_dir() -> Option<PathBuf> {
     let mut candidates = Vec::new();
     if let Some(dir) = std::env::var_os("CAPRI_ASSETS") {
@@ -207,5 +290,117 @@ mod tests {
         assert!(alpha(rest.0 - 6, seat) == 0 && alpha(rest.1 + 6, seat) == 0);
         // rien sous ce qui pend
         assert!((0..sheets::NARROW).all(|x| alpha(x, seat + sheets::HANG) == 0));
+    }
+
+    mod standing {
+        use std::path::Path;
+
+        use capri_core::AlphaMask;
+        use capri_core::sheets::stand::{self, CELL_WIDTH, Strip};
+
+        use super::super::stand as loader;
+        use super::directory;
+
+        fn write(dir: &Path, strip: Strip, (width, height): (u32, u32)) {
+            std::fs::create_dir_all(dir.join(stand::DIR)).unwrap();
+            let mut image = image::RgbaImage::new(width, height);
+            image.put_pixel(0, 0, image::Rgba([0, 255, 0, 255]));
+            image.save(dir.join(stand::DIR).join(strip.file())).unwrap();
+        }
+
+        #[test]
+        fn without_every_sheet_she_keeps_her_old_drawing() {
+            let dir = directory("debout-incompletes");
+            assert!(loader::load_from(&dir).is_none(), "aucune planche");
+            write(&dir, Strip::Stand, Strip::Stand.strip_size());
+            write(&dir, Strip::StandBlink, Strip::StandBlink.strip_size());
+            assert!(loader::load_from(&dir).is_none(), "il manque la bouche");
+            write(&dir, Strip::StandMouth, (220, 420));
+            assert!(loader::load_from(&dir).is_none(), "une planche de la mauvaise taille");
+            std::fs::write(dir.join(stand::DIR).join(Strip::StandMouth.file()), b"pas une image").unwrap();
+            assert!(loader::load_from(&dir).is_none(), "une planche illisible");
+            let _ = std::fs::remove_dir_all(&dir);
+        }
+
+        #[test]
+        fn complete_sheets_are_put_in_grids() {
+            let dir = directory("debout-completes");
+            for strip in Strip::ALL {
+                write(&dir, strip, strip.strip_size());
+            }
+            let sheets = loader::load_from(&dir).expect("toutes les planches");
+            for strip in Strip::ALL {
+                let grid = sheets.get(strip);
+                assert_eq!(grid.strip, strip);
+                assert_eq!((grid.width, grid.height), strip.grid_size());
+                assert_eq!(grid.rgba.len(), (grid.width * grid.height * 4) as usize);
+                assert_eq!(grid.rgba[..4], [0, 255, 0, 255], "la première case reste en haut à gauche");
+            }
+            let _ = std::fs::remove_dir_all(&dir);
+        }
+
+        /// Les vraies planches, si `tools/fetch-assets.sh` les a téléchargées (rien n'est
+        /// téléchargé ici) : les mesures de `capri_core::sheets::stand` doivent leur correspondre.
+        #[test]
+        fn the_real_sheets_match_their_measures_when_present() {
+            let Some(dir) = super::super::assets_dir() else { return };
+            if !Strip::ALL.iter().all(|strip| dir.join(stand::DIR).join(strip.file()).is_file()) {
+                return;
+            }
+            let sheets = loader::load_from(&dir).expect("les vraies planches ont la taille décrite");
+            let cell =
+                |strip: Strip, index: u32| stand::cell_pixels(strip, &sheets.get(strip).rgba, index).unwrap();
+            let alpha = |pixels: &[u8], x: u32, y: u32| pixels[((y * CELL_WIDTH + x) * 4 + 3) as usize];
+            let row_empty = |pixels: &[u8], y: u32| (0..CELL_WIDTH).all(|x| alpha(pixels, x, y) == 0);
+
+            let first = cell(Strip::Stand, 0);
+            let (mut tops, mut lowest) = (Vec::new(), 0);
+            for index in 0..Strip::Stand.count() {
+                let pixels = cell(Strip::Stand, index);
+                let top = (0..stand::BOTTOM).find(|&y| !row_empty(&pixels, y)).unwrap();
+                let bottom = (0..stand::BOTTOM).rev().find(|&y| !row_empty(&pixels, y)).unwrap();
+                tops.push(top);
+                lowest = lowest.max(bottom);
+                // rien sous la pointe de son pied
+                assert!((stand::BOTTOM..384).all(|y| row_empty(&pixels, y)), "dessin {index}");
+                // ses pieds, comme le masque de clic les verra
+                let mask = AlphaMask::from_rgba(CELL_WIDTH, 384, &pixels, 96, 0);
+                let feet = mask.feet();
+                assert!((feet - stand::feet_uv()).length() < 1e-4, "dessin {index} : {feet:?}");
+                // pas de flottement : de la taille aux pieds, le dessin 0 décalé d'une ligne ou
+                // plus lui ressemble moins que le dessin 0 tel quel
+                let moved = |dy: i32| {
+                    (190..stand::BOTTOM as i32 - 4)
+                        .flat_map(|y| (0..CELL_WIDTH).map(move |x| (x, y)))
+                        .filter(|&(x, y)| {
+                            (alpha(&pixels, x, y as u32) > 96) != (alpha(&first, x, (y + dy) as u32) > 96)
+                        })
+                        .count()
+                };
+                let still = moved(0);
+                for dy in [-3, -2, -1, 1, 2, 3] {
+                    assert!(
+                        still < moved(dy),
+                        "dessin {index} : décalé de {dy} lignes, il ressemble plus au dessin 0"
+                    );
+                }
+            }
+            assert_eq!(lowest + 1, stand::BOTTOM);
+            assert_eq!(tops.iter().min(), Some(&stand::TOP));
+            assert_eq!(tops.iter().max(), Some(&(stand::TOP + stand::HAIR_DROP)));
+
+            // la bouche ne dessine rien hors de sa boîte
+            let ((x0, y0), (x1, y1)) = stand::MOUTH_BOX;
+            for index in 0..Strip::StandMouth.count() {
+                let pixels = cell(Strip::StandMouth, index);
+                for y in 0..384 {
+                    for x in 0..CELL_WIDTH {
+                        if !(x0..=x1).contains(&x) || !(y0..=y1).contains(&y) {
+                            assert_eq!(alpha(&pixels, x, y), 0, "bouche {index} en ({x}, {y})");
+                        }
+                    }
+                }
+            }
+        }
     }
 }

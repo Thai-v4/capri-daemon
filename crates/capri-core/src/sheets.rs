@@ -1,5 +1,6 @@
 //! Les planches de sa pose assise : elle s'assoit sur le bord d'une fenêtre, jambes pendantes,
-//! cligne des yeux, parle, se balance sur ta musique, arrive et repart.
+//! cligne des yeux, parle, se balance sur ta musique, arrive et repart. Celles de sa pose debout,
+//! du même artiste, sont décrites dans [`stand`].
 //!
 //! **D'où elles viennent.** Dessinées par l'artiste du projet
 //! [lachydotmcg/capri-desktop](https://github.com/lachydotmcg/capri-desktop) (voir `CREDITS.md`),
@@ -30,6 +31,8 @@
 
 use crate::anim::Sheet;
 use crate::geom::Vec2;
+
+pub mod stand;
 
 /// Le dossier des planches, dans celui des images (`assets/`).
 pub const DIR: &str = "capri/perch";
@@ -183,23 +186,80 @@ pub struct WrongSize {
 /// `strip.columns()` cases par ligne ; les cases manquantes de la dernière ligne restent
 /// transparentes.
 pub fn repack(strip: Strip, width: u32, height: u32, rgba: &[u8]) -> Result<Vec<u8>, WrongSize> {
-    let expected = strip.strip_size();
-    if (width, height) != expected || rgba.len() != (width * height * 4) as usize {
-        return Err(WrongSize { expected, found: (width, height) });
+    Layout::of(strip).repack(width, height, rgba)
+}
+
+/// Les pixels de la case `index` d'une planche remise en grille ([`repack`]), de taille
+/// `strip.cell()`, par exemple pour faire le masque de clic d'un dessin. `None` si la grille n'a
+/// pas la bonne taille ou si la case n'existe pas.
+pub fn cell_pixels(strip: Strip, grid: &[u8], index: u32) -> Option<Vec<u8>> {
+    Layout::of(strip).cell_pixels(grid, index)
+}
+
+/// Le découpage d'une planche, commun aux poses assise et debout : la taille d'une case, le
+/// nombre de dessins, et combien de cases par ligne une fois remise en grille.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Layout {
+    pub cell: (u32, u32),
+    pub count: u32,
+    pub columns: u32,
+}
+
+impl Layout {
+    fn of(strip: Strip) -> Self {
+        Self { cell: strip.cell(), count: strip.count(), columns: strip.columns() }
     }
-    let (cw, ch) = strip.cell();
-    let (gw, gh) = strip.grid_size();
-    let mut grid = vec![0u8; (gw * gh * 4) as usize];
-    let row = (cw * 4) as usize;
-    for index in 0..strip.count() {
-        let (gx, gy) = strip.cell_origin(index);
-        for y in 0..ch {
-            let from = ((y * width + index * cw) * 4) as usize;
-            let to = (((gy + y) * gw + gx) * 4) as usize;
-            grid[to..to + row].copy_from_slice(&rgba[from..from + row]);
+
+    pub fn strip_size(self) -> (u32, u32) {
+        (self.cell.0 * self.count, self.cell.1)
+    }
+
+    pub fn grid_size(self) -> (u32, u32) {
+        (self.cell.0 * self.columns, self.cell.1 * self.count.div_ceil(self.columns))
+    }
+
+    pub fn cell_origin(self, index: u32) -> (u32, u32) {
+        let index = index.min(self.count - 1);
+        (index % self.columns * self.cell.0, index / self.columns * self.cell.1)
+    }
+
+    fn repack(self, width: u32, height: u32, rgba: &[u8]) -> Result<Vec<u8>, WrongSize> {
+        let expected = self.strip_size();
+        if (width, height) != expected || rgba.len() != (width * height * 4) as usize {
+            return Err(WrongSize { expected, found: (width, height) });
         }
+        let (cw, ch) = self.cell;
+        let (gw, gh) = self.grid_size();
+        let mut grid = vec![0u8; (gw * gh * 4) as usize];
+        let row = (cw * 4) as usize;
+        for index in 0..self.count {
+            let (gx, gy) = self.cell_origin(index);
+            for y in 0..ch {
+                let from = ((y * width + index * cw) * 4) as usize;
+                let to = (((gy + y) * gw + gx) * 4) as usize;
+                grid[to..to + row].copy_from_slice(&rgba[from..from + row]);
+            }
+        }
+        Ok(grid)
     }
-    Ok(grid)
+
+    /// Les pixels d'une seule case d'une grille (RGBA 8 bits, ligne par ligne), par exemple pour en
+    /// faire un `AlphaMask`. `None` si la grille n'a pas la taille de `grid_size`.
+    fn cell_pixels(self, grid: &[u8], index: u32) -> Option<Vec<u8>> {
+        let (gw, gh) = self.grid_size();
+        if grid.len() != (gw * gh * 4) as usize || index >= self.count {
+            return None;
+        }
+        let (cw, ch) = self.cell;
+        let (gx, gy) = self.cell_origin(index);
+        let row = (cw * 4) as usize;
+        let mut cell = Vec::with_capacity(row * ch as usize);
+        for y in 0..ch {
+            let from = (((gy + y) * gw + gx) * 4) as usize;
+            cell.extend_from_slice(&grid[from..from + row]);
+        }
+        Some(cell)
+    }
 }
 
 /// Une boucle de 60 dessins, un sur deux, chacun tenu [`HOLD`] images.
@@ -292,6 +352,26 @@ mod tests {
                 assert_eq!(grid[at..at + 4], [index as u8, 0, 0, 255], "case {index}");
             }
         }
+    }
+
+    #[test]
+    fn cell_pixels_gives_back_the_cell_as_it_was_in_the_strip() {
+        let strip = Strip::PerchBlink;
+        let (w, h) = strip.strip_size();
+        let (cw, ch) = strip.cell();
+        // chaque pixel porte sa case et sa ligne
+        let rgba: Vec<u8> = (0..w * h).flat_map(|i| [((i % w) / cw) as u8, (i / w) as u8, 0, 255]).collect();
+        let grid = repack(strip, w, h, &rgba).unwrap();
+        for index in 0..strip.count() {
+            let cell = cell_pixels(strip, &grid, index).unwrap();
+            assert_eq!(cell.len(), (cw * ch * 4) as usize);
+            for y in [0, 100, ch - 1] {
+                let at = ((y * cw + cw / 2) * 4) as usize;
+                assert_eq!(cell[at..at + 2], [index as u8, y as u8], "case {index}, ligne {y}");
+            }
+        }
+        assert!(cell_pixels(strip, &grid, strip.count()).is_none(), "une case de trop");
+        assert!(cell_pixels(strip, &grid[4..], 0).is_none(), "une grille de la mauvaise taille");
     }
 
     #[test]

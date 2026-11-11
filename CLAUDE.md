@@ -28,7 +28,9 @@ micro ouvert en permanence). Sur macOS, une fenêtre de réglages
   paramètres), ramenée dans les bornes documentées par Apple (`Delivery::bounded`), et la remise
   des échantillons du système en canaux séparés (`planar`). Elle ne sait rien de Capri.
   Et `sheets` : les planches de sa pose assise (cases, dessins tenus en deux, ligne du bord de la
-  fenêtre), mesurées sur les images.
+  fenêtre), et dans `sheets::stand` celles de sa pose debout (sa hauteur, ses pieds, son échelle
+  face à la pose assise ; la boucle ne flotte pas, le flottement reste au programme), mesurées sur
+  les images.
   Et `scale` : **sa taille**, choisie par l'utilisateur, est une échelle `Scale` rapportée à sa
   hauteur **debout** d'origine (300 points), de 40 % à 140 % (au-delà, son dessin de 420 pixels de
   haut serait agrandi plus de 2 fois sur un écran Retina), jamais des dimensions en dur. Tout
@@ -251,7 +253,9 @@ précisément quoi vérifier plutôt que de l'affirmer.
   (`assets/capri/perch/`) vient de lachydotmcg/capri-desktop : seulement la famille « perch »
   créditée à l'artiste du projet, jamais une image créditée à quelqu'un d'autre, et ses mentions
   obligatoires recopiées dans `CREDITS.md`. Son chargement est tolérant : sans elles, elle se pose
-  debout.
+  debout. Sa pose debout (`assets/capri/stand/`) en vient aussi, aux mêmes conditions (la boucle
+  `idle`, son clignement et sa bouche ; pas l'ancien jeu de cases de 240 px) ; sans elle, elle
+  garde `capri-cutout.png`.
   Dans un worktree sans images, utiliser `CAPRI_ASSETS=/chemin/vers/assets`.
 - Aucune télémétrie, rien n'envoyé sur le réseau sans action explicite de l'utilisateur. La
   fenêtre de réglages ne demande d'elle-même la liste des modèles qu'à un serveur de cette
