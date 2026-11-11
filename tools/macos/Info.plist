@@ -26,7 +26,7 @@
     <!-- Ce que le système affiche en demandant la permission. Sans ces deux textes, il refuse le
          micro et la reconnaissance vocale : Capri vérifie leur présence avant de rien demander. -->
     <key>NSMicrophoneUsageDescription</key>
-    <string>Capri ouvre le micro seulement pendant que tu maintiens son raccourci, pour entendre ce que tu lui dis. Rien n'est enregistré.</string>
+    <string>Capri ouvre le micro seulement quand tu appuies sur son raccourci ou sur son menu, et le referme dès que tu as fini de parler, pour entendre ce que tu lui dis. Rien n'est enregistré.</string>
     <key>NSSpeechRecognitionUsageDescription</key>
     <string>Capri transcrit ce que tu lui dis sur cet ordinateur, pour pouvoir te répondre. Le son ne quitte pas ta machine.</string>
 </dict>

@@ -2,8 +2,8 @@
 
 use capri_platform::{Access, Ear, EarError, Permission};
 
-/// Le raccourci à maintenir pour lui parler, tel qu'on l'écrit à l'utilisateur : D comme
-/// « dicter ».
+/// Le raccourci pour lui parler (un appui bref, ou maintenu), tel qu'on l'écrit à l'utilisateur :
+/// D comme « dicter ».
 ///
 /// Un raccourci global désigne une touche par sa place sur le clavier, pas par la lettre gravée
 /// dessus. Sa lettre doit donc être à la même place en AZERTY et en QWERTY, sinon le raccourci
@@ -46,7 +46,9 @@ pub fn run_cli(args: &[String]) -> i32 {
         Access::Denied => "REFUSÉ (Réglages Système > Confidentialité et sécurité)",
         Access::NotAsked => "pas encore demandé : le système posera la question à la première écoute",
     };
-    println!("raccourci             : maintenir {SHORTCUT} pour lui parler, relâcher pour envoyer");
+    println!(
+        "raccourci             : {SHORTCUT}, un appui bref (elle détecte la fin de la phrase) ou maintenu"
+    );
     println!(
         "transcription         : {}",
         if status.on_device {
