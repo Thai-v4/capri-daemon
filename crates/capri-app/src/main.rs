@@ -28,6 +28,10 @@ mod hook_setup;
 mod keys;
 #[cfg(any(target_os = "macos", windows))]
 mod menu;
+#[cfg(debug_assertions)]
+mod perch_rehearsal;
+mod perch_setup;
+mod perch_view;
 #[cfg(any(target_os = "macos", windows))]
 mod settings_view;
 mod style_setup;
@@ -66,6 +70,9 @@ fn main() -> Result<()> {
         Some("chat") => std::process::exit(brain_setup::run_cli(&args[1..])),
         Some("voice") => std::process::exit(voice_setup::run_cli(&args[1..])),
         Some("ear") => std::process::exit(ear_setup::run_cli(&args[1..])),
+        // en version de débogage : la vraie liste des fenêtres, sans rien afficher
+        #[cfg(debug_assertions)]
+        Some("perch") => std::process::exit(perch_rehearsal::run_cli(&args[1..])),
         Some(_) => {
             eprintln!(
                 "usage : capri                  lancer Capri\n\
@@ -181,6 +188,8 @@ struct Running {
     cursor: Option<Vec2>,
     click_through: bool,
     banner: BannerView,
+    /// S'asseoir sur les fenêtres : quand lire leur liste, et ce qu'elle en fait.
+    perch: perch_view::PerchView,
     /// Image d'animation courante.
     frame: u64,
     /// Ce qui est à l'écran : sa pose et, s'il est là, son bandeau.
@@ -248,7 +257,13 @@ impl App {
         let body = display_size(sprite.mask.size(), overlay.scale_factor());
         // en bas à droite, au-dessus du Dock ou de la barre des tâches
         let start_at = Vec2::new(bounds.size.x - body.x * 1.8, bounds.size.y - body.y * 1.3);
-        let capri = Capri::new(body, bounds, start_at);
+        let mut capri = Capri::new(body, bounds, start_at);
+        capri.set_feet(sprite.mask.feet());
+        let perch_enabled = brain_setup::config_dir().and_then(|directory| perch_setup::load(&directory));
+        let perch_enabled = perch_enabled.unwrap_or_else(|err| {
+            log::warn!("réglage « S'asseoir sur les fenêtres » illisible, elle s'y assoit : {err:#}");
+            true
+        });
 
         overlay.set_click_through(true);
         overlay.set_shown(true);
@@ -260,6 +275,9 @@ impl App {
             self.menus = Some(menu::Menus::new());
             self.refresh_hook_menu();
             self.refresh_voice_menu();
+            if let Some(menus) = &self.menus {
+                menus.set_perch_enabled(perch_enabled);
+            }
         }
         #[cfg(all(debug_assertions, any(target_os = "macos", windows)))]
         if std::env::var_os("CAPRI_SETTINGS_REHEARSAL").is_some() {
@@ -282,6 +300,7 @@ impl App {
             cursor: None,
             click_through: true,
             banner: BannerView::new(),
+            perch: perch_view::PerchView::new(perch_enabled),
             frame: 0,
             drawn: None,
         })
@@ -384,6 +403,7 @@ impl App {
                     menu::Action::Forget => self.with_banner(BannerView::forget),
                     menu::Action::ToggleVoice => self.toggle_voice(),
                     menu::Action::ToggleVisible => self.toggle_hidden(),
+                    menu::Action::TogglePerch => self.toggle_perch(),
                     menu::Action::ToggleClaudeHook => self.toggle_claude_hook(),
                     menu::Action::Settings => self.open_settings(),
                     menu::Action::Quit => event_loop.exit(),
@@ -626,6 +646,35 @@ impl App {
         }
     }
 
+    /// Lui permet de s'asseoir sur les fenêtres, ou le lui interdit ; le choix est retenu dans
+    /// son dossier. Si on ne peut pas le retenir, rien ne change.
+    #[cfg(any(target_os = "macos", windows))]
+    fn toggle_perch(&mut self) {
+        let Some(r) = self.running.as_mut() else { return };
+        let enabled = !r.perch.is_enabled();
+        match brain_setup::config_dir().and_then(|directory| perch_setup::save(&directory, enabled)) {
+            Ok(_) => {
+                r.perch.set_enabled(enabled, &mut r.capri);
+                let text = if enabled {
+                    "Lâche-moi sur le haut d'une fenêtre : je m'y assiérai"
+                } else {
+                    "Je ne m'assieds plus sur tes fenêtres"
+                };
+                r.banner.notify(text, capri_claude::Tone::Done);
+            }
+            Err(err) => {
+                log::error!("réglage « S'asseoir sur les fenêtres » : {err:#}");
+                r.banner.notify(
+                    "Je n'ai pas pu retenir ce choix, détails dans le journal",
+                    capri_claude::Tone::Failed,
+                );
+            }
+        }
+        if let Some(menus) = &self.menus {
+            menus.set_perch_enabled(r.perch.is_enabled());
+        }
+    }
+
     /// Branche Claude Code sur Capri, ou le débranche s'il l'est déjà.
     #[cfg(any(target_os = "macos", windows))]
     fn toggle_claude_hook(&mut self) {
@@ -720,6 +769,7 @@ impl App {
         if !self.hidden {
             r.drawn = None; // redessiner en revenant
             r.last_step = Instant::now();
+            r.perch.wake(); // sa fenêtre a pu bouger pendant ce temps
         }
         #[cfg(any(target_os = "macos", windows))]
         if let Some(menus) = &self.menus {
@@ -757,6 +807,7 @@ impl Running {
         }
         self.frame = frame_at(now - self.start);
         self.capri.step(dt, self.frame);
+        self.perch.tick(&mut self.capri, &self.overlay, self.frame);
 
         // La souris traverse la fenêtre partout, sauf sur elle ou tant qu'on la tient.
         let over = self.cursor.is_some_and(|c| self.is_over(c));

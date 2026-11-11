@@ -24,14 +24,13 @@ global-hotkey = "0.10.0"
 image = { version = "0.25.10", default-features = false, features = ["png"] }
 log = "0.4"
 raw-window-handle = "0.6.2"
+# perch.json, le réglage « S'asseoir sur les fenêtres » (déjà tiré par capri-chat)
+serde_json = "1.0.154"
 winit = "0.30.13"
 
 # L'icône de la barre des menus (macOS) / de la zone de notification (Windows).
 [target.'cfg(any(target_os = "macos", windows))'.dependencies]
 tray-icon = "0.26.1"
-
-[dev-dependencies]
-serde_json = "1.0.154"
 
 [lints]
 workspace = true
