@@ -6,10 +6,12 @@
 //! qu'elle porte est remplacée par son dessin d'avant (`capri-cutout.png`), comme avant ; seul
 //! son dessin d'avant est indispensable.
 //!
-//! **Ce que ça pèse** : les planches lues font environ 95 Mo en mémoire (remises en grilles :
-//! 81 Mo, plus son dessin d'avant) ; elles ne sont gardées que le temps de faire les masques et de
-//! les confier à la carte graphique, où elles pèsent autant (RGBA 8 bits, sans mipmaps). Les masques
-//! de clic, eux, restent : un booléen par pixel d'une case de chaque pose, 230 Ko en tout.
+//! **Ce que ça pèse** : les planches lues et remises en grilles font 81 Mo en mémoire ; elles ne
+//! sont gardées que le temps de faire les masques de clic et de les confier à la carte graphique.
+//! Seuls les dessins montrés y vont (`sheets::shown` : un sur deux pour les boucles et le
+//! clignement, tenus « en deux ») : 47 Mo de textures (RGBA 8 bits, sans mipmaps), qui comptent
+//! dans la mémoire de l'app sur un Mac à puce Apple (mémoire unifiée). Les masques de clic, eux,
+//! restent : un booléen par pixel d'une case de chaque pose, 230 Ko en tout.
 
 use capri_core::look::{Drawing, Look, Picture, Wardrobe};
 use capri_core::sheets::{self, stand};
@@ -50,8 +52,10 @@ impl Figure {
         let cutout = upload(SpriteImage { width: sprite.width, height: sprite.height, rgba: &sprite.rgba })?;
         let stand = stand.and_then(|sheets| {
             let ids = stand::Strip::ALL.iter().map(|&strip| {
-                let grid = sheets.get(strip);
-                upload(SpriteImage { width: grid.width, height: grid.height, rgba: &grid.rgba })
+                let shown = stand::shown(strip);
+                let (width, height) = shown.grid_size();
+                let packed = shown.pack(&sheets.get(strip).rgba).unwrap_or_default();
+                upload(SpriteImage { width, height, rgba: &packed })
             });
             match ids.collect::<Result<Vec<_>, _>>() {
                 Ok(ids) => Some((sheets.mask(), ids)),
@@ -66,8 +70,10 @@ impl Figure {
         });
         let perch = perch.and_then(|sheets| {
             let ids = sheets::Strip::ALL.iter().map(|&strip| {
-                let grid = sheets.get(strip);
-                upload(SpriteImage { width: grid.width, height: grid.height, rgba: &grid.rgba })
+                let shown = sheets::shown(strip);
+                let (width, height) = shown.grid_size();
+                let packed = shown.pack(&sheets.get(strip).rgba).unwrap_or_default();
+                upload(SpriteImage { width, height, rgba: &packed })
             });
             match ids.collect::<Result<Vec<_>, _>>() {
                 Ok(ids) => Some((sheets.masks(), ids)),
@@ -114,9 +120,15 @@ impl Figure {
         };
         let stand_cell = |cell: stand::Cell| {
             let id = self.images.stand.as_ref()?.get(position(&stand::Strip::ALL, cell.strip))?;
-            let crop =
-                Crop::pixels(cell.strip.cell_origin(cell.index), cell.strip.cell(), cell.strip.grid_size());
+            let shown = stand::shown(cell.strip);
+            let crop = Crop::pixels(shown.origin(cell.index)?, cell.strip.cell(), shown.grid_size());
             Some((*id, SpriteDraw { crop, ..plain }))
+        };
+        let perch_cell = |cell: sheets::Cell| {
+            let id = self.images.perch.as_ref()?.get(position(&sheets::Strip::ALL, cell.strip))?;
+            let shown = sheets::shown(cell.strip);
+            let crop = Crop::pixels(shown.origin(cell.index)?, cell.strip.cell(), shown.grid_size());
+            Some(vec![(*id, SpriteDraw { crop, ..plain })])
         };
         match picture.drawing {
             Drawing::Cutout => cutout(),
@@ -124,24 +136,7 @@ impl Figure {
                 Some(body) => std::iter::once(body).chain(picture.mouth.and_then(stand_cell)).collect(),
                 None => cutout(),
             },
-            Drawing::Perch(cell) => {
-                let id = self
-                    .images
-                    .perch
-                    .as_ref()
-                    .and_then(|ids| ids.get(position(&sheets::Strip::ALL, cell.strip)));
-                match id {
-                    Some(id) => {
-                        let crop = Crop::pixels(
-                            cell.strip.cell_origin(cell.index),
-                            cell.strip.cell(),
-                            cell.strip.grid_size(),
-                        );
-                        vec![(*id, SpriteDraw { crop, ..plain })]
-                    }
-                    None => cutout(),
-                }
-            }
+            Drawing::Perch(cell) => perch_cell(cell).unwrap_or_else(cutout),
         }
     }
 }

@@ -71,11 +71,11 @@ pub mod perch {
     use capri_core::sheets::{self, Strip};
 
     /// Une planche remise en grille (`sheets::repack`) : RGBA 8 bits non prémultiplié, de taille
-    /// `strip.grid_size()` ; la case `i` a son coin haut gauche en `strip.cell_origin(i)`.
+    /// `strip.grid_size()` (`width` de large) ; la case `i` a son coin haut gauche en
+    /// `strip.cell_origin(i)`.
     pub struct PerchStrip {
         pub strip: Strip,
         pub width: u32,
-        pub height: u32,
         pub rgba: Vec<u8>,
     }
 
@@ -147,8 +147,8 @@ pub mod perch {
             let (width, height) = image.dimensions();
             match sheets::repack(strip, width, height, image.as_raw()) {
                 Ok(rgba) => {
-                    let (width, height) = strip.grid_size();
-                    strips.push(PerchStrip { strip, width, height, rgba });
+                    let width = strip.grid_size().0;
+                    strips.push(PerchStrip { strip, width, rgba });
                 }
                 Err(wrong) => {
                     log::warn!(
@@ -177,11 +177,11 @@ pub mod stand {
     use capri_core::sheets::stand::{self, Strip};
 
     /// Une planche remise en grille (`stand::repack`) : RGBA 8 bits non prémultiplié, de taille
-    /// `strip.grid_size()` ; la case `i` a son coin haut gauche en `strip.cell_origin(i)`.
+    /// `strip.grid_size()` (`width` de large) ; la case `i` a son coin haut gauche en
+    /// `strip.cell_origin(i)`.
     pub struct StandStrip {
         pub strip: Strip,
         pub width: u32,
-        pub height: u32,
         pub rgba: Vec<u8>,
     }
 
@@ -248,8 +248,8 @@ pub mod stand {
             let (width, height) = image.dimensions();
             match stand::repack(strip, width, height, image.as_raw()) {
                 Ok(rgba) => {
-                    let (width, height) = strip.grid_size();
-                    strips.push(StandStrip { strip, width, height, rgba });
+                    let width = strip.grid_size().0;
+                    strips.push(StandStrip { strip, width, rgba });
                 }
                 Err(wrong) => {
                     log::warn!(
@@ -329,8 +329,9 @@ mod tests {
         for strip in Strip::ALL {
             let grid = sheets.get(strip);
             assert_eq!(grid.strip, strip);
-            assert_eq!((grid.width, grid.height), strip.grid_size());
-            assert_eq!(grid.rgba.len(), (grid.width * grid.height * 4) as usize);
+            let (width, height) = strip.grid_size();
+            assert_eq!(grid.width, width);
+            assert_eq!(grid.rgba.len(), (width * height * 4) as usize);
             assert_eq!(grid.rgba[..4], [255, 0, 0, 255], "la première case reste en haut à gauche");
         }
         let _ = std::fs::remove_dir_all(&dir);
@@ -413,8 +414,9 @@ mod tests {
             for strip in Strip::ALL {
                 let grid = sheets.get(strip);
                 assert_eq!(grid.strip, strip);
-                assert_eq!((grid.width, grid.height), strip.grid_size());
-                assert_eq!(grid.rgba.len(), (grid.width * grid.height * 4) as usize);
+                let (width, height) = strip.grid_size();
+                assert_eq!(grid.width, width);
+                assert_eq!(grid.rgba.len(), (width * height * 4) as usize);
                 assert_eq!(grid.rgba[..4], [0, 255, 0, 255], "la première case reste en haut à gauche");
             }
             let _ = std::fs::remove_dir_all(&dir);

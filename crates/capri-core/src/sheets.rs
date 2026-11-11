@@ -200,6 +200,87 @@ pub fn cell_pixels(strip: Strip, grid: &[u8], index: u32) -> Option<Vec<u8>> {
     Layout::of(strip).cell_pixels(grid, index)
 }
 
+/// Les seuls dessins montrés d'une planche ([`Strip::step`]), serrés dans une grille plus petite :
+/// c'est ce qui est confié à la carte graphique. Les boucles et le clignement ne montrent qu'un
+/// dessin sur deux (tenus « en deux ») : leur grille fait moitié moins.
+pub fn shown(strip: Strip) -> Shown {
+    let columns = match strip {
+        Strip::Perch | Strip::PerchTalk | Strip::PerchMusic => 10,
+        Strip::PerchBlink => 4,
+        Strip::PerchArrive => 7,
+        Strip::PerchLeave => 6,
+    };
+    Shown { full: Layout::of(strip), step: strip.step(), columns }
+}
+
+impl Strip {
+    /// Un dessin sur combien est montré : un sur [`STEP`] pour les boucles et le clignement (qui
+    /// remplace les dessins 28 à 35 de la boucle, un sur deux aussi), tous pour l'arrivée et le
+    /// départ.
+    pub fn step(self) -> u32 {
+        match self {
+            Strip::PerchArrive | Strip::PerchLeave => 1,
+            _ => STEP,
+        }
+    }
+}
+
+/// Une grille de dessins montrés ([`shown`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Shown {
+    full: Layout,
+    step: u32,
+    columns: u32,
+}
+
+impl Shown {
+    pub(crate) fn new(full: Layout, step: u32, columns: u32) -> Self {
+        Self { full, step, columns }
+    }
+
+    /// Combien de dessins elle garde.
+    pub fn count(self) -> u32 {
+        self.full.count.div_ceil(self.step)
+    }
+
+    /// Sa taille, en pixels.
+    pub fn grid_size(self) -> (u32, u32) {
+        let (cw, ch) = self.full.cell;
+        (cw * self.columns, ch * self.count().div_ceil(self.columns))
+    }
+
+    /// Le coin haut gauche du dessin n° `index` (de la planche) dans cette grille ; `None` s'il
+    /// n'est jamais montré.
+    pub fn origin(self, index: u32) -> Option<(u32, u32)> {
+        let (cw, ch) = self.full.cell;
+        let shown = index < self.full.count && index.is_multiple_of(self.step);
+        let slot = index / self.step;
+        shown.then_some((slot % self.columns * cw, slot / self.columns * ch))
+    }
+
+    /// Cette grille, faite à partir de la grille complète de la planche ([`repack`]) ; `None` si
+    /// celle-ci n'a pas la bonne taille.
+    pub fn pack(self, grid: &[u8]) -> Option<Vec<u8>> {
+        let (fw, fh) = self.full.grid_size();
+        if grid.len() != (fw * fh * 4) as usize {
+            return None;
+        }
+        let (cw, ch) = self.full.cell;
+        let (gw, gh) = self.grid_size();
+        let mut packed = vec![0u8; (gw * gh * 4) as usize];
+        let row = (cw * 4) as usize;
+        for index in (0..self.full.count).step_by(self.step as usize) {
+            let ((fx, fy), (px, py)) = (self.full.cell_origin(index), self.origin(index)?);
+            for y in 0..ch {
+                let from = (((fy + y) * fw + fx) * 4) as usize;
+                let to = (((py + y) * gw + px) * 4) as usize;
+                packed[to..to + row].copy_from_slice(&grid[from..from + row]);
+            }
+        }
+        Some(packed)
+    }
+}
+
 /// Le découpage d'une planche, commun aux poses assise et debout : la taille d'une case, le
 /// nombre de dessins, et combien de cases par ligne une fois remise en grille.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -450,6 +531,52 @@ mod tests {
         assert_eq!(arrive.at(0), Cell { strip: Strip::PerchArrive, index: 0 });
         assert_eq!(arrive.at(27), Cell { strip: Strip::PerchArrive, index: 13 });
         assert_eq!(leave.at(23), Cell { strip: Strip::PerchLeave, index: 11 });
+    }
+
+    #[test]
+    fn only_the_drawings_shown_are_packed_and_every_one_shown_is_there() {
+        // chaque dessin que ses feuilles d'exposition montrent est dans la grille serrée
+        for sheet in [sitting(true), sitting(false), talking(), music(), arriving(), leaving()] {
+            for frame in 0..sheet.len() {
+                let cell = sheet.at(frame);
+                assert!(shown(cell.strip).origin(cell.index).is_some(), "{cell:?}");
+            }
+        }
+        let mut full = 0;
+        let mut packed = 0;
+        for strip in Strip::ALL {
+            let grid = shown(strip);
+            let (gw, gh) = grid.grid_size();
+            assert!(gw <= 2304 && gh <= 2304, "{strip:?} : {gw} × {gh}");
+            let (cw, ch) = strip.cell();
+            let mut seen = std::collections::HashSet::new();
+            for index in (0..strip.count()).filter_map(|index| grid.origin(index)) {
+                assert!(index.0 + cw <= gw && index.1 + ch <= gh && seen.insert(index), "{strip:?}");
+            }
+            assert_eq!(seen.len() as u32, grid.count());
+            assert_eq!(grid.origin(1).is_some(), strip.step() == 1, "{strip:?}");
+            full += u64::from(strip.grid_size().0 * strip.grid_size().1);
+            packed += u64::from(gw * gh);
+        }
+        // un peu plus de la moitié de la place : l'arrivée et le départ gardent tout
+        assert!(packed * 100 / full < 60, "{packed} sur {full}");
+        assert_eq!(shown(Strip::Perch).grid_size(), (1960, 1152));
+
+        // chaque dessin gardé est à sa place, ses pixels intacts
+        let strip = Strip::PerchBlink;
+        let (w, h) = strip.strip_size();
+        let (cw, _) = strip.cell();
+        let rgba: Vec<u8> = (0..w * h).flat_map(|i| [((i % w) / cw) as u8, 7, 0, 255]).collect();
+        let grid = repack(strip, w, h, &rgba).unwrap();
+        let shown = shown(strip);
+        let packed = shown.pack(&grid).expect("la bonne taille");
+        let (gw, _) = shown.grid_size();
+        for index in [0, 2, 4, 6] {
+            let (x, y) = shown.origin(index).unwrap();
+            let at = (((y + 100) * gw + x + 5) * 4) as usize;
+            assert_eq!(packed[at..at + 4], [index as u8, 7, 0, 255], "dessin {index}");
+        }
+        assert!(shown.pack(&grid[4..]).is_none(), "une grille de la mauvaise taille");
     }
 
     #[test]

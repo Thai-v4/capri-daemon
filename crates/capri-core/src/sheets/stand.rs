@@ -32,7 +32,7 @@
 use crate::anim::Sheet;
 use crate::geom::Vec2;
 
-use super::{CELL_HEIGHT, HOLD, Layout, STEP, WrongSize};
+use super::{CELL_HEIGHT, HOLD, Layout, STEP, Shown, WrongSize};
 
 /// Le dossier des planches, dans celui des images (`assets/`).
 pub const DIR: &str = "capri/stand";
@@ -137,6 +137,27 @@ impl Strip {
     fn layout(self) -> Layout {
         Layout { cell: self.cell(), count: self.count(), columns: self.columns() }
     }
+
+    /// Un dessin sur combien est montré : un sur [`STEP`] pour la boucle et le clignement (qui
+    /// remplace les dessins 24 à 31, un sur deux aussi), toutes les formes de la bouche.
+    pub fn step(self) -> u32 {
+        match self {
+            Strip::Stand | Strip::StandBlink => STEP,
+            Strip::StandMouth => 1,
+        }
+    }
+}
+
+/// Les seuls dessins montrés d'une planche, serrés dans une grille plus petite : ce qui est
+/// confié à la carte graphique (voir [`super::shown`]). La boucle : 1 740 × 768 px au lieu de
+/// 1 740 × 1 536.
+pub fn shown(strip: Strip) -> Shown {
+    let columns = match strip {
+        Strip::Stand => 15,
+        Strip::StandBlink => 4,
+        Strip::StandMouth => 5,
+    };
+    Shown::new(strip.layout(), strip.step(), columns)
 }
 
 /// Un dessin : quelle planche, quelle case.
@@ -343,6 +364,29 @@ mod tests {
         assert_eq!(shapes.len(), 5);
         assert_eq!(Mouth::Shut.cell().index, 0);
         assert_eq!(Mouth::Wide.cell().index, 4);
+    }
+
+    #[test]
+    fn only_the_drawings_shown_are_packed_and_every_one_shown_is_there() {
+        for sheet in [standing(true), standing(false), talking()] {
+            for frame in 0..sheet.len() {
+                let cell = sheet.at(frame);
+                assert!(shown(cell.strip).origin(cell.index).is_some(), "{cell:?}");
+            }
+        }
+        assert_eq!(shown(Strip::Stand).grid_size(), (1740, 768));
+        assert_eq!(shown(Strip::StandBlink).grid_size(), (464, 384));
+        assert_eq!(shown(Strip::StandMouth).grid_size(), Strip::StandMouth.grid_size());
+        // la boucle serrée : le dessin 58 à sa place, intact
+        let strip = Strip::Stand;
+        let (w, h) = strip.strip_size();
+        let rgba: Vec<u8> = (0..w * h).flat_map(|i| [((i % w) / CELL_WIDTH) as u8, 1, 2, 255]).collect();
+        let grid = repack(strip, w, h, &rgba).unwrap();
+        let packed = shown(strip).pack(&grid).expect("la bonne taille");
+        let (x, y) = shown(strip).origin(58).unwrap();
+        let at = (((y + 383) * 1740 + x + CELL_WIDTH - 1) * 4) as usize;
+        assert_eq!(packed[at..at + 4], [58, 1, 2, 255]);
+        assert_eq!(shown(strip).origin(59), None, "jamais montré");
     }
 
     #[test]
