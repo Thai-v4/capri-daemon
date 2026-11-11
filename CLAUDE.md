@@ -5,12 +5,13 @@ Compagne de bureau (Capri, *Cyberpunk: Edgerunners* 2) écrite en Rust, 100 % na
 du projet et la feuille de route ; jalons 1 (elle flotte) et 2 (le bandeau Claude Code) faits,
 jalon 4 (lui parler) en cours : saisie, bulle, modèle local (Ollama, LM Studio), fournisseurs
 compatibles OpenAI avec leur clé dans le trousseau (OpenRouter, DeepSeek, ProxyAPI, Ollama en
-ligne, serveur personnalisé), voix et écoute au micro en place, effets de voix, hauteur et débit
-écrits, vérifiés sans bruit et écoutés dans l'ensemble ; Capri dans Claude Code (un style
-de sortie, et le miroir qui lui fait dire la ligne que Claude écrit pour elle) en place, essayé
-dans une vraie session le 11 novembre 2026 (dans l'ensemble, pas cas par cas) ; API d'Anthropic et
-mot d'éveil à venir. Sur macOS, une fenêtre de
-réglages (« Réglages… » dans son menu) règle son cerveau, sa voix et Claude Code sans terminal.
+ligne, serveur personnalisé), l'API d'Anthropic avec sa clé d'API (son propre format ; testée
+contre un faux serveur local seulement, pas encore essayée avec une vraie clé), voix et écoute au
+micro en place, effets de voix, hauteur et débit écrits, vérifiés sans bruit et écoutés dans
+l'ensemble ; Capri dans Claude Code (un style de sortie, et le miroir qui lui fait dire la ligne
+que Claude écrit pour elle) en place, essayé dans une vraie session le 11 novembre 2026 (dans
+l'ensemble, pas cas par cas) ; mot d'éveil à venir. Sur macOS, une fenêtre de réglages
+(« Réglages… » dans son menu) règle son cerveau, sa voix et Claude Code sans terminal.
 
 ## Architecture : où va quoi
 
@@ -31,21 +32,24 @@ réglages (« Réglages… » dans son menu) règle son cerveau, sa voix et Clau
   et celui de Claude Code, calculés une seule fois pour le hook et pour l'app, l'environnement
   passé par l'appelant). Les phrases que disent à la fois `capri hook` et la fenêtre de réglages
   sur Claude Code y sont écrites une fois. Avec des tests.
-- `capri-chat` : la conversation, **sans dépendance système ni réseau** : historique borné,
-  format des fournisseurs (ce qu'on envoie, comment lire le flux), fournisseurs et besoin d'une
-  clé (`brain`), règles d'adresse et règles de la clé (`endpoint`, `key` : jamais en clair, et
-  liée à son adresse), réglages du cerveau, personnalité, nettoyage du Markdown, et les effets de
-  voix (`voice` : les préréglages `VoiceEffect` écrits pour Capri, l'intensité, la hauteur, le
-  débit, `voice.json`, et `delivery()` qui en fait la description neutre). Avec des tests.
-  Les phrases que disent à la fois `capri chat` et la fenêtre de réglages (où part ce qu'on lui
-  dit, clé rangée ou retirée…) sont dans `phrases`, écrites une seule fois. Le modèle de la
-  fenêtre de réglages est dans `settings` (voir plus bas) ; sa rubrique « Claude Code » dépend de
-  `capri-claude` (pur lui aussi) pour ses états et ses phrases.
+- `capri-chat` : la conversation, **sans dépendance système ni réseau** : historique borné, format
+  des fournisseurs (ce qu'on envoie, comment lire le flux : `wire::Wire` dit lequel parle chaque
+  fournisseur, `openai` et `anthropic` les décrivent, chemins, en-têtes, corps, flux, liste des
+  modèles), fournisseurs et besoin d'une clé (`brain`), règles d'adresse et règles de la clé
+  (`endpoint`, `key` : jamais en clair, liée à son adresse, et l'en-tête qui la porte,
+  `key::key_header` : son nom et sa valeur sont décidés ici), réglages du cerveau, personnalité,
+  nettoyage du Markdown, et les effets de voix (`voice` : les préréglages `VoiceEffect` écrits
+  pour Capri, l'intensité, la hauteur, le débit, `voice.json`, et `delivery()` qui en fait la
+  description neutre). Avec des tests. Les phrases que disent à la fois `capri chat` et la fenêtre
+  de réglages (où part ce qu'on lui dit, clé rangée ou retirée…) sont dans `phrases`, écrites une
+  seule fois. Le modèle de la fenêtre de réglages est dans `settings` (voir plus bas) ; sa
+  rubrique « Claude Code » dépend de `capri-claude` (pur lui aussi) pour ses états et ses phrases.
 - `capri-net` : **le seul crate qui parle au réseau** (ureq). Il se connecte et rien d'autre :
-  quoi envoyer et comment lire la réponse est décidé par `capri-chat`. En `https://`, le TLS du
-  système (fonction `native-tls-no-default` de ureq, `RootCerts::PlatformVerifier`), sur macOS et
-  Windows seulement ; sous Linux, pas de TLS (il y faudrait OpenSSL) et `https://` est refusé.
-  Testé contre un faux serveur local ; aucun test ne sort de la machine.
+  quoi envoyer et comment lire la réponse est décidé par `capri-chat` (`Wire`, `key_header`, qu'il
+  pose tels quels). En `https://`, le TLS du système (fonction `native-tls-no-default` de ureq,
+  `RootCerts::PlatformVerifier`), sur macOS et Windows seulement ; sous Linux, pas de TLS (il y
+  faudrait OpenSSL) et `https://` est refusé. Testé contre un faux serveur local ; aucun test ne
+  sort de la machine.
 - `capri-render` : wgpu, et le tracé du texte du bandeau et de la bulle (cosmic-text, polices du
   système).
   Couleurs prémultipliées de bout en bout.
@@ -248,8 +252,9 @@ précisément quoi vérifier plutôt que de l'affirmer.
   réglages (son champ secret n'est jamais prérempli ; elle dit seulement s'il y a une clé pour
   l'adresse affichée). Ce qui y est tapé n'en sort que dans un `capri_core::form::Secret`, aussi
   masqué que `ApiKey`. `capri_chat::ApiKey` n'a pas de `Display`
-  et son `Debug` la masque ; son texte ne sort que pour le trousseau et pour l'en-tête
-  `Authorization`.
+  et son `Debug` la masque ; son texte ne sort que pour le trousseau et pour l'en-tête qui la
+  porte (`key::KeyHeader`, au `Debug` masqué lui aussi : `Authorization: Bearer` pour le format
+  d'OpenAI, `x-api-key` pour Anthropic).
   Une clé ne part qu'en `https://`, ou en `http://` vers cette machine même
   (`Endpoint::may_carry_secret`, vérifié par `capri-net` avant toute connexion) ; jamais vers un
   fournisseur qui n'en prend pas. Un message de fournisseur est masqué (`ApiKey::redact`) avant
@@ -269,9 +274,14 @@ précisément quoi vérifier plutôt que de l'affirmer.
   code de sortie 0, une durée de vie bornée, miroir activé ou non, réglage lisible ou non, quelle
   que soit la taille de la réponse. Les hooks sont déclarés `async`.
 - **Capri n'utilise jamais l'abonnement de l'utilisateur** : elle ne lance jamais Claude Code (ni
-  `claude`, ni `claude -p`, ni une session), et aucun code ne doit le faire. C'est l'utilisateur
-  qui parle à Claude Code dans ses propres sessions ; Capri y prend part par un style de sortie
-  qu'il choisit lui-même, et par le miroir.
+  `claude`, ni `claude -p`, ni une session), et aucun code ne doit le faire. Le cerveau Anthropic
+  ne prend qu'une **clé d'API**, donnée par l'utilisateur et rangée dans le trousseau comme les
+  autres : jamais un jeton OAuth, l'outil `ant`, `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN` ni
+  les identifiants de Claude Code. Son format (version `anthropic-version`, `max_tokens`, ce qu'on
+  n'envoie pas : `temperature`, `top_p`, `top_k`, `thinking`, `fallbacks`) se vérifie dans la
+  documentation d'Anthropic, citée dans `capri_chat::anthropic`, pas de mémoire. Aucun test ne
+  contacte `api.anthropic.com`. C'est l'utilisateur qui parle à Claude Code dans ses propres
+  sessions ; Capri y prend part par un style de sortie qu'il choisit lui-même, et par le miroir.
 - Le style de sortie (`capri_claude::style`) ne s'écrit **que sur demande** (`capri hook style
   install`, ou le bouton de la fenêtre), dans `output-styles/` du dossier de Claude Code
   (`CLAUDE_CONFIG_DIR` respectée), d'un seul coup. On n'écrase ni ne retire jamais un fichier qui

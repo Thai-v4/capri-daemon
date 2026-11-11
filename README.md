@@ -105,6 +105,20 @@ pbpaste | ./target/release/capri chat key openrouter      # ou depuis le presse-
 ./target/release/capri chat key openrouter --forget       # retirer la clé du trousseau
 ```
 
+**L'API d'Anthropic** (Claude comme cerveau) : elle n'est pas compatible OpenAI, Capri parle son
+format à elle (en-tête `x-api-key`, version `2026-10-21`, corps et flux propres). Il faut une
+**clé d'API**, créée dans la [Console d'Anthropic](https://platform.claude.com), facturée à
+l'usage par Anthropic : Capri ne se sert jamais de ton abonnement Claude, ni de Claude Code, ni
+d'un jeton de connexion, ni des variables `ANTHROPIC_API_KEY` ou `ANTHROPIC_AUTH_TOKEN`. La clé
+se donne et se range comme les autres :
+
+```bash
+./target/release/capri chat key anthropic                 # rangée pour api.anthropic.com:443
+./target/release/capri chat models anthropic <mot>        # les modèles que ta clé peut utiliser
+./target/release/capri chat use anthropic --model <nom>   # aucun nom n'est écrit dans Capri
+./target/release/capri chat test
+```
+
 Une clé est donnée **pour une adresse** : celle de `--url` (`capri chat key custom --url
 https://…`), sinon celle du cerveau choisi s'il est de ce fournisseur, sinon son adresse habituelle.
 La commande dit toujours pour laquelle elle la range, et un serveur personnalisé sans adresse
@@ -118,12 +132,13 @@ choisie demande `--url`.
 | `deepseek`   | `https://api.deepseek.com`     | obligatoire                                 |
 | `proxyapi`   | `https://api.proxyapi.ru/v1`   | obligatoire                                 |
 | `ollama-cloud` | `https://ollama.com/v1`      | obligatoire                                 |
+| `anthropic`  | `https://api.anthropic.com/v1` | obligatoire (une clé d'API, pas l'abonnement) |
 | `custom`     | à donner avec `--url`          | facultative                                 |
 
 `--url` remplace l'adresse de n'importe lequel, par exemple `--url http://192.168.1.20:11434/v1`
 pour un Ollama qui tourne ailleurs chez toi. La clé ne suit pas : celle de l'adresse habituelle
 n'est jamais envoyée à une autre. Les adresses viennent de la documentation de chaque
-fournisseur, relue le 10 novembre 2026.
+fournisseur, relue le 10 novembre 2026 (le 11 pour Anthropic).
 
 Le choix vaut dès ta phrase suivante, sans relancer Capri. Dans son menu, « La faire taire » coupe
 sa réponse (le modèle cesse d'écrire) et « Nouvelle conversation » lui fait oublier ce qui s'est
@@ -190,7 +205,16 @@ Ce qu'il faut savoir :
   encore de réglage pour l'en empêcher ;
 - si tu la fais taire avant son premier mot, la connexion n'est fermée qu'au premier signe du
   serveur ;
-- un modèle écrit volontiers du Markdown : les signes sont retirés à l'affichage, les mots restent.
+- un modèle écrit volontiers du Markdown : les signes sont retirés à l'affichage, les mots restent ;
+- **avec Anthropic** : chaque message demande au plus 16 000 jetons de réponse (`max_tokens`,
+  obligatoire chez lui : la réflexion du modèle compte dedans), sous le plafond de chacun des
+  modèles d'après sa documentation (64 000 au moins) ; seuls les jetons produits sont facturés.
+  Capri n'envoie ni `temperature`, ni réglage de la réflexion : les modèles récents réfléchissent
+  d'eux-mêmes, sans rien en montrer, et la bulle reste sur « … » pendant ce temps. Si le modèle
+  décline une demande, elle le dit (« Le modèle d'Anthropic a décliné cette demande. Essaie de la
+  dire autrement. ») ; ce qu'il avait déjà écrit reste affiché, mais n'entre pas dans la
+  conversation. Pas de repli vers un autre modèle : Anthropic ne le propose que pour certains
+  modèles. Une réponse arrivée au plafond est gardée telle quelle, comme chez les autres.
 
 ### Sa voix
 
@@ -321,11 +345,12 @@ open target/Capri.app                     # quitte d'abord une Capri déjà lanc
 ### Capri dans Claude Code
 
 Pour qui a un abonnement Claude : **Capri ne lance jamais Claude Code et ne se sert jamais de ton
-abonnement** (Anthropic n'autorise pas une app tierce à le faire). C'est l'inverse : tu parles à
-Claude Code dans tes propres sessions, comme d'habitude ; il y prend la personnalité de Capri (un
-[style de sortie](https://code.claude.com/docs/en/output-styles)) et finit chaque réponse par une
-ligne pour elle ; Capri, sur ton bureau, la dit dans sa bulle, et à voix haute si sa voix est
-activée (le **miroir**).
+abonnement** (Anthropic n'autorise pas une app tierce à le faire ; pour lui donner Claude comme
+cerveau, il faut une clé d'API : voir [plus haut](#lui-donner-un-cerveau)). C'est l'inverse : tu
+parles à Claude Code dans tes propres sessions, comme d'habitude ; il y prend la personnalité de
+Capri (un [style de sortie](https://code.claude.com/docs/en/output-styles)) et finit chaque
+réponse par une ligne pour elle ; Capri, sur ton bureau, la dit dans sa bulle, et à voix haute si
+sa voix est activée (le **miroir**).
 
 ```bash
 ./target/release/capri hook install          # le bandeau, s'il n'est pas déjà branché
@@ -518,7 +543,7 @@ Règle : tout ce qui peut être testé sans écran va dans `capri-core`, `capri-
 
 Vérifié automatiquement :
 
-- formatage, `clippy -D warnings` et 373 tests sur **macOS Apple Silicon** (plus 4 qui ne
+- formatage, `clippy -D warnings` et 393 tests sur **macOS Apple Silicon** (plus 4 qui ne
   tournent qu'à la main : ils écrivent des images, lisent un vrai `settings.json`, touchent au
   vrai trousseau, ou créent de vraies voix et un vrai moteur audio, sans bruit) : animation, lancer et rebonds, hit-test, clics, bandeau, parole en pages, bulle
   sur plusieurs lignes, conversation, **validation du shader** par le compilateur de wgpu, lecture
@@ -567,6 +592,17 @@ Vérifié automatiquement :
   `capri chat test`, et la voix activée est celle que lit `capri voice` ;
 - le fournisseur Ollama en ligne, et la phrase qui ne promet plus qu'un modèle « cloud » de
   l'Ollama local reste sur la machine ;
+- l'API d'Anthropic, **contre un faux serveur local seulement** (aucun appel à Anthropic, avec ou
+  sans clé) : la requête (`POST /v1/messages`, `x-api-key` une seule fois et jamais dans le corps,
+  pas d'`Authorization`, `anthropic-version: 2026-10-21`, `system` à la racine, `max_tokens`, ni
+  `temperature` ni `thinking`), la conversation toujours valable (rôles fusionnés, pas de réponse
+  en tête ni en dernier, sans rien changer de ce qui part vers les autres fournisseurs) ; le flux
+  (texte des blocs `text` seulement ; réflexion, `ping` et événements inconnus ignorés ; un `error`
+  en plein flux expliqué et masqué ; un refus dit par sa phrase ; une réponse au plafond gardée,
+  ou « n'a rien répondu » si la réflexion a tout pris) ; les refus 401 (le moindre morceau de la
+  clé masqué), 403, 404, 429, 529 ; la liste des modèles page par page, avec sa clé ; sa clé ne part
+  ni vers une autre adresse ni à un autre fournisseur ; `capri chat key`, `use`, `test`, `models`,
+  la bulle et la fenêtre (rien demandé d'elle-même à `api.anthropic.com`) ;
 - Capri dans Claude Code, sans Claude Code : le style (son en-tête, `keep-coding-instructions:
   true`, sa signature reconnue dans l'en-tête seulement ; installé, mis à jour, retiré, jamais
   par-dessus un fichier qui n'est pas le nôtre, un dossier ou un lien) ; l'extraction de la ligne
@@ -605,6 +641,14 @@ fournisseur) :
   le trousseau d'essai pour `openrouter@openrouter.ai:443`, relue (« Une clé est rangée pour
   openrouter.ai:443… »), puis retirée ; elle n'apparaît ni dans le journal ni dans le dossier, et
   le trousseau d'essai est vide après. Le processus quitte de lui-même (code 0).
+
+**Vérifié sur ce Mac, pour l'API d'Anthropic** (le 11 novembre 2026, sans clé et sans contacter
+Anthropic) : la répétition des réglages (binaire de débogage, `CAPRI_SETTINGS_REHEARSAL=1`, un
+dossier, un service de trousseau et des réglages de Claude Code d'essai) se refait pour chacun des
+huit fournisseurs et pour « Aucun » sans planter ; une clé factice collée dans le vrai champ secret
+est rangée dans le trousseau d'essai pour `anthropic@api.anthropic.com:443` (« Une clé est rangée
+pour api.anthropic.com:443… »), puis retirée ; elle n'apparaît ni dans le journal ni dans le
+dossier, et le trousseau d'essai est vide après. Le processus quitte de lui-même (code 0).
 
 **Vérifié en ligne de commande sur ce Mac, pour Capri dans Claude Code** (le 10 et le 11 novembre
 2026, avec des dossiers d'essai, sans jamais lancer Claude Code) :
@@ -712,9 +756,32 @@ vérifié avant le passage à la fenêtre « Overlay » ; il n'a pas été revé
     sans retour cas par cas (voir plus bas ceux qui n'ont pas été confirmés un par un).
 
 **Pas encore vérifié** : une vraie conversation avec DeepSeek, ProxyAPI ou Ollama en ligne (ils
-passent par le même code qu'OpenRouter, mais n'ont pas été essayés) ; un vrai LM Studio ; la
+passent par le même code qu'OpenRouter, mais n'ont pas été essayés) ; rien avec le vrai service
+d'Anthropic (voir la liste plus bas) ; un vrai LM Studio ; la
 demande d'accès au trousseau quand `Capri.app` lit une clé rangée depuis le terminal. Capri dans
 une vraie session de Claude Code a été essayée dans l'ensemble (point 19), pas cas par cas.
+
+**L'API d'Anthropic : à vérifier à la main, avec ta propre clé** (rien n'a encore parlé au vrai
+service ; sur ton Mac, `Capri.app` reconstruite) :
+
+1. onglet « Cerveau », « Anthropic » : l'avertissement orange dit que la conversation part chez
+   Anthropic (api.anthropic.com:443) ; colle ta clé, « Enregistrer la clé » : « Une clé est rangée
+   pour api.anthropic.com:443 » ;
+2. « Demander la liste » : les modèles que ta clé peut utiliser arrivent (aucun nom n'est écrit
+   dans Capri), le champ de recherche les filtre ; rien n'est demandé avant d'appuyer ;
+3. un modèle choisi, « Essayer » : une vraie réponse, en français, sans Markdown, sans rien de sa
+   réflexion ; puis « Utiliser ce cerveau », et une vraie conversation dans sa bulle (⌃⌥P), sur
+   plusieurs messages, et à voix haute si sa voix est activée ; « La faire taire » la coupe ;
+4. une clé refusée (une clé révoquée, ou une clé valable dont on a changé un caractère) : le
+   message est en rouge, dit 401 et cite la raison d'Anthropic, sans le moindre morceau de la clé
+   (attention : un mot qui ressemble à un morceau de la clé, comme « -api » dans « x-api-key »,
+   peut être masqué lui aussi), et dit de la remettre ci-dessus ;
+5. si l'occasion se présente : un 429 ou un 529 dit en clair, et un refus du modèle dit par sa
+   phrase plutôt qu'un silence ;
+6. `capri chat key anthropic`, `capri chat models anthropic`, `capri chat test` au terminal :
+   mêmes résultats ;
+7. la demande d'accès au trousseau de macOS, si la clé a été rangée depuis le terminal puis lue
+   par `Capri.app`.
 
 **Effets de voix, cas pas encore confirmés un par un** (écoutés dans l'ensemble, voir le
 point 20 ; sa voix activée, depuis `Capri.app` ou `cargo run --release`) :
@@ -778,7 +845,8 @@ Points à surveiller :
    ~~les fournisseurs à clé compatibles OpenAI (OpenRouter, DeepSeek, ProxyAPI, Ollama en ligne)
    avec leurs clés dans le trousseau~~, ~~une fenêtre de réglages (macOS)~~, ~~Capri dans Claude
    Code pour qui a un abonnement (un style de sortie et le miroir)~~ (écrit, testé sans Claude
-   Code, puis essayé dans une vraie session le 11 novembre 2026), puis l'API d'Anthropic. Sa voix : ~~ses
+   Code, puis essayé dans une vraie session le 11 novembre 2026), ~~l'API d'Anthropic~~ (écrite et
+   testée contre un faux serveur local ; reste à l'essayer avec une vraie clé). Sa voix : ~~ses
    réponses dites à voix haute~~, ~~lui parler au micro~~ (reconnaissance sur la machine), ~~des
    effets de voix, la hauteur et le débit~~ (écrits, vérifiés sans bruit, puis écoutés le 11 novembre 2026),
    puis un mot d'éveil.
