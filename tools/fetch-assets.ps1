@@ -1,12 +1,32 @@
-# Récupère les images de Capri depuis le dépôt mochiiwuff/capri-desktop, à une révision figée,
-# et vérifie l'empreinte SHA-256 de chaque fichier. Voir CREDITS.md pour leur provenance.
+# Récupère les images de Capri, chacune depuis son dépôt d'origine, à une révision figée, et
+# vérifie l'empreinte SHA-256 de chaque fichier. Voir CREDITS.md pour leur provenance.
+#
+# - mochiiwuff/capri-desktop : le dessin debout, les visages, l'introduction (assets\capri\) ;
+# - lachydotmcg/capri-desktop : sa pose assise, dessinée par l'artiste de ce projet
+#   (assets\capri\perch\). PolyForm Noncommercial 1.0.0 : usage non commercial seulement.
 $ErrorActionPreference = 'Stop'
-$Repo = 'mochiiwuff/capri-desktop'
-$Commit = 'c011764ca1fdbd191925321e3aaa8af5b84babe8' # 2026-11-09
 $Dest = Join-Path (Split-Path -Parent $PSScriptRoot) 'assets\capri'
-New-Item -ItemType Directory -Force -Path $Dest | Out-Null
 
-$Files = [ordered]@{
+function Fetch($Repo, $Commit, $From, $To, $Files) {
+    New-Item -ItemType Directory -Force -Path $To | Out-Null
+    foreach ($name in $Files.Keys) {
+        $out = Join-Path $To $name
+        $hash = $Files[$name]
+        if ((Test-Path $out) -and ((Get-FileHash $out -Algorithm SHA256).Hash.ToLower() -eq $hash)) { continue }
+        $part = "$out.part"
+        Invoke-WebRequest -UseBasicParsing -Uri "https://raw.githubusercontent.com/$Repo/$Commit/$From/$name" -OutFile $part
+        $got = (Get-FileHash $part -Algorithm SHA256).Hash.ToLower()
+        if ($got -ne $hash) {
+            Remove-Item $part
+            throw "Empreinte inattendue pour $name ($got) : fichier refusé."
+        }
+        Move-Item -Force $part $out
+        Write-Host "ok  $name"
+    }
+}
+
+# 2026-11-09
+Fetch 'mochiiwuff/capri-desktop' 'c011764ca1fdbd191925321e3aaa8af5b84babe8' 'assets/capri' $Dest ([ordered]@{
     'capri-cutout.png' = 'd2b505f3a649f7ded725835d7f33dc5402d4f3c3f867f313310e394ebec9b45d'
     'capri-face.png' = '56d2546d06ec389f46ab3bce265524e8f3fd46ea7b8a666b4886984e83a0bba0'
     'capri-full.png' = '7df28bdd6a264307d3a25bafaf12c2bba308d5aecd2dc03dcc9b176109f21aeb'
@@ -31,20 +51,16 @@ $Files = [ordered]@{
     'intro-wave1.webp' = '76f6f2fa0aa71fd761f72bbdf51d1be8babcfe5d0f7b0cf796659bd500f50b73'
     'intro-wave2.webp' = 'c14cbd4a64ca2bb48c30f9a51f5bda2f7d93de2a54e65cd955c58a89652b9b1b'
     'intro-wave3.webp' = '66134c6cdd5b502ad0b52fb0f5db33901164f098b33384f222dfe4df54583ed8'
-}
+})
 
-foreach ($name in $Files.Keys) {
-    $out = Join-Path $Dest $name
-    $hash = $Files[$name]
-    if ((Test-Path $out) -and ((Get-FileHash $out -Algorithm SHA256).Hash.ToLower() -eq $hash)) { continue }
-    $part = "$out.part"
-    Invoke-WebRequest -UseBasicParsing -Uri "https://raw.githubusercontent.com/$Repo/$Commit/assets/capri/$name" -OutFile $part
-    $got = (Get-FileHash $part -Algorithm SHA256).Hash.ToLower()
-    if ($got -ne $hash) {
-        Remove-Item $part
-        throw "Empreinte inattendue pour $name ($got) : fichier refusé."
-    }
-    Move-Item -Force $part $out
-    Write-Host "ok  $name"
-}
+# 2026-11-11 ; seulement la pose assise, créditée à l'artiste du projet
+Fetch 'lachydotmcg/capri-desktop' '6f719c4269b0fa0e841587f072a1b1594eebcb91' 'assets/sprites' (Join-Path $Dest 'perch') ([ordered]@{
+    'perch.png' = '431e418dcb419d92a2893ec026493ce9fd8b6e5942b76c734e53c459ff9df66b'
+    'perch_arrive.png' = 'b9091804740d6e71a16292ecd296748e3ef5ba668f30f62c96d5f7613621abd7'
+    'perch_blink.png' = 'bb67abb8470fb0e006daba804d120d846805da55431691d05fbb95cd99800233'
+    'perch_leave.png' = '61027b971f66b966e99247283636a8545070ad7d33fa5d7cf797536d1386ab78'
+    'perch_music.png' = '358a49b783ada47453f3a64113310121a2e6379749492109f31a5c943fe0cf15'
+    'perch_talk.png' = '0f2cdeb193b805dd379d05cb8fc6a8ea1dcba1b197ad3c0731204d91862069d7'
+})
+
 Write-Host "Images prêtes dans $Dest"

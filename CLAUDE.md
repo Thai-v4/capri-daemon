@@ -27,6 +27,8 @@ micro ouvert en permanence). Sur macOS, une fenêtre de réglages
   chaîne de traitements `Effect` — réverbération, délai, distorsion, égaliseur — avec leurs
   paramètres), ramenée dans les bornes documentées par Apple (`Delivery::bounded`), et la remise
   des échantillons du système en canaux séparés (`planar`). Elle ne sait rien de Capri.
+  Et `sheets` : les planches de sa pose assise (cases, dessins tenus en deux, ligne du bord de la
+  fenêtre), mesurées sur les images.
   Et `perch` : où se poser sur les fenêtres des autres apps, d'après la description neutre qu'en
   donne `capri-platform` (`DeskWindow` : un numéro, un rectangle, ordinaire ou non, l'opacité, à
   elle ou non ; rien d'autre) : le passage du repère du système à celui de l'overlay (`DeskFrame`,
@@ -221,10 +223,15 @@ précisément quoi vérifier plutôt que de l'affirmer.
   d'interpolation (voir `capri-core/src/anim.rs`).
 - Elle tourne toute la journée : ne redessiner que quand la pose change, rester léger en CPU et
   en batterie.
-- **Ne jamais copier de code** de mochiiwuff/capri-desktop ou CyberMoonie/capri-macos (licence
-  PolyForm Noncommercial). S'inspirer des idées, réécrire.
+- **Ne jamais copier de code** de mochiiwuff/capri-desktop, CyberMoonie/capri-macos ou
+  lachydotmcg/capri-desktop (licence PolyForm Noncommercial). S'inspirer des idées, réécrire.
 - **Images** : jamais commitées (`assets/capri/` est ignoré). Elles viennent de
-  `tools/fetch-assets.sh`, qui vérifie leurs empreintes. Le code les charge au lancement.
+  `tools/fetch-assets.sh` (et `.ps1`), qui les prend dans leur dépôt d'origine à une révision
+  figée et vérifie leurs empreintes. Le code les charge au lancement. Sa pose assise
+  (`assets/capri/perch/`) vient de lachydotmcg/capri-desktop : seulement la famille « perch »
+  créditée à l'artiste du projet, jamais une image créditée à quelqu'un d'autre, et ses mentions
+  obligatoires recopiées dans `CREDITS.md`. Son chargement est tolérant : sans elles, elle se pose
+  debout.
   Dans un worktree sans images, utiliser `CAPRI_ASSETS=/chemin/vers/assets`.
 - Aucune télémétrie, rien n'envoyé sur le réseau sans action explicite de l'utilisateur. La
   fenêtre de réglages ne demande d'elle-même la liste des modèles qu'à un serveur de cette

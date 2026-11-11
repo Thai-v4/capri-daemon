@@ -1,29 +1,39 @@
 #!/usr/bin/env bash
-# Récupère les images de Capri depuis le dépôt mochiiwuff/capri-desktop, à une révision figée,
-# et vérifie l'empreinte SHA-256 de chaque fichier. Voir CREDITS.md pour leur provenance.
+# Récupère les images de Capri, chacune depuis son dépôt d'origine, à une révision figée, et
+# vérifie l'empreinte SHA-256 de chaque fichier. Voir CREDITS.md pour leur provenance.
+#
+# - mochiiwuff/capri-desktop : le dessin debout, les visages, l'introduction (assets/capri/) ;
+# - lachydotmcg/capri-desktop : sa pose assise, dessinée par l'artiste de ce projet
+#   (assets/capri/perch/). PolyForm Noncommercial 1.0.0 : usage non commercial seulement.
 set -euo pipefail
 
-REPO="mochiiwuff/capri-desktop"
-COMMIT="c011764ca1fdbd191925321e3aaa8af5b84babe8" # 2026-11-09
 DEST="$(cd "$(dirname "$0")/.." && pwd)/assets/capri"
-mkdir -p "$DEST"
 
 sha() { if command -v sha256sum >/dev/null; then sha256sum "$1"; else shasum -a 256 "$1"; fi | cut -d' ' -f1; }
 
-while read -r hash file; do
-  [ -z "$file" ] && continue
-  out="$DEST/$file"
-  if [ -f "$out" ] && [ "$(sha "$out")" = "$hash" ]; then continue; fi
-  curl -fsSL "https://raw.githubusercontent.com/$REPO/$COMMIT/assets/capri/$file" -o "$out.part"
-  got="$(sha "$out.part")"
-  if [ "$got" != "$hash" ]; then
-    rm -f "$out.part"
-    echo "Empreinte inattendue pour $file ($got) : fichier refusé." >&2
-    exit 1
-  fi
-  mv "$out.part" "$out"
-  echo "ok  $file"
-done <<'LIST'
+# fetch <dépôt> <révision> <dossier dans le dépôt> <dossier local>, la liste sur l'entrée standard
+fetch() {
+  local repo="$1" commit="$2" from="$3" dest="$4"
+  mkdir -p "$dest"
+  while read -r hash file; do
+    [ -z "$file" ] && continue
+    local out="$dest/$file"
+    if [ -f "$out" ] && [ "$(sha "$out")" = "$hash" ]; then continue; fi
+    curl -fsSL "https://raw.githubusercontent.com/$repo/$commit/$from/$file" -o "$out.part"
+    local got
+    got="$(sha "$out.part")"
+    if [ "$got" != "$hash" ]; then
+      rm -f "$out.part"
+      echo "Empreinte inattendue pour $file ($got) : fichier refusé." >&2
+      exit 1
+    fi
+    mv "$out.part" "$out"
+    echo "ok  $file"
+  done
+}
+
+# 2026-11-09
+fetch mochiiwuff/capri-desktop c011764ca1fdbd191925321e3aaa8af5b84babe8 assets/capri "$DEST" <<'LIST'
 d2b505f3a649f7ded725835d7f33dc5402d4f3c3f867f313310e394ebec9b45d  capri-cutout.png
 56d2546d06ec389f46ab3bce265524e8f3fd46ea7b8a666b4886984e83a0bba0  capri-face.png
 7df28bdd6a264307d3a25bafaf12c2bba308d5aecd2dc03dcc9b176109f21aeb  capri-full.png
@@ -49,4 +59,15 @@ c1acf8ba1312c5194fefa666ccb3fe960c9177b1f8b86d7e1e2bc6c692409c26  intro-mouth3.w
 c14cbd4a64ca2bb48c30f9a51f5bda2f7d93de2a54e65cd955c58a89652b9b1b  intro-wave2.webp
 66134c6cdd5b502ad0b52fb0f5db33901164f098b33384f222dfe4df54583ed8  intro-wave3.webp
 LIST
+
+# 2026-11-11 ; seulement la pose assise, créditée à l'artiste du projet
+fetch lachydotmcg/capri-desktop 6f719c4269b0fa0e841587f072a1b1594eebcb91 assets/sprites "$DEST/perch" <<'LIST'
+431e418dcb419d92a2893ec026493ce9fd8b6e5942b76c734e53c459ff9df66b  perch.png
+b9091804740d6e71a16292ecd296748e3ef5ba668f30f62c96d5f7613621abd7  perch_arrive.png
+bb67abb8470fb0e006daba804d120d846805da55431691d05fbb95cd99800233  perch_blink.png
+61027b971f66b966e99247283636a8545070ad7d33fa5d7cf797536d1386ab78  perch_leave.png
+358a49b783ada47453f3a64113310121a2e6379749492109f31a5c943fe0cf15  perch_music.png
+0f2cdeb193b805dd379d05cb8fc6a8ea1dcba1b197ad3c0731204d91862069d7  perch_talk.png
+LIST
+
 echo "Images prêtes dans $DEST"

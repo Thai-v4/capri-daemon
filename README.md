@@ -109,6 +109,15 @@ Limites connues :
 - une fenêtre que le système dit opaque mais qui est transparente par endroits compte comme pleine ;
 - Windows : écrit et compilé, jamais exécuté (voir plus bas) ; Linux : elle flotte comme avant.
 
+### Prêt, pas encore branché : une vraie pose assise
+
+`tools/fetch-assets.sh` télécharge aussi, dans `assets/capri/perch/`, les planches de sa pose
+assise dessinées par l'artiste du projet [Capri](https://github.com/lachydotmcg/capri-desktop)
+(jambes pendantes, clignement, parole, musique, arrivée et départ ; voir `CREDITS.md`, usage non
+commercial seulement). Leur description (cases, dessins tenus en deux, ligne du bord de la fenêtre)
+est dans `capri_core::sheets`, leur chargement dans `assets::perch::load` : sans elles, elle se pose
+debout comme aujourd'hui. **Rien ne les affiche encore.**
+
 ## Jalon 4 : lui parler
 
 **⌃⌥P** (Ctrl+Alt+P), ou « Parler à Capri » dans son menu, ouvre un champ de saisie sous ses
