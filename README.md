@@ -316,9 +316,17 @@ Limites :
 
 ### Lui parler au micro
 
-Maintiens **⌃⌥D** (Ctrl+Alt+D, comme « dicter »), parle, relâche : ce que tu as dit lui est envoyé comme si tu
-l'avais tapé. Pendant que tu parles, une bulle bleue montre ce qu'elle comprend. Le menu propose
-la même chose (« Lui parler au micro » : un clic pour commencer, un autre pour finir).
+Deux façons de lui parler avec **⌃⌥D** (Ctrl+Alt+D, comme « dicter »). Ce que tu as dit lui est
+envoyé comme si tu l'avais tapé, et une bulle bleue montre ce qu'elle comprend pendant que tu
+parles.
+
+- **un appui bref** (moins d'une demi-seconde), puis tu parles : le micro reste ouvert, et c'est
+  elle qui comprend que tu as fini et l'envoie. Tu peux aussi finir toi-même, en appuyant une
+  seconde fois : elle envoie tout de suite ce qu'elle a compris ;
+- **maintenir** la touche, parler, relâcher : comme avant, c'est le relâchement qui termine.
+
+Le menu (« Lui parler au micro ») fait comme l'appui bref : un clic pour commencer, un second pour
+finir tout de suite.
 
 ```bash
 ./tools/bundle-macos.sh                   # fabrique target/Capri.app
@@ -329,8 +337,18 @@ open target/Capri.app                     # quitte d'abord une Capri déjà lanc
 - **le son ne quitte pas ta machine** : la transcription est faite par la reconnaissance vocale
   de macOS, exigée sur l'appareil. Si le système ne sait pas transcrire le français sans passer
   par ses serveurs, Capri refuse d'écouter plutôt que d'envoyer ta voix ;
-- **le micro n'est ouvert que pendant que tu maintiens le raccourci** (le témoin orange de macOS
-  le montre), et rien n'est enregistré ;
+- **le micro ne s'ouvre que sur un geste de ta part** (le raccourci ou le menu), **et il se
+  referme toujours tout seul** (le témoin orange de macOS le montre), et rien n'est enregistré.
+  Il se ferme : quand tu relâches la touche maintenue ; quand tu appuies une seconde fois ; en
+  écoute libre, quand elle comprend que tu as fini (**1,5 s** sans nouveau texte après des mots
+  compris) ou qu'il n'y a rien à entendre (**7 s** sans un seul mot : rien n'est envoyé) ; et, dans
+  tous les cas, au bout de **55 secondes** au plus (Apple limite une reconnaissance à une minute).
+  Elle n'écoute jamais en permanence, n'a pas de mot d'éveil, et ne rouvre jamais le micro d'elle-même,
+  pas même après avoir répondu : il faut un nouveau geste ;
+- **elle ne mesure pas le son** pour détecter la fin : elle regarde quand le texte compris a cessé
+  de changer. Si tu fais de longues pauses en parlant, elle peut t'envoyer avant la fin de ta
+  phrase : maintiens alors la touche, qui ne coupe jamais sur un silence. Ce que tu dis n'est
+  jamais écrit dans le journal ;
 - **il faut la lancer depuis `Capri.app`** : macOS n'accorde le micro et la reconnaissance vocale
   qu'à une app qui dit pourquoi elle les veut. À la première écoute, il te pose les deux
   questions ; réponds, puis recommence. Lancée nue (`cargo run`), Capri garde tout le reste et dit
@@ -339,8 +357,8 @@ open target/Capri.app                     # quitte d'abord une Capri déjà lanc
   signature : après chaque reconstruction, il les redemande ;
 - quand tu commences à parler, elle se tait. Le micro met un instant à s'ouvrir : laisse passer
   une demi-seconde avant ton premier mot ;
-- pas encore de mot d'éveil, ni de détection de fin de phrase : c'est toi qui dis quand tu as
-  fini, en relâchant. macOS seulement.
+- les délais (appui bref, silence, attente d'un premier mot, durée maximale) sont des constantes
+  de `capri_chat::dictation`, pas des réglages. macOS seulement.
 
 ### Capri dans Claude Code
 
@@ -543,7 +561,7 @@ Règle : tout ce qui peut être testé sans écran va dans `capri-core`, `capri-
 
 Vérifié automatiquement :
 
-- formatage, `clippy -D warnings` et 393 tests sur **macOS Apple Silicon** (plus 4 qui ne
+- formatage, `clippy -D warnings` et 404 tests sur **macOS Apple Silicon** (plus 4 qui ne
   tournent qu'à la main : ils écrivent des images, lisent un vrai `settings.json`, touchent au
   vrai trousseau, ou créent de vraies voix et un vrai moteur audio, sans bruit) : animation, lancer et rebonds, hit-test, clics, bandeau, parole en pages, bulle
   sur plusieurs lignes, conversation, **validation du shader** par le compilateur de wgpu, lecture
@@ -579,7 +597,9 @@ Vérifié automatiquement :
   `capri voice` (mêmes noms, même fichier, chaque choix garde les autres, « Écouter » fait entendre
   ce qui est choisi) ; un changement fait dans la fenêtre pris en compte dès la phrase suivante ;
 - l'écoute, pour ce qui se teste sans micro : le déroulé d'une prise de parole (texte provisoire,
-  dernier mot attendu puis abandonné, silence, abandon) ;
+  dernier mot attendu puis abandonné, silence, abandon), et sur une horloge factice le geste bref
+  contre le geste maintenu, la fin de phrase après un silence, l'attente d'un premier mot, la
+  durée maximale pour les deux gestes ;
 - la fenêtre de réglages, sans fenêtre : son modèle seul (la destination dite dès qu'un
   fournisseur est choisi dans la liste, le champ secret jamais rempli, la clé ni dans le
   formulaire ni dans un effet affichable, liée à l'adresse affichée, jamais rangée pour une
@@ -727,6 +747,8 @@ vérifié avant le passage à la fenêtre « Overlay » ; il n'a pas été revé
 14. depuis `Capri.app`, macOS demande le micro et la reconnaissance vocale à la première écoute ;
     en maintenant ⌃⌥D, la bulle bleue montre ce qu'elle comprend, la phrase part au relâchement,
     elle se tait quand on lui coupe la parole, et un appui sans rien dire ne lui envoie rien.
+    (Le geste bref et la détection de fin de phrase sont décrits plus bas : ils n'ont jamais été
+    essayés avec une vraie voix.)
 15. la fenêtre de réglages s'ouvre devant sans figer Capri ; ⌘V colle dans ses champs et dans le
     champ ⌃⌥P ; une clé enregistrée vide son champ et n'y revient pas avec ⌘Z ; l'avertissement
     d'envoi apparaît pour un fournisseur distant ; la liste de modèles se filtre ; « Essayer » et
@@ -809,11 +831,34 @@ point 20 ; sa voix activée, depuis `Capri.app` ou `cargo run --release`) :
 11. `capri voice test` au terminal, avec un effet : on entend l'effet, et la commande attend la fin
     de la queue avant de rendre la main.
 
+**Le geste bref et la fin de phrase détectée seule : à essayer avec ta propre voix** (aucun test
+ne peut ouvrir le micro ; seule la logique de décision, sur une horloge factice, est testée) :
+
+1. un appui bref sur ⌃⌥D, puis une phrase : la bulle bleue suit ce que tu dis, et la phrase part
+   seule environ une seconde et demie après ta dernière parole ; le témoin orange s'éteint ;
+2. maintenir ⌃⌥D, parler, relâcher : exactement comme avant, et même après une longue pause
+   pendant que la touche est enfoncée, elle n'envoie pas avant le relâchement ;
+3. un appui bref puis un second appui au milieu de la phrase : elle envoie tout de suite ce qu'elle
+   a compris ;
+4. un appui bref puis rien : au bout de 7 s environ, le micro se ferme (le témoin orange s'éteint),
+   « Je n'ai rien entendu », et rien n'est envoyé ;
+5. le même geste par le menu (un clic commence, un second termine tout de suite) ;
+6. une pause naturelle au milieu d'une phrase (réfléchir une seconde) : elle ne coupe pas ; si elle
+   coupe trop souvent, ou si elle met trop de temps à envoyer, dis-le : les délais sont des
+   constantes ;
+7. parler plus d'une minute (en maintenant, puis en écoute libre) : le micro se ferme vers 55 s, ce
+   qui a été compris part, et le témoin orange s'éteint ;
+8. un appui long mais lent à relâcher, ou un appui très court ressenti comme maintenu : le seuil
+   (350 ms) tombe-t-il où tu l'attends ?
+9. après sa réponse, le micro ne se rouvre pas tout seul ;
+10. la première fois, sans permission accordée : elle dit « Autorise le micro et la dictée »,
+    puis « Appuie sur ⌃⌥D pour me parler » une fois accordées.
+
 **Capri dans Claude Code, cas plus fins pas encore regardés un par un** :
 
 1. une réponse dans un sous-agent ne la fait pas parler ; un nouveau prompt envoyé avant qu'elle
    ait parlé l'empêche de dire une ligne périmée ;
-2. pendant qu'elle répond à ce que tu lui as écrit (⌃⌥P), ou pendant que tu maintiens ⌃⌥D, une
+2. pendant qu'elle répond à ce que tu lui as écrit (⌃⌥P), ou pendant que tu lui parles au micro (⌃⌥D), une
    fin de tour de Claude Code attend : elle dit sa ligne après, pas en même temps ;
 3. « Brancher » et « Débrancher » de l'onglet, comme ceux du menu : `/hooks` montre les entrées,
    le menu et l'onglet restent d'accord, et `settings.json` redevient identique à l'octet près ;
@@ -849,7 +894,9 @@ Points à surveiller :
    testée contre un faux serveur local ; reste à l'essayer avec une vraie clé). Sa voix : ~~ses
    réponses dites à voix haute~~, ~~lui parler au micro~~ (reconnaissance sur la machine), ~~des
    effets de voix, la hauteur et le débit~~ (écrits, vérifiés sans bruit, puis écoutés le 11 novembre 2026),
-   puis un mot d'éveil.
+   ~~la fin de la phrase détectée seule~~ (écrite et testée sans micro ; reste à l'essayer avec ta
+   voix). Le mot d'éveil est écarté : il demanderait un micro ouvert en permanence, et Capri ne
+   l'ouvre que sur un geste.
 5. App signée et notarisée (`.app` / installeur), mises à jour.
 
 ## Licence

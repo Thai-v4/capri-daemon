@@ -10,7 +10,9 @@ contre un faux serveur local seulement, pas encore essayée avec une vraie clé)
 micro en place, effets de voix, hauteur et débit écrits, vérifiés sans bruit et écoutés dans
 l'ensemble ; Capri dans Claude Code (un style de sortie, et le miroir qui lui fait dire la ligne
 que Claude écrit pour elle) en place, essayé dans une vraie session le 11 novembre 2026 (dans
-l'ensemble, pas cas par cas) ; mot d'éveil à venir. Sur macOS, une fenêtre de réglages
+l'ensemble, pas cas par cas) ; elle détecte seule la fin de la phrase (un appui bref sur le
+raccourci suffit ; pas essayé avec une vraie voix) ; le mot d'éveil est écarté (il demanderait un
+micro ouvert en permanence). Sur macOS, une fenêtre de réglages
 (« Réglages… » dans son menu) règle son cerveau, sa voix et Claude Code sans terminal.
 
 ## Architecture : où va quoi
@@ -226,9 +228,18 @@ précisément quoi vérifier plutôt que de l'affirmer.
   réglage. Le relancer après tout changement de la voix :
   `cargo test -p capri-app --test voix_en_silence -- --ignored`. Ce qu'il ne prouve pas : que
   c'est agréable à entendre ; cela se vérifie à l'oreille (liste dans le README).
-- Son oreille : le micro n'est ouvert que pendant que l'utilisateur maintient le raccourci, la
+- Son oreille : le micro ne s'ouvre que sur un **geste de l'utilisateur** (le raccourci, ou le
+  menu), jamais autrement : pas d'écoute permanente, pas de mot d'éveil, pas de réouverture
+  automatique après une réponse. Il se ferme toujours tout seul : au relâchement (touche maintenue),
+  à un nouvel appui, à la fin de la phrase (écoute libre : un appui bref ou le menu ;
+  `capri_chat::dictation` la décide d'après l'arrivée des textes provisoires et une horloge passée
+  en paramètre, sans mesurer le son : plus de texte nouveau après des mots, ou rien du tout au
+  bout d'un délai),
+  ou à la **borne dure** de 55 s, sous la minute qu'Apple documente (`SFSpeechRecognizer.h`),
+  pour les deux gestes. Ces délais sont des constantes nommées, pas des réglages. La
   transcription est **exigée sur l'appareil** (`setRequiresOnDeviceRecognition(true)` : jamais
-  de repli sur un serveur), rien n'est enregistré. Capri ne demande une permission que si son
+  de repli sur un serveur), rien n'est enregistré, et ce qui se dit n'est jamais écrit dans le
+  journal. Capri ne demande une permission que si son
   `Info.plist` l'explique (`tools/macos/Info.plist`) : sinon macOS tue le processus.
 - Raccourcis globaux : une touche y est désignée par sa place, pas par sa lettre. Ne choisir que
   des lettres à la même place en AZERTY et en QWERTY (ni A, Q, W, Z, M, ni la ponctuation).
