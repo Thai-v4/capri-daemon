@@ -217,9 +217,9 @@ hasard : à la même image, le même dessin.
   repart d'elle-même ; attrapée, elle est debout tout de suite. Les deux poses sont à la même
   échelle : un pixel de ses planches debout vaut 1,11 pixel de ses planches assises
   (`STAND_OVER_PERCH`, le rapport du projet Capri, voir plus bas ce qu'en montrent les images).
-- **Sur ta musique**, assise : quand un son sort d'une autre app depuis 3 s, elle se balance, les
-  yeux fermés, une main dans les cheveux ; elle s'arrête 8 s après le dernier son. Elle entre dans
-  la musique et en sort au début d'un tour de sa boucle (jusqu'à 2,5 s plus tard), là où les deux
+- **Sur ta musique**, assise : quand Spotify ou Musique annonce une lecture, elle se balance, les
+  yeux fermés, une main dans les cheveux ; elle s'arrête dès qu'il annonce une pause ou un arrêt.
+  Elle entre dans la musique et en sort au début d'un tour de sa boucle (jusqu'à 2,5 s plus tard), là où les deux
   dessins se ressemblent le plus. Parler passe avant : elle se met à parler tout de suite, et ne
   reprend la musique qu'au tour suivant. **Debout, la musique ne change rien** : il n'y a pas de
   dessin pour cela.
@@ -228,26 +228,37 @@ hasard : à la même image, le même dessin.
   planches assises, elle se tient debout sur les fenêtres ; et sans planches debout mais avec les
   assises, son dessin d'avant debout, assise avec ses planches. Le journal le dit en une ligne.
 
-**Sur ta musique : un oui ou un non, rien d'autre.** Sur macOS, elle demande à CoreAudio quelles
-apps ont un flux de sortie en marche (`capri_platform::music`, décidé par `capri_core::music`),
-sans aucune permission et sans jamais lire le titre, l'artiste ni le nom de l'app ; le journal n'en
-dit que « se balance » ou « ne se balance plus ». Comptent : un lecteur, une vidéo, un jeu ; ne
-comptent pas : elle-même, une app d'appel qui a le micro ouvert, un son de moins de 3 secondes ;
-une pause de moins de 8 secondes entre deux morceaux ne l'arrête pas. Une app qui garde sa sortie
-ouverte sans rien jouer compte à tort, le volume coupé aussi. **Sa propre voix ne compte pas** :
-mesuré par `capri music rehearse` (version de débogage), qui fait parler une voix d'essai muette
-dans le même processus et compte les autres apps qui jouent : sa voix, sans effet comme avec, est
-attribuée à son propre processus, que l'écoute écarte ; aucune autre app de plus.
+**Sur ta musique : les annonces de Spotify et de Musique, et seulement elles.** Ces deux lecteurs
+annoncent leur état à tout le système (une notification distribuée, à chaque lecture, pause, arrêt
+ou changement de morceau). Sur macOS, Capri s'y abonne (`capri_platform::music`, décidé par
+`capri_core::music`) et n'en lit **qu'une clé**, l'état du lecteur (`Player State` : `Playing`,
+`Paused` ou `Stopped` ; toute autre valeur vaut « ne joue pas »). L'annonce transporte aussi le
+titre, l'artiste et l'album : ils ne sont jamais lus, gardés, écrits dans le journal, affichés ni
+envoyés à son cerveau. Aucune permission, aucune API privée, rien sur le réseau, et elle ne pilote
+jamais le lecteur. Le journal n'en dit que « se balance » ou « ne se balance plus », jamais le
+lecteur.
 
-L'écoute **ne tourne que quand elle sert** : elle est assise (avec ses planches), visible, et
-c'est permis. Une fois par seconde, sur un thread à elle : la première écoute d'un processus prend
-environ 70 ms (mesuré : 73 à 75 ms), elle ne doit retenir aucune image. Une écoute coûte 0,07 à
-0,2 ms en médiane quand aucun appareil audio ne tourne, 4,3 ms quand il faut interroger tous les
-clients du son (mesuré sur un MacBook Pro M5 Pro, 42 clients) ; à une écoute par seconde, au plus
-un demi-centième d'un cœur. **Le désactiver** : décoche « Se balancer sur la musique » dans son
-menu (clic droit sur elle, ou son icône). C'est retenu d'un lancement à l'autre (`music.json`,
-dans son dossier, rien d'autre que `{ "enabled": false }`) ; permis par défaut. Windows et Linux :
-elle ne sait pas si un son joue, et ne se balance pas ; la case est grisée.
+Pourquoi pas « un son sort-il ? », comme avant : Spotify garde sa sortie audio ouverte même en
+pause (mesuré : en marche 45 minutes d'affilée, musique coupée), elle se balançait donc sur une
+musique arrêtée ; et macOS n'offre aucun moyen public et sans permission de savoir si un son est
+réellement audible.
+
+**Ses limites.** Seuls **Spotify et Musique** comptent : un navigateur, une vidéo, un jeu, un
+autre lecteur ne la font pas se balancer. **Une musique déjà en cours** quand Capri démarre (ou
+quand on recoche la case) ne compte qu'à la prochaine annonce du lecteur : pause puis lecture, ou
+morceau suivant. Un lecteur qu'on quitte ou qui plante sans annoncer qu'il s'arrête : tant qu'un
+lecteur est cru en lecture, elle demande au système toutes les 5 s s'il tourne encore (par son
+identifiant, jamais une liste des apps ; 0,2 à 1 ms, mesuré), et l'oublie sinon.
+
+L'abonnement existe **tant que c'est permis**, dès le lancement, qu'elle soit assise ou non : une
+annonce ne coûte rien, et elle sait déjà ce qui joue quand elle s'assoit. Elle ne se balance
+qu'assise (avec ses planches) et visible. Aucun thread à elle : les annonces arrivent par la boucle
+du thread principal, même si l'app n'est jamais active (elle s'y abonne avec la livraison
+immédiate). **Le désactiver** : décoche « Se balancer sur la musique » dans son menu (clic droit
+sur elle, ou son icône) : elle se désabonne et oublie. C'est retenu d'un lancement à l'autre
+(`music.json`, dans son dossier, rien d'autre que `{ "enabled": false }`) ; permis par défaut.
+Windows et Linux : elle ne sait pas si de la musique joue, et ne se balance pas ; la case est
+grisée.
 
 **Ce que ça pèse.** Les planches sont lues au lancement (44 ms en version optimisée), remises en
 grilles (81 Mo), puis lâchées une fois confiées à la carte graphique. Seuls les dessins montrés y
@@ -722,7 +733,7 @@ crates/
                    ses planches (sheets.rs, sheets/stand.rs : cases, dessins tenus en deux, ligne
                    d'assise, grilles serrées des seuls dessins montrés), et son dessin (look.rs :
                    quelle case montrer, où, ce qui l'attrape, ce qu'il lui faut sur un bord),
-                   et si de la musique joue (music.rs) (testée)
+                   et si de la musique joue (music.rs : l'état annoncé par les lecteurs) (testée)
   capri-claude/    logique pure : hooks de Claude Code, protocole, sessions, settings.json, style
                    de sortie « Capri », miroir, dossiers de Capri et de Claude Code (testée)
   capri-chat/      logique pure : conversation, fournisseurs et format « chat completions », flux
@@ -752,6 +763,8 @@ crates/
     desk.rs          la liste des fenêtres des autres apps, sans permission ; macos/desk.rs
                      (CoreGraphics), windows/desk.rs (Win32 et DWM, jamais exécuté) ; en version
                      de débogage, macos/test_window.rs (la fenêtre d'essai qu'on déplace)
+    music.rs         les annonces de Spotify et de Musique, dont seul l'état est lu ;
+                     macos/music.rs (NSDistributedNotificationCenter ; refus ailleurs)
     keychain.rs      le trousseau des clés d'API ; macos/keychain.rs, windows/keychain.rs
     terminal.rs      taper une clé sans qu'elle s'affiche
     winit_overlay.rs fenêtre winit, pour Windows et les autres systèmes
@@ -776,9 +789,10 @@ crates/
                    taille (size_setup.rs pour size.json) ; ses dessins (assets.rs : lecture
                    tolérante des planches ; figure.rs : confiées à la carte graphique, masques de
                    clic, ce que look.rs décide traduit pour le rendu ; portraits.rs : des images
-                   rendues pour les regarder, essais ignorés) ; sa musique (music_view.rs : quand
-                   écouter, sur son thread ; music_setup.rs pour music.json ; en version de
-                   débogage `capri music rehearse`, music_rehearsal.rs, lancé par
+                   rendues pour les regarder, essais ignorés) ; sa musique (music_view.rs :
+                   l'abonnement aux annonces, le lecteur disparu ; music_setup.rs pour
+                   music.json ; en version de débogage `capri music rehearse` et
+                   `CAPRI_MUSIC_REHEARSAL`, music_rehearsal.rs, lancés par
                    tests/musique_sans_titre.rs)
 tools/             récupération vérifiée des images, fabrication de Capri.app (macOS)
 ```
@@ -790,11 +804,11 @@ Règle : tout ce qui peut être testé sans écran va dans `capri-core`, `capri-
 
 Vérifié automatiquement :
 
-- formatage, `clippy -D warnings` et 490 tests sur **macOS Apple Silicon** (plus 11 qui ne
+- formatage, `clippy -D warnings` et 487 tests sur **macOS Apple Silicon** (plus 12 qui ne
   tournent qu'à la main : ils écrivent des images ou dessinent sur la vraie carte graphique,
   lisent un vrai `settings.json`, touchent au vrai trousseau, créent de vraies voix et un vrai
-  moteur audio, sans bruit, lisent la vraie liste des fenêtres, ou demandent au système si un son
-  joue) : animation, lancer et rebonds, hit-test, clics, bandeau, parole en pages, bulle
+  moteur audio, sans bruit, lisent la vraie liste des fenêtres, ou guettent une annonce d'essai
+  d'un lecteur, en ligne de commande et dans la vraie app) : animation, lancer et rebonds, hit-test, clics, bandeau, parole en pages, bulle
   sur plusieurs lignes, conversation, **validation du shader** par le compilateur de wgpu, lecture
   des exemples de hooks de la documentation de Claude Code, suivi des sessions, aller-retour sur
   `settings.json`, socket (droits, connexions simultanées), et le binaire `capri-hook` lancé pour
@@ -905,10 +919,14 @@ Vérifié automatiquement :
   avant ; les vraies planches mesurées (sa largeur assise, ses masques) ; seuls les dessins montrés
   serrés dans les grilles confiées à la carte graphique, chacun intact ; « parler » d'après sa
   bulle ;
-- la musique, sans son : l'écoute une fois par seconde seulement assise, visible et permise, sur
-  son thread, oubliée dès qu'elle ne sert plus ; jamais quand c'est interdit ou que le système ne
-  sait pas ; un son court ne la fait pas se balancer ; `music.json` (permis sans fichier, retenu, un
-  fichier étrange signalé) ;
+- la musique, sans son ni lecteur : seules les trois valeurs exactes de l'état comptent, toute
+  autre (ou aucune) vaut « ne joue pas » ; une lecture compte tout de suite, une pause l'arrête
+  tout de suite, un changement de morceau la laisse jouer ; abonnée dès le lancement, assise ou
+  non, elle ne se balance qu'assise et visible ; décochée, désabonnée et l'état oublié, recochée,
+  elle ne sait rien de la musique en cours ; jamais abonnée quand c'est interdit, un seul essai
+  quand le système ne sait pas ; un lecteur cru en lecture vérifié une fois toutes les 5 s, oublié
+  s'il a disparu, plus aucune vérification sans lecture ; `music.json` (permis sans fichier,
+  retenu, un fichier étrange signalé) ;
 - `clippy -D warnings` en compilation croisée pour **Windows x64** et **Linux x64** (le code
   compile, il n'est pas exécuté).
 
@@ -924,8 +942,19 @@ Vérifié automatiquement :
   musique, l'arrivée et le départ dessin par dessin (nés d'un trait sur le bord, au même endroit
   que sa pose assise), les deux poses côte à côte (à 1,11 et à 1,20) ; et le repli : planches
   refusées par la carte graphique, ou absentes, son dessin d'avant debout comme posée ;
-- `capri music rehearse` : sa propre voix, sans effet comme avec, n'ajoute aucune autre app qui
-  joue ;
+- les annonces (`CAPRI_ASSETS=… cargo test -p capri-app --test musique_sans_titre -- --ignored
+  --test-threads=1`, le 11 novembre 2026) : `capri music rehearse` reçoit chaque annonce d'essai,
+  postée par un autre processus (lecture, pause, morceau suivant, arrêt, valeur inconnue, sans
+  état) en 20 à 25 ms, processus lancé compris, et en lit l'état ; le lecteur d'essai introuvable
+  est oublié ; Spotify, qui tourne, est bien trouvé par son identifiant. La vraie app (version de
+  débogage, lieux d'essai, `CAPRI_MUSIC_REHEARSAL`) reçoit l'annonce en moins d'une milliseconde
+  **alors qu'elle n'est pas active** ; oublie le lecteur d'essai introuvable au bout de 5,0 s ;
+  et, la livraison suspendue à la main comme AppKit le ferait, reçoit encore la sienne, quand un
+  abonnement ordinaire, lui, ne reçoit rien. Mesuré au passage : AppKit n'avait pas suspendu la
+  livraison (Capri n'ayant jamais été active, elle n'a jamais cessé de l'être) ; la livraison
+  immédiate la protège pour le jour où il le ferait. Ni la sortie ni le journal (au niveau
+  `trace`) ne contiennent les faux titre, artiste et album de l'annonce. Pas vérifié : une vraie
+  annonce de Spotify ou de Musique (voir la liste suivante) ;
 - la vraie app lancée quelques secondes avec des lieux d'essai : planches lues en 44 ms, 47 Mo de
   textures, 2,3 % d'un cœur flottante au repos ; puis avec son seul dessin d'avant
   (`CAPRI_ASSETS`) : elle démarre, le journal dit qu'elle garde son dessin d'avant, 0,4 Mo de
@@ -1306,29 +1335,47 @@ regardé en mouvement ; les images fixes, elles, l'ont été, voir plus haut) :
    l'air de la même taille ? Les images rendues `cote-a-cote.png` (à 1,11) et
    `cote-a-cote-a-1-20.png` (à 1,20) montrent les deux ; si 1,20 te paraît plus juste, c'est
    `STAND_OVER_PERCH` dans `capri_core::sheets::stand` ;
-10. **la musique** : assise, mets un morceau (Musique, Spotify, une vidéo) : au bout de 3 s environ,
-    et au début d'un tour de sa boucle (jusqu'à 2,5 s de plus), elle se balance, les yeux fermés ;
-    mets en pause : elle continue un peu, puis reprend sa boucle environ 8 s après (au début d'un
-    tour) ; une pause de quelques secondes entre deux morceaux ne l'arrête pas. Écris-lui pendant
-    la musique : elle parle tout de suite, puis reprend la musique au tour suivant. Une notification
-    (un son d'une seconde) ne la fait pas se balancer ;
-11. **sa propre voix** : sans musique, voix activée, fais-lui dire une longue réponse : elle ne se
-    balance ni pendant, ni après ;
-12. **debout, la musique ne change rien** : avec un morceau, attrape-la : debout, sa boucle
-    habituelle ; repose-la : elle se balance de nouveau quelques secondes après ;
-13. **le menu** : « Se balancer sur la musique » est coché dans les deux menus ; décoche-le : assise
-    en musique, elle reprend sa boucle au tour suivant ; quitte et relance : toujours décoché
-    (`music.json`) ; recoche-le ;
-14. **cachée** (⌃⌥C) pendant la musique : rien ne bouge ; montrée de nouveau, elle reprend sa
-    boucle, puis la musique après quelques secondes ;
-15. **le processeur et la mémoire** (Moniteur d'activité) : flottante, environ 2 % d'un cœur
+10. **Spotify, lecture puis pause** : Capri lancée, assise, mets un morceau dans Spotify : au début
+    du tour suivant de sa boucle (jusqu'à 2,5 s), elle se balance, les yeux fermés ; mets en pause :
+    elle reprend sa boucle au tour suivant ; relance la lecture : elle se balance de nouveau. Si
+    rien ne se passe, c'est que Spotify n'annonce pas ce qu'on croit (le nom de l'annonce et les
+    valeurs `Playing` / `Paused` n'ont été vus que dans son binaire, jamais reçus pour de vrai) ;
+    `capri music rehearse` (version de débogage) dit combien d'annonces de Spotify elle a reçues
+    pendant qu'elle tourne. Écris-lui pendant la musique : elle parle tout de suite, puis reprend
+    la musique au tour suivant ;
+11. **Musique, lecture puis pause** : la même chose dans l'app Musique d'Apple ;
+12. **changement de morceau** : pendant la lecture, passe au morceau suivant (bouton, ou laisse
+    finir le morceau) dans Spotify, puis dans Musique : elle continue de se balancer, sans revenir
+    à sa boucle entre les deux ;
+13. **quitter le lecteur pendant la lecture** : en musique, quitte Spotify (⌘Q) : elle reprend sa
+    boucle au plus 5 s plus tard (plus un tour) ; refais-le en forçant Spotify à quitter (Moniteur
+    d'activité) : pareil. Puis avec Musique ;
+14. **musique déjà en cours au lancement** (limite connue) : mets la musique, puis lance Capri et
+    assieds-la : elle ne se balance pas ; pause puis lecture (ou morceau suivant) : elle se balance ;
+15. **un autre son** : une vidéo dans un navigateur, un jeu, Spotify coupé : elle ne se balance pas
+    (voulu) ;
+16. **debout, la musique ne change rien** : avec un morceau, attrape-la : debout, sa boucle
+    habituelle ; repose-la : elle se balance de nouveau dès son arrivée assise finie (au début d'un
+    tour), sans attendre d'annonce ;
+17. **la case décochée** : « Se balancer sur la musique » est cochée dans les deux menus ;
+    décoche-la pendant la musique : assise, elle reprend sa boucle au tour suivant ; recoche-la, la
+    musique continuant : elle ne se balance pas avant la prochaine annonce (pause puis lecture) ;
+    quitte et relance, case décochée : toujours décochée (`music.json`), et la musique ne la fait
+    pas se balancer ; recoche-la ;
+18. **cachée** (⌃⌥C) pendant la musique : rien ne bouge ; montrée de nouveau, elle reprend la
+    musique au tour suivant ; mets en pause pendant qu'elle est cachée, puis montre-la : sa boucle ;
+19. **le processeur et la mémoire** (Moniteur d'activité) : flottante, environ 2 % d'un cœur
     (comme avant) ; assise, pareil ; en musique, pas plus ; « Mémoire » d'environ 250 Mo (contre
     200 sans ses planches) ;
-16. **le repli** : lance-la avec `CAPRI_ASSETS` vers un dossier qui n'a que
+20. **le repli** : lance-la avec `CAPRI_ASSETS` vers un dossier qui n'a que
     `capri/capri-cutout.png` : son dessin d'avant, qui bout, posée debout sur les fenêtres, sans
     bouche, et sans se balancer ;
-17. aucune demande de permission n'apparaît (ni micro, ni Enregistrement de l'écran) quand elle
-    écoute la musique, et `RUST_LOG=debug` ne dit que « se balance » ou « ne se balance plus ».
+21. aucune demande de permission n'apparaît (ni micro, ni Automatisation, ni Enregistrement de
+    l'écran) quand elle guette la musique ; `RUST_LOG=debug` ne dit que « se balance » ou « ne se
+    balance plus » (et « elle guette les annonces des lecteurs »), jamais un lecteur, un titre ni un
+    artiste ;
+22. **dans `Capri.app`** (et non le binaire seul) : les points 10 et 13 au moins, puisque les
+    essais automatiques n'ont lancé que le binaire de débogage.
 
 **Pas encore testé sur un vrai PC Windows** : il n'y a pas encore de fenêtre de réglages. Le tube
 nommé de `capri-ipc` n'y a jamais tourné, le champ de saisie et la voix n'y existent pas encore,
@@ -1362,7 +1409,9 @@ Points à surveiller :
    Windows : Win32) : écrit et testé sans écran ; se poser vu sur un vrai Mac le 11 novembre 2026,
    puis le suivi rendu fluide (à la cadence de l'écran, mesuré sans écran) ; ~~les dessins de
    l'artiste du projet Capri, debout et assise~~, ~~se balancer sur ta musique~~ (écrits, testés
-   sans écran, images fixes rendues et regardées ; pas encore regardés en mouvement) ; reste à
+   sans écran, images fixes rendues et regardées ; pas encore regardés en mouvement ; la musique
+   reconnue par les annonces de Spotify et de Musique, reçues dans la vraie app pour une annonce
+   d'essai, jamais encore pour une vraie) ; reste à
    regarder le reste sur un vrai Mac, et à l'exécuter sur un vrai PC Windows.
 4. Le chat avec un modèle d'IA : ~~la saisie et la bulle~~, ~~un modèle local par Ollama~~,
    ~~les fournisseurs à clé compatibles OpenAI (OpenRouter, DeepSeek, ProxyAPI, Ollama en ligne)

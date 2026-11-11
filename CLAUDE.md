@@ -53,6 +53,12 @@ micro ouvert en permanence). Sur macOS, une fenêtre de réglages
   (`Watch`, en images), d'après ce qu'il lui faut autour du point posé (`Stature` : sa hauteur
   debout, la place qu'elle occupe, le morceau de bord qui la porte). Le corps (`body`) a la
   posture `Perched` et ses deux gestes, ancrés à ses pieds (`AlphaMask::feet`).
+  Et `music` : de la musique joue-t-elle, d'après l'état que les lecteurs connus ont annoncé
+  (`PlayerState`, lu de la seule valeur de `STATE_KEY` : trois valeurs exactes, tout le reste vaut
+  « ne joue pas ») ; sans délai (une lecture compte tout de suite, une pause l'arrête tout de
+  suite ; `look` ne prend et ne quitte la musique qu'au début d'un tour, ce qui suffit contre le
+  clignotement) ; et quand vérifier qu'un lecteur cru en lecture tourne encore (`Alive`, toutes
+  les `ALIVE_EVERY`, horloge passée en paramètre). Il ne sait pas de quel lecteur il s'agit.
 - `capri-claude` : tout ce que Capri sait de Claude Code, lui aussi **sans dépendance système** :
   lecture de l'entrée des hooks, protocole, suivi des sessions, édition de `settings.json` de
   texte à texte, le style de sortie « Capri » (`style` : son texte, la signature qui reconnaît le
@@ -143,9 +149,17 @@ micro ouvert en permanence). Sur macOS, une fenêtre de réglages
   `CFRetained` ; `windows/desk.rs` : `EnumWindows` et DWM, jamais exécuté ; ailleurs : refus), rendue
   sous la forme neutre de `capri_core::perch::DeskWindow`, dans le repère du système ;
   `Overlay::desk_frame` dit où est l'overlay dans ce repère.
-  Si un son sort d'une autre app aussi (`music.rs` ; `macos/music.rs` : deux fonctions de
-  CoreAudio déclarées à la main d'après `AudioHardware.h` ; ailleurs : refus), décidé par
-  `capri_core::music` (horloge passée en paramètre).
+  Le guetteur des annonces des lecteurs de musique connus aussi (`music.rs` : `Announcements`,
+  les constantes `SPOTIFY`, `MUSIC` et `KNOWN` ; `macos/music.rs` :
+  `NSDistributedNotificationCenter`, abonné avec `NSNotificationSuspensionBehaviorDeliverImmediately`
+  par un observateur déclaré (`define_class!`, sélecteur `announced:`), qui ne vit que sur le
+  thread principal, où l'en-tête dit que les annonces arrivent, et que `Drop` désabonne avant de
+  le lâcher, le centre ne le retenant pas ; `+[NSRunningApplication
+  runningApplicationsWithBundleIdentifier:]` pour un lecteur disparu ; ailleurs : refus,
+  `MusicError::Unavailable`), rendu sous la forme neutre de `capri_core::music::PlayerState`. En
+  version de débogage seulement : le lecteur d'essai (`Player::Rehearsal`, nom et identifiant
+  donnés par l'appelant), l'abonnement ordinaire pour comparer, le poste d'une annonce d'essai,
+  la suspension à la main.
 - `capri-app` : assemble le tout. Pas d'appel système direct ici (sauf menus via `tray-icon`).
   La fenêtre passe toujours par `capri_platform::Overlay`, jamais par `winit::window::Window`.
   Les clés passent par `keys` (le trait `KeyStore` : le trousseau du système, ou un trousseau en
@@ -176,9 +190,14 @@ micro ouvert en permanence). Sur macOS, une fenêtre de réglages
   `portraits` (essais ignorés) rend de vraies images de chaque pose par ce même code, pour les
   regarder : à relancer après tout changement de ce qui se voit,
   `CAPRI_PORTRAITS_DIR=… cargo test --release -p capri-app portraits -- --ignored`.
-  `music_view` décide quand écouter si un son joue (sur son thread « capri-musique ») et ce
-  qu'elle en conclut ; `music_setup` lit et écrit `music.json` (la case « Se balancer sur la
-  musique » de son menu). `music_rehearsal` est `capri music rehearse` (version de débogage).
+  `music_view` tient l'abonnement aux annonces tant que la case est cochée (dès le lancement,
+  assise ou non ; sur le thread principal, aucun thread à elle), vérifie qu'un lecteur cru en
+  lecture tourne encore et dit si elle se balance ; `music_setup` lit et écrit `music.json` (la
+  case « Se balancer sur la musique » de son menu). `music_rehearsal` (version de débogage
+  seulement) est `capri music rehearse` (une annonce d'essai, postée par un autre processus,
+  `capri music announce`, reçue et son état lu) et `CAPRI_MUSIC_REHEARSAL=1` au lancement de la
+  vraie app (reçue alors que l'app n'est pas active, et livraison suspendue à la main), lancés
+  par le test ignoré `musique_sans_titre`.
 
 ## La fenêtre de réglages : ajouter une rubrique
 
@@ -299,17 +318,40 @@ précisément quoi vérifier plutôt que de l'affirmer.
   réglage. Le relancer après tout changement de la voix :
   `cargo test -p capri-app --test voix_en_silence -- --ignored`. Ce qu'il ne prouve pas : que
   c'est agréable à entendre ; cela se vérifie à l'oreille (liste dans le README).
-- La musique : savoir si un son joue, c'est **un oui ou un non, rien d'autre**. Jamais le titre,
-  l'artiste, l'album ni le nom de l'app : ni lus (pas de `kAudioProcessPropertyBundleID`, pas de
-  notification de lecteur qui les transporte), ni gardés, ni écrits dans le journal, ni affichés,
-  ni envoyés à son cerveau. **Aucune permission** (ni AppleScript, ni Automatisation, ni capture
-  du son) et **aucune API privée** (pas de MediaRemote). Rien ne part sur le réseau. L'écoute ne
-  tourne que **quand elle sert** : assise (avec ses planches), visible, et permise par la case de
-  son menu (`music.json`) ; une fois par seconde, sur son propre thread (la première écoute d'un
-  processus prend environ 70 ms : jamais sur le chemin d'une image) ; oubliée dès qu'elle ne sert
-  plus. Sa propre voix ne compte pas (mesuré : le système l'attribue à son processus, que
-  l'écoute écarte) ; à revérifier après tout changement de la voix ou de l'écoute avec
-  `capri music rehearse`, qui le compte sans un bruit. Debout, la musique ne change rien.
+- La musique : elle sait que de la musique joue par **les annonces des lecteurs connus, et
+  seulement par elles** : Spotify (`com.spotify.client.PlaybackStateChanged`) et Musique
+  (`com.apple.Music.playerInfo`), deux notifications distribuées. Tout autre son (navigateur,
+  vidéo, jeu) ne la fait pas se balancer. (L'écoute de CoreAudio a été retirée : Spotify garde sa
+  sortie audio ouverte en pause, mesuré 45 minutes d'affilée ; et macOS n'offre aucun moyen public
+  et sans permission de savoir si un son est réellement audible.) La règle d'avant (« un oui ou un
+  non, rien d'autre ») est **assouplie sur deux points, et seulement ceux-là**, par décision de
+  l'utilisateur :
+  1. l'annonce reçue **transporte** aussi le titre, l'artiste, l'album et d'autres champs, dans
+     le même dictionnaire. Capri n'en lit **que la clé `Player State`** (`capri_core::music::STATE_KEY`),
+     par `objectForKey:` : jamais d'itération du dictionnaire, jamais de `Debug`, de
+     `description` ni d'impression de la notification ou de son `userInfo`. Le reste n'est ni lu,
+     ni gardé, ni écrit dans le journal, ni affiché, ni envoyé à son cerveau. Toute valeur autre
+     que `Playing`, `Paused`, `Stopped` (ou absente, ou pas une chaîne) vaut « ne joue pas » ;
+  2. son code **nomme ces deux apps**, en constantes (`capri_platform::music::SPOTIFY`, `MUSIC` :
+     le nom de l'annonce et l'identifiant de bundle, vérifiés dans leur binaire et leur
+     `Info.plist`, pas de mémoire). Un lecteur cru en lecture est vérifié toutes les
+     `ALIVE_EVERY` par `runningApplicationsWithBundleIdentifier:` avec **notre** constante, et
+     seul le nombre d'apps rendues compte : jamais une liste des apps, jamais le nom d'une autre.
+  Tout le reste tient : **aucune permission** (ni AppleScript, ni Automatisation, ni capture du
+  son), **aucune API privée** (pas de MediaRemote), rien ne part sur le réseau, rien n'est envoyé
+  à son cerveau ; Capri **ne pilote jamais** un lecteur (ni lecture, ni pause, ni touche
+  multimédia) et ne poste jamais l'annonce d'un vrai lecteur, même en essai. Le journal ne dit des
+  annonces que ce qu'elle en conclut (« se balance », « ne se balance plus ») et qu'elle s'abonne
+  ou se désabonne : jamais le lecteur, ni rien de l'annonce. L'abonnement existe tant que la
+  case de son menu est cochée (`music.json`), dès le lancement, assise ou non ; décochée,
+  désabonnée et l'état oublié. Elle ne se balance qu'assise (avec ses planches) et visible ;
+  debout, la musique ne change rien. Limite connue : une musique déjà en cours quand elle s'abonne
+  ne compte qu'à la prochaine annonce du lecteur. Le lecteur d'essai, ses noms et le poste
+  d'annonces n'existent qu'en version de débogage ; un nom d'annonce d'essai est propre au
+  processus qui guette. À revérifier après tout changement du guetteur :
+  `CAPRI_ASSETS=… cargo test -p capri-app --test musique_sans_titre -- --ignored --test-threads=1`
+  (la répétition et la vraie app : reçue, état lu, jamais un faux titre, artiste ni album dans la
+  sortie ou le journal au niveau `trace`).
 - Son oreille : le micro ne s'ouvre que sur un **geste de l'utilisateur** (le raccourci, ou le
   menu), jamais autrement : pas d'écoute permanente, pas de mot d'éveil, pas de réouverture
   automatique après une réponse. Il se ferme toujours tout seul : au relâchement (touche maintenue),
