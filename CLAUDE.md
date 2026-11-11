@@ -124,6 +124,9 @@ micro ouvert en permanence). Sur macOS, une fenêtre de réglages
   `CFRetained` ; `windows/desk.rs` : `EnumWindows` et DWM, jamais exécuté ; ailleurs : refus), rendue
   sous la forme neutre de `capri_core::perch::DeskWindow`, dans le repère du système ;
   `Overlay::desk_frame` dit où est l'overlay dans ce repère.
+  Si un son sort d'une autre app aussi (`music.rs` ; `macos/music.rs` : deux fonctions de
+  CoreAudio déclarées à la main d'après `AudioHardware.h` ; ailleurs : refus), décidé par
+  `capri_core::music` (horloge passée en paramètre).
 - `capri-app` : assemble le tout. Pas d'appel système direct ici (sauf menus via `tray-icon`).
   La fenêtre passe toujours par `capri_platform::Overlay`, jamais par `winit::window::Window`.
   Les clés passent par `keys` (le trait `KeyStore` : le trousseau du système, ou un trousseau en
@@ -252,6 +255,11 @@ précisément quoi vérifier plutôt que de l'affirmer.
   réglage. Le relancer après tout changement de la voix :
   `cargo test -p capri-app --test voix_en_silence -- --ignored`. Ce qu'il ne prouve pas : que
   c'est agréable à entendre ; cela se vérifie à l'oreille (liste dans le README).
+- La musique : savoir si un son joue, c'est **un oui ou un non, rien d'autre**. Jamais le titre,
+  l'artiste, l'album ni le nom de l'app : ni lus (pas de `kAudioProcessPropertyBundleID`, pas de
+  notification de lecteur qui les transporte), ni gardés, ni écrits dans le journal, ni affichés,
+  ni envoyés à son cerveau. **Aucune permission** (ni AppleScript, ni Automatisation, ni capture
+  du son) et **aucune API privée** (pas de MediaRemote). Rien ne part sur le réseau.
 - Son oreille : le micro ne s'ouvre que sur un **geste de l'utilisateur** (le raccourci, ou le
   menu), jamais autrement : pas d'écoute permanente, pas de mot d'éveil, pas de réouverture
   automatique après une réponse. Il se ferme toujours tout seul : au relâchement (touche maintenue),

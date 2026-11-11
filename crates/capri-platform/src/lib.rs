@@ -14,7 +14,8 @@
 //! - ailleurs (`winit_overlay.rs`) : une fenêtre winit, réglée par `windows.rs` ou `other.rs`.
 //!
 //! C'est encore ici qu'est lue la liste des fenêtres des autres apps ([`desk`] : numéros et
-//! rectangles seulement, sans aucune permission), pour qu'elle s'assoie dessus.
+//! rectangles seulement, sans aucune permission), pour qu'elle s'assoie dessus ; et si un son
+//! sort d'une autre app ([`music`] : un oui ou un non, sans permission, sans titre ni nom d'app).
 //!
 //! C'est aussi ici que vivent sa voix ([`Voice`], la synthèse vocale du système), son oreille
 //! ([`Ear`], le micro et la reconnaissance vocale sur l'appareil), le trousseau où sont rangées
@@ -29,6 +30,7 @@ use winit::event_loop::{ActiveEventLoop, EventLoopBuilder};
 pub mod desk;
 mod ear;
 pub mod keychain;
+pub mod music;
 pub mod settings_window;
 pub mod terminal;
 mod voice;

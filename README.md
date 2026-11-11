@@ -118,6 +118,18 @@ commercial seulement). Leur description (cases, dessins tenus en deux, ligne du 
 est dans `capri_core::sheets`, leur chargement dans `assets::perch::load` : sans elles, elle se pose
 debout comme aujourd'hui. **Rien ne les affiche encore.**
 
+De même, sur macOS, elle sait déjà dire si **un son sort d'une autre app** (`capri_platform::music`,
+décidé par `capri_core::music`), pour se balancer quand tu mets de la musique : **un oui ou un non,
+rien d'autre**. Elle demande à CoreAudio quelles apps ont un flux de sortie en marche, sans aucune
+permission et sans jamais lire le titre, l'artiste ni le nom de l'app. Comptent : un lecteur, une
+vidéo, un jeu ; ne comptent pas : elle-même, une app d'appel qui a le micro ouvert, un son de moins
+de 3 secondes ; une pause de moins de 8 secondes entre deux morceaux ne l'arrête pas. Une app qui
+garde sa sortie ouverte sans rien jouer compte à tort, le volume coupé aussi. Une écoute coûte
+0,07 à 0,2 ms en médiane quand aucun appareil audio ne tourne, 4,3 ms quand il faut interroger tous
+les clients du son (mesuré sur un MacBook Pro M5 Pro, 42 clients) ; à une écoute par seconde, au
+plus un demi-centième d'un cœur.
+Windows et Linux : elle ne sait pas. **Pas encore branché** non plus.
+
 ## Jalon 4 : lui parler
 
 **⌃⌥P** (Ctrl+Alt+P), ou « Parler à Capri » dans son menu, ouvre un champ de saisie sous ses

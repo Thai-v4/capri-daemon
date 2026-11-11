@@ -10,7 +10,8 @@
 //! sans rien savoir du système : `capri-chat` la compose, la voix de `capri-platform` l'applique.
 //! [`perch`] décide où elle se pose sur les fenêtres des autres apps, d'après leurs seuls
 //! rectangles, que la liste des fenêtres de `capri-platform` lui décrit. [`sheets`] décrit les
-//! planches de sa pose assise (cases, dessins, où passe le bord de la fenêtre).
+//! planches de sa pose assise (cases, dessins, où passe le bord de la fenêtre). [`music`] décide,
+//! d'après une suite d'écoutes oui/non, si de la musique joue.
 
 pub mod anim;
 pub mod banner;
@@ -19,6 +20,7 @@ pub mod form;
 pub mod geom;
 pub mod input;
 pub mod mask;
+pub mod music;
 pub mod perch;
 pub mod sheets;
 pub mod sound;

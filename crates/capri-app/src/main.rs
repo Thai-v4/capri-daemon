@@ -29,6 +29,8 @@ mod keys;
 #[cfg(any(target_os = "macos", windows))]
 mod menu;
 #[cfg(debug_assertions)]
+mod music_rehearsal;
+#[cfg(debug_assertions)]
 mod perch_rehearsal;
 mod perch_setup;
 mod perch_view;
@@ -73,6 +75,9 @@ fn main() -> Result<()> {
         // en version de débogage : la vraie liste des fenêtres, sans rien afficher
         #[cfg(debug_assertions)]
         Some("perch") => std::process::exit(perch_rehearsal::run_cli(&args[1..])),
+        // en version de débogage : un son joue-t-il ? (oui ou non, sans rien jouer)
+        #[cfg(debug_assertions)]
+        Some("music") => std::process::exit(music_rehearsal::run_cli(&args[1..])),
         Some(_) => {
             eprintln!(
                 "usage : capri                  lancer Capri\n\
