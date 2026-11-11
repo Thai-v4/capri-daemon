@@ -161,4 +161,24 @@ impl Watch {
         heard.playing = found.is_some();
         Ok(heard)
     }
+
+    /// Pour les essais : combien d'autres clients jouent (sortie en marche, micro fermé), et si
+    /// ce processus-ci a lui-même une sortie en marche. Rien d'autre n'est lu.
+    #[cfg(debug_assertions)]
+    pub fn count(&mut self) -> Result<super::Playing, MusicError> {
+        let clients = objects(SYSTEM, CLIENTS).ok_or(MusicError::Refused)?;
+        let me = std::process::id();
+        let mut playing = super::Playing::default();
+        for client in clients {
+            if word(client, RUNNING_OUTPUT) != Some(1) {
+                continue;
+            }
+            match word(client, PID) {
+                Some(pid) if pid == me => playing.ours = true,
+                Some(_) if word(client, RUNNING_INPUT) != Some(1) => playing.others += 1,
+                _ => {}
+            }
+        }
+        Ok(playing)
+    }
 }

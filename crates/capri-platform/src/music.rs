@@ -32,7 +32,21 @@ mod imp {
         pub fn listen(&mut self, _thoroughly: bool) -> Result<Heard, MusicError> {
             Err(MusicError::Unavailable)
         }
+
+        #[cfg(debug_assertions)]
+        pub fn count(&mut self) -> Result<super::Playing, MusicError> {
+            Err(MusicError::Unavailable)
+        }
     }
+}
+
+/// Pour les essais : combien d'autres apps jouent, et si Capri elle-même sort du son. Deux
+/// nombres, rien d'autre.
+#[cfg(debug_assertions)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Playing {
+    pub others: usize,
+    pub ours: bool,
 }
 
 /// Ce système sait-il dire si un son joue ?
@@ -84,5 +98,12 @@ impl SoundWatch {
     #[cfg(debug_assertions)]
     pub fn listen_thoroughly(&mut self) -> Result<Heard, MusicError> {
         self.inner.listen(true)
+    }
+
+    /// En version de débogage, pour savoir si sa propre voix compterait : combien d'autres
+    /// clients jouent, et si ce processus sort du son.
+    #[cfg(debug_assertions)]
+    pub fn count(&mut self) -> Result<Playing, MusicError> {
+        self.inner.count()
     }
 }

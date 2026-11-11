@@ -32,6 +32,8 @@ mod keys;
 mod menu;
 #[cfg(debug_assertions)]
 mod music_rehearsal;
+mod music_setup;
+mod music_view;
 #[cfg(debug_assertions)]
 mod perch_rehearsal;
 mod perch_setup;
@@ -212,6 +214,8 @@ struct Running {
     banner: BannerView,
     /// S'asseoir sur les fenêtres : quand lire leur liste, et ce qu'elle en fait.
     perch: perch_view::PerchView,
+    /// Se balancer sur la musique, assise : quand écouter, et ce qu'elle en conclut.
+    music: music_view::MusicView,
     /// Image d'animation courante.
     frame: u64,
     /// Ce qui est à l'écran : son dessin et, s'il est là, son bandeau.
@@ -261,6 +265,7 @@ impl ApplicationHandler for App {
         if let Some(r) = self.running.as_mut() {
             if self.hidden {
                 r.banner.listen_only();
+                r.music.tick(Instant::now(), false); // cachée, elle n'écoute pas
             } else if r.step_due() {
                 r.tick();
             }
@@ -319,6 +324,11 @@ impl App {
             log::warn!("réglage « S'asseoir sur les fenêtres » illisible, elle s'y assoit : {err:#}");
             true
         });
+        let music_enabled = brain_setup::config_dir().and_then(|directory| music_setup::load(&directory));
+        let music_enabled = music_enabled.unwrap_or_else(|err| {
+            log::warn!("réglage « Se balancer sur la musique » illisible, elle s'y balance : {err:#}");
+            true
+        });
 
         overlay.set_click_through(true);
         overlay.set_shown(true);
@@ -332,6 +342,7 @@ impl App {
             self.refresh_voice_menu();
             if let Some(menus) = &self.menus {
                 menus.set_perch_enabled(perch_enabled);
+                menus.set_music_enabled(music_enabled);
                 menus.set_size(scale);
             }
         }
@@ -363,6 +374,7 @@ impl App {
             click_through: true,
             banner: BannerView::new(),
             perch: perch_view::PerchView::new(perch_enabled),
+            music: music_view::MusicView::new(music_enabled),
             frame: 0,
             drawn: None,
             refresh,
@@ -490,6 +502,7 @@ impl App {
                     menu::Action::ToggleVoice => self.toggle_voice(),
                     menu::Action::ToggleVisible => self.toggle_hidden(),
                     menu::Action::TogglePerch => self.toggle_perch(),
+                    menu::Action::ToggleMusic => self.toggle_music(),
                     menu::Action::Larger => self.choose_size(Scale::larger),
                     menu::Action::Smaller => self.choose_size(Scale::smaller),
                     menu::Action::OriginalSize => self.choose_size(|_| Scale::ORIGINAL),
@@ -764,6 +777,35 @@ impl App {
         }
     }
 
+    /// Lui permet de se balancer sur la musique, assise, ou le lui interdit ; le choix est retenu
+    /// dans son dossier. Si on ne peut pas le retenir, rien ne change.
+    #[cfg(any(target_os = "macos", windows))]
+    fn toggle_music(&mut self) {
+        let Some(r) = self.running.as_mut() else { return };
+        let enabled = !r.music.is_enabled();
+        match brain_setup::config_dir().and_then(|directory| music_setup::save(&directory, enabled)) {
+            Ok(_) => {
+                r.music.set_enabled(enabled);
+                let text = if enabled {
+                    "Assise, je me balancerai quand tu mets de la musique"
+                } else {
+                    "Je ne me balance plus sur ta musique"
+                };
+                r.banner.notify(text, capri_claude::Tone::Done);
+            }
+            Err(err) => {
+                log::error!("réglage « Se balancer sur la musique » : {err:#}");
+                r.banner.notify(
+                    "Je n'ai pas pu retenir ce choix, détails dans le journal",
+                    capri_claude::Tone::Failed,
+                );
+            }
+        }
+        if let Some(menus) = &self.menus {
+            menus.set_music_enabled(r.music.is_enabled());
+        }
+    }
+
     /// Sa taille, choisie dans son menu : appliquée tout de suite, et retenue dans son dossier.
     #[cfg(any(target_os = "macos", windows))]
     fn choose_size(&mut self, choose: impl FnOnce(Scale) -> Scale) {
@@ -916,7 +958,8 @@ impl Running {
         let stature = self.figure.look.stature();
         self.perch.tick(&mut self.capri, &self.overlay, seconds, period, stature);
         let talking = self.banner.is_talking();
-        self.figure.look.update(&self.capri, self.frame, talking, false);
+        let music = self.music.tick(now, self.figure.look.wants_music(&self.capri));
+        self.figure.look.update(&self.capri, self.frame, talking, music);
 
         // La souris traverse la fenêtre partout, sauf sur elle ou tant qu'on la tient.
         let over = self.cursor.is_some_and(|c| self.is_over(c));

@@ -79,6 +79,8 @@ fn run() -> i32 {
         std::thread::sleep(EVERY.saturating_sub(now.elapsed()));
     }
 
+    own_voice(&mut watch);
+
     // le coût : une écoute ordinaire, puis le pire cas (tous les clients interrogés)
     for (what, thoroughly) in [("écoutes ordinaires", false), ("écoutes de tous les clients", true)] {
         let mut times = Vec::with_capacity(READS);
@@ -112,6 +114,61 @@ fn run() -> i32 {
     } else {
         println!("{failed} écoute(s) en échec");
         1
+    }
+}
+
+/// Sa propre voix compte-t-elle comme « un son d'une autre app » ? Dans ce processus, une voix
+/// d'essai muette (les vrais chemins jusqu'à la sortie du Mac, à volume nul) dit une phrase, sans
+/// effet puis avec, pendant qu'elle compte les autres apps qui jouent et regarde si ce processus
+/// sort du son ; puis elle compte encore après. Si une autre app joue déjà, c'est le nombre qui
+/// dit si sa voix s'y ajoute. N'imprime que des oui, des non et des nombres.
+fn own_voice(watch: &mut SoundWatch) {
+    use capri_chat::voice::{VoiceEffect, VoiceSettings, delivery};
+    use capri_platform::{Rehearsal, Voice};
+
+    const SENTENCE: &str =
+        "Une phrase assez longue pour avoir le temps d'écouter plusieurs fois pendant qu'elle la dit.";
+    let count = |watch: &mut SoundWatch| watch.count().unwrap_or_default();
+    let before = count(watch);
+    println!(
+        "sa voix : avant qu'elle parle, {} autres clients jouent ; ce processus sort du son : {}",
+        before.others,
+        yes(before.ours)
+    );
+    for (path, effect) in [("directe", VoiceEffect::Natural), ("traitée", VoiceEffect::Construct)] {
+        let Some(voice) = Voice::rehearsal(Rehearsal::Silent) else {
+            println!("sa voix : pas de voix sur ce système");
+            return;
+        };
+        voice.say(SENTENCE, &delivery(&VoiceSettings { effect, ..VoiceSettings::default() }, None));
+        let (mut during, mut more, mut ours) = (0, 0, 0);
+        let started = Instant::now();
+        while voice.is_speaking() && started.elapsed() < Duration::from_secs(20) {
+            voice.run_for(Duration::from_millis(300));
+            let now = count(watch);
+            during += 1;
+            more += usize::from(now.others > before.others);
+            ours += usize::from(now.ours);
+        }
+        // après sa dernière syllabe : combien de temps une autre app, ou ce processus, joue encore
+        let (mut others_after, mut ours_after) = (0, 0);
+        for step in 1..=12 {
+            voice.run_for(Duration::from_millis(250));
+            let now = count(watch);
+            if now.others > before.others {
+                others_after = step * 250;
+            }
+            if now.ours {
+                ours_after = step * 250;
+            }
+        }
+        println!(
+            "sa voix ({path}) : {during} écoutes pendant qu'elle parle ; une autre app de plus joue : {} ({more}) ; \
+             ce processus sort du son : {} ({ours}) ; après : une autre app de plus encore {others_after} ms, \
+             ce processus encore {ours_after} ms",
+            yes(more > 0),
+            yes(ours > 0)
+        );
     }
 }
 

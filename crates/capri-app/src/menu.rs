@@ -23,6 +23,8 @@ pub enum Action {
     ToggleVisible,
     /// Lui permettre de s'asseoir sur les fenêtres, ou le lui interdire.
     TogglePerch,
+    /// Lui permettre de se balancer sur la musique, assise, ou le lui interdire.
+    ToggleMusic,
     /// Sa taille : un cran au-dessus, un cran en dessous, ou celle d'origine.
     Larger,
     Smaller,
@@ -45,6 +47,8 @@ pub struct Menus {
     voices: Vec<MenuItem>,
     /// La case « S'asseoir sur les fenêtres », dans les deux menus.
     perches: Vec<CheckMenuItem>,
+    /// La case « Se balancer sur la musique », dans les deux menus.
+    musics: Vec<CheckMenuItem>,
     /// Le sous-menu « Taille », dans les deux menus : son titre dit la taille du moment.
     sizes: Vec<Submenu>,
     larger: Vec<MenuItem>,
@@ -56,6 +60,7 @@ struct Built {
     menu: Menu,
     items: Vec<(Action, MenuItem)>,
     perch: CheckMenuItem,
+    music: CheckMenuItem,
     size: Submenu,
 }
 
@@ -72,6 +77,7 @@ impl Menus {
         let tray =
             builder.build().inspect_err(|err| log::warn!("pas d'icône de barre des menus : {err}")).ok();
         let perches = vec![a.perch, b.perch];
+        let musics = vec![a.music, b.music];
         let sizes = vec![a.size, b.size];
         let items: Vec<(Action, MenuItem)> = a.items.into_iter().chain(b.items).collect();
         let items_for = |wanted: Action| -> Vec<MenuItem> {
@@ -84,11 +90,13 @@ impl Menus {
                 .iter()
                 .map(|(action, item)| (item.id().clone(), *action))
                 .chain(perches.iter().map(|item| (item.id().clone(), Action::TogglePerch)))
+                .chain(musics.iter().map(|item| (item.id().clone(), Action::ToggleMusic)))
                 .collect(),
             toggles: items_for(Action::ToggleVisible),
             hooks: items_for(Action::ToggleClaudeHook),
             voices: items_for(Action::ToggleVoice),
             perches,
+            musics,
             sizes,
             larger: items_for(Action::Larger),
             smaller: items_for(Action::Smaller),
@@ -139,6 +147,15 @@ impl Menus {
         }
     }
 
+    /// Se balance-t-elle sur la musique ? Coche ou décoche la case des deux menus. Là où elle ne
+    /// sait pas si un son joue (ailleurs que sur macOS), la case est grisée.
+    pub fn set_music_enabled(&self, enabled: bool) {
+        for item in &self.musics {
+            item.set_checked(enabled);
+            item.set_enabled(capri_platform::music::AVAILABLE);
+        }
+    }
+
     /// `Some(true)` : le hook de Claude Code est branché ; `None` : impossible de le savoir.
     pub fn set_hook_installed(&self, installed: Option<bool>) {
         for item in &self.hooks {
@@ -183,6 +200,7 @@ fn build_menu() -> Built {
     let shortcut = Accelerator::new(Modifiers::CONTROL | Modifiers::ALT, Code::KeyC);
     let toggle = MenuItem::new("Cacher Capri", true, Some(shortcut));
     let perch = CheckMenuItem::new("S'asseoir sur les fenêtres", true, true, None);
+    let music = CheckMenuItem::new("Se balancer sur la musique", true, true, None);
     let larger = MenuItem::new("Plus grande", true, None);
     let smaller = MenuItem::new("Plus petite", true, None);
     let original = MenuItem::new("Taille d'origine", true, None);
@@ -197,8 +215,8 @@ fn build_menu() -> Built {
     let separator = PredefinedMenuItem::separator;
     let (first, second, third) = (separator(), separator(), separator());
     if let Err(err) = menu.append_items(&[
-        &title, &first, &talk, &listen, &hush, &forget, &voice, &second, &toggle, &perch, &size, &hook,
-        &settings, &third, &quit,
+        &title, &first, &talk, &listen, &hush, &forget, &voice, &second, &toggle, &perch, &music, &size,
+        &hook, &settings, &third, &quit,
     ]) {
         log::warn!("menu incomplet : {err}");
     }
@@ -216,7 +234,7 @@ fn build_menu() -> Built {
         (Action::Settings, settings),
         (Action::Quit, quit),
     ];
-    Built { menu, items, perch, size }
+    Built { menu, items, perch, music, size }
 }
 
 /// « Taille : 80 % ».
