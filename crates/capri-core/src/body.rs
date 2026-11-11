@@ -7,6 +7,7 @@ use std::collections::VecDeque;
 
 use crate::anim::Sheet;
 use crate::geom::{Rect, Vec2};
+use crate::perch::{Perch, Spot, Stature};
 
 /// Ce qu'elle est en train de faire.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -17,6 +18,9 @@ pub enum Stance {
     Held { grab: Vec2 },
     /// Lancée : elle file, ralentit et rebondit sur les bords de l'écran.
     Thrown { vel: Vec2 },
+    /// Posée sur le bord supérieur d'une fenêtre (`spot` dit laquelle et où, voir
+    /// [`crate::perch`]) : elle ne flotte plus, et suit le bord.
+    Perched { spot: Spot },
 }
 
 /// Ce que le rendu doit dessiner à une image donnée.
@@ -49,6 +53,18 @@ const BOUNCE: f32 = 0.6;
 const SQUASH_FRAMES: u64 = 4;
 /// Fenêtre de temps (s) pour mesurer la vitesse du lancer.
 const VELOCITY_WINDOW: f64 = 0.08;
+/// Elle se pose sur un bord : écrasée sur ses pieds (3 images), un rebond étiré (2 images), puis
+/// immobile. Échelles (largeur, hauteur), tenues un nombre entier d'images, ancrées à ses pieds.
+const LANDING: [((f32, f32), u32); 2] = [((1.14, 0.84), 3), ((0.95, 1.06), 2)];
+/// Elle quitte un bord : étirée vers le haut (2 images), puis elle flotte de nouveau.
+const LIFTING: [((f32, f32), u32); 1] = [((0.93, 1.08), 2)];
+
+/// Un geste joué une fois, à partir d'une image donnée.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Gesture {
+    Landing,
+    Lifting,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Axis {
@@ -66,6 +82,10 @@ pub struct Capri {
     /// Image d'animation courante, mise à jour par [`Capri::step`].
     frame: u64,
     squash: Option<(u64, Axis)>,
+    /// Le geste en cours (se poser, repartir) et l'image où il a commencé.
+    gesture: Option<(u64, Gesture)>,
+    /// Où sont ses pieds dans son image (coordonnées normalisées).
+    feet: Vec2,
     samples: VecDeque<(f64, Vec2)>,
 }
 
@@ -80,6 +100,8 @@ impl Capri {
             float: Sheet::new(&FLOAT),
             frame: 0,
             squash: None,
+            gesture: None,
+            feet: Vec2::new(0.5, 1.0),
             samples: VecDeque::new(),
         };
         capri.clamp();
@@ -102,6 +124,55 @@ impl Capri {
         self.size
     }
 
+    /// Où sont ses pieds dans son image (coordonnées normalisées, voir `AlphaMask::feet`). Par
+    /// défaut : au milieu du bas de l'image.
+    pub fn set_feet(&mut self, feet: Vec2) {
+        self.feet = feet;
+    }
+
+    /// Le milieu de ses pieds, là où elle touche un bord.
+    pub fn feet(&self) -> Vec2 {
+        self.pos + Vec2::new(self.size.x * self.feet.x, self.size.y * self.feet.y)
+    }
+
+    /// Sa taille et la place de ses pieds, pour [`crate::perch`].
+    pub fn stature(&self) -> Stature {
+        Stature { size: self.size, feet: self.feet }
+    }
+
+    /// Où elle est posée, si elle l'est.
+    pub fn perched(&self) -> Option<Spot> {
+        match self.stance {
+            Stance::Perched { spot } => Some(spot),
+            _ => None,
+        }
+    }
+
+    /// Elle se pose sur un bord : ses pieds en `perch.feet`, avec un écrasement à l'atterrissage.
+    pub fn land(&mut self, perch: Perch) {
+        self.place_feet(perch.feet);
+        self.stance = Stance::Perched { spot: perch.spot };
+        self.squash = None;
+        self.gesture = Some((self.frame, Gesture::Landing));
+    }
+
+    /// Posée, elle suit son bord : ses pieds en `perch.feet`, sans nouvel atterrissage. Sans
+    /// effet si elle n'est pas posée.
+    pub fn ride(&mut self, perch: Perch) {
+        if let Stance::Perched { .. } = self.stance {
+            self.place_feet(perch.feet);
+            self.stance = Stance::Perched { spot: perch.spot };
+        }
+    }
+
+    /// Elle quitte son bord et se remet à flotter sur place. Sans effet si elle n'est pas posée.
+    pub fn take_off(&mut self) {
+        if let Stance::Perched { .. } = self.stance {
+            self.stance = Stance::Floating;
+            self.gesture = Some((self.frame, Gesture::Lifting));
+        }
+    }
+
     /// Nouvelle zone (écran redimensionné, changement d'écran) : elle reste dedans.
     pub fn set_bounds(&mut self, bounds: Rect) {
         self.bounds = bounds;
@@ -110,15 +181,15 @@ impl Capri {
 
     /// Nouvelle taille, en gardant ses pieds au même endroit.
     pub fn set_size(&mut self, size: Vec2) {
-        let feet = Vec2::new(self.pos.x + self.size.x / 2.0, self.pos.y + self.size.y);
+        let feet = self.feet();
         self.size = size;
-        self.pos = Vec2::new(feet.x - size.x / 2.0, feet.y - size.y);
-        self.clamp();
+        self.place_feet(feet);
     }
 
     /// On l'attrape avec le curseur en `cursor` à l'instant `t` (secondes).
     pub fn grab(&mut self, cursor: Vec2, t: f64) {
         self.stance = Stance::Held { grab: cursor - self.pos };
+        self.gesture = None;
         self.samples.clear();
         self.samples.push_back((t, cursor));
     }
@@ -158,6 +229,9 @@ impl Capri {
         {
             self.squash = None;
         }
+        if self.gesture.is_some() && self.gesture_scale().is_none() {
+            self.gesture = None;
+        }
         let Stance::Thrown { mut vel } = self.stance else { return };
 
         self.pos += vel * dt;
@@ -190,7 +264,8 @@ impl Capri {
 
         match self.stance {
             Stance::Floating => offset.y = self.float.at(frame) * self.size.y,
-            Stance::Held { .. } => {}
+            // posée : immobile, seul son trait continue de bouillir
+            Stance::Held { .. } | Stance::Perched { .. } => {}
             Stance::Thrown { vel } => {
                 // étirée dans le sens de la course, sa copie violette traîne derrière
                 let speed = vel.length() / self.size.y;
@@ -210,10 +285,18 @@ impl Capri {
                 Axis::Vertical => Vec2::new(1.12, 0.86),
             };
         }
+        // se poser ou repartir : déformée autour de ses pieds, qui ne bougent pas
+        let gesture = self.gesture_scale();
+        if let Some(gesture) = gesture {
+            scale = gesture;
+        }
 
         let size = Vec2::new(self.size.x * scale.x, self.size.y * scale.y);
-        let center = self.pos + self.size * 0.5 + offset;
-        let min = center - size * 0.5;
+        let min = if gesture.is_some() {
+            self.feet() - Vec2::new(size.x * self.feet.x, size.y * self.feet.y) + offset
+        } else {
+            self.pos + self.size * 0.5 + offset - size * 0.5
+        };
         Pose {
             rect: Rect::new(
                 Vec2::new(min.x.round(), min.y.round()),
@@ -222,6 +305,28 @@ impl Capri {
             boil_seed: ((frame / 2) % BOIL_DRAWINGS) as u32,
             ghost: Vec2::new(ghost.x.round(), ghost.y.round()),
         }
+    }
+
+    /// L'échelle du geste en cours à l'image courante, s'il n'est pas fini.
+    fn gesture_scale(&self) -> Option<Vec2> {
+        let (start, gesture) = self.gesture?;
+        let keys: &[((f32, f32), u32)] = match gesture {
+            Gesture::Landing => &LANDING,
+            Gesture::Lifting => &LIFTING,
+        };
+        let mut t = self.frame.checked_sub(start)?;
+        for &((x, y), hold) in keys {
+            if t < u64::from(hold) {
+                return Some(Vec2::new(x, y));
+            }
+            t -= u64::from(hold);
+        }
+        None
+    }
+
+    fn place_feet(&mut self, feet: Vec2) {
+        self.pos = feet - Vec2::new(self.size.x * self.feet.x, self.size.y * self.feet.y);
+        self.clamp();
     }
 
     fn clamp(&mut self) {
@@ -289,6 +394,86 @@ mod tests {
         }
         assert!(bounced, "elle a tapé un bord");
         assert_eq!(c.stance(), Stance::Floating);
+    }
+
+    fn perch_at(x: f32, y: f32) -> Perch {
+        Perch { spot: Spot { window: 7, along: 120.0 }, feet: Vec2::new(x, y) }
+    }
+
+    #[test]
+    fn landing_puts_her_feet_on_the_edge_with_a_squash_held_whole_frames() {
+        let mut c = capri();
+        c.set_feet(Vec2::new(0.6, 1.0));
+        c.step(0.0, 10);
+        c.land(perch_at(900.0, 700.0));
+        assert_eq!(c.perched(), Some(Spot { window: 7, along: 120.0 }));
+        assert_eq!(c.feet(), Vec2::new(900.0, 700.0));
+        assert_eq!(c.position(), Vec2::new(900.0 - 96.0, 400.0));
+
+        // l'écrasement, ses pieds au même endroit : 3 images, puis le rebond 2 images
+        let bottom = |p: Pose| p.rect.min.y + p.rect.size.y;
+        let squashed = c.pose();
+        assert!(squashed.rect.size.y < 300.0 && squashed.rect.size.x > 160.0, "{squashed:?}");
+        assert_eq!(bottom(squashed), 700.0);
+        for frame in 11..13 {
+            c.step(0.0, frame);
+            assert_eq!(c.pose().rect, squashed.rect, "tenu, image {frame}");
+        }
+        c.step(0.0, 13);
+        let rebound = c.pose();
+        assert!(rebound.rect.size.y > 300.0, "{rebound:?}");
+        assert_eq!(bottom(rebound), 700.0);
+        c.step(0.0, 14);
+        assert_eq!(c.pose().rect, rebound.rect);
+        // puis immobile : ni flottement ni écrasement, image après image
+        c.step(0.0, 15);
+        let rest = c.pose().rect;
+        assert_eq!(rest, Rect::new(Vec2::new(804.0, 400.0), Vec2::new(160.0, 300.0)));
+        for frame in 16..80 {
+            c.step(1.0 / 24.0, frame);
+            assert_eq!(c.pose().rect, rest, "posée, elle ne flotte pas (image {frame})");
+        }
+    }
+
+    #[test]
+    fn she_rides_her_edge_and_takes_off_floating_in_place() {
+        let mut c = capri();
+        c.step(0.0, 0);
+        c.land(perch_at(900.0, 700.0));
+        c.ride(Perch { spot: Spot { window: 7, along: 150.0 }, feet: Vec2::new(930.0, 720.0) });
+        assert_eq!(c.feet(), Vec2::new(930.0, 720.0));
+        assert_eq!(c.perched().map(|spot| spot.along), Some(150.0));
+
+        c.take_off();
+        assert_eq!(c.stance(), Stance::Floating);
+        assert_eq!(c.feet(), Vec2::new(930.0, 720.0), "elle flotte sur place");
+        // un dernier geste, étirée sur ses pieds, puis le flottement
+        assert!(c.pose().rect.size.y > 300.0);
+        c.step(0.0, 2);
+        assert_eq!(c.pose().rect.size.y, 300.0);
+        // suivre un bord sans y être posée ne fait rien
+        c.ride(perch_at(100.0, 100.0));
+        assert_eq!(c.feet(), Vec2::new(930.0, 720.0));
+        assert_eq!(c.perched(), None);
+    }
+
+    #[test]
+    fn grabbing_her_takes_her_off_her_edge() {
+        let mut c = capri();
+        c.land(perch_at(900.0, 700.0));
+        c.grab(Vec2::new(880.0, 600.0), 0.0);
+        assert!(c.is_held());
+        assert_eq!(c.perched(), None);
+        assert_eq!(c.pose().rect.size, Vec2::new(160.0, 300.0), "aucun geste pendant qu'on la tient");
+    }
+
+    #[test]
+    fn a_new_size_keeps_her_feet_where_they_were() {
+        let mut c = capri();
+        c.set_feet(Vec2::new(0.6, 1.0));
+        c.land(perch_at(900.0, 700.0));
+        c.set_size(Vec2::new(320.0, 600.0));
+        assert_eq!(c.feet(), Vec2::new(900.0, 700.0));
     }
 
     #[test]

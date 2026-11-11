@@ -10,7 +10,11 @@ pub struct AlphaMask {
     width: u32,
     height: u32,
     solid: Vec<bool>,
+    feet: Vec2,
 }
+
+/// Le bas de sa silhouette sur cette part de la hauteur de l'image compte comme ses pieds.
+const FEET_BAND: f32 = 0.02;
 
 impl AlphaMask {
     /// `rgba` : pixels RGBA 8 bits, ligne par ligne. Un pixel compte si son alpha dépasse
@@ -22,12 +26,19 @@ impl AlphaMask {
         let (w, h) = (width as usize, height as usize);
         assert_eq!(rgba.len(), w * h * 4, "taille RGBA incohérente");
         let base: Vec<bool> = rgba.as_chunks::<4>().0.iter().map(|p| p[3] > threshold).collect();
+        let feet = feet(&base, w, h);
         let solid = if grow == 0 { base } else { dilate(&base, w, h, grow as usize) };
-        Self { width, height, solid }
+        Self { width, height, solid, feet }
     }
 
     pub fn size(&self) -> (u32, u32) {
         (self.width, self.height)
+    }
+
+    /// Où sont ses pieds dans l'image, en coordonnées normalisées : le milieu, en largeur, du bas
+    /// de sa silhouette, et la dernière ligne pleine. (0,5 ; 1) pour une image vide.
+    pub fn feet(&self) -> Vec2 {
+        self.feet
     }
 
     /// Le point de coordonnées normalisées `uv` (0..1) est-il sur elle ?
@@ -44,6 +55,20 @@ impl AlphaMask {
     pub fn coverage(&self) -> f32 {
         self.solid.iter().filter(|&&s| s).count() as f32 / self.solid.len().max(1) as f32
     }
+}
+
+/// Ses pieds, d'après la silhouette non dilatée : voir [`AlphaMask::feet`].
+fn feet(solid: &[bool], w: usize, h: usize) -> Vec2 {
+    let row = |y: usize| &solid[y * w..(y + 1) * w];
+    let Some(bottom) = (0..h).rev().find(|&y| row(y).contains(&true)) else { return Vec2::new(0.5, 1.0) };
+    let band = ((h as f32 * FEET_BAND) as usize).max(1);
+    let (mut left, mut right) = (w, 0);
+    for y in bottom.saturating_sub(band - 1)..=bottom {
+        for (x, _) in row(y).iter().enumerate().filter(|(_, s)| **s) {
+            (left, right) = (left.min(x), right.max(x + 1));
+        }
+    }
+    Vec2::new((left + right) as f32 / 2.0 / w as f32, (bottom + 1) as f32 / h as f32)
 }
 
 /// Dilatation carrée en deux passes séparables (horizontale puis verticale).
@@ -83,6 +108,18 @@ mod tests {
         assert!(!m.hit(Vec2::new(0.9, 0.9)));
         assert!(!m.hit(Vec2::new(-0.1, 0.3)));
         assert!((m.coverage() - 1.0 / 16.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn her_feet_are_the_middle_of_the_bottom_of_her_silhouette() {
+        // 4×4 : le pixel (1, 1) et, plus bas, les pixels (2, 2) et (3, 2) ; rien en dernière ligne
+        let mut px = dot();
+        px[(2 * 4 + 2) * 4 + 3] = 255;
+        px[(2 * 4 + 3) * 4 + 3] = 255;
+        let m = AlphaMask::from_rgba(4, 4, &px, 128, 1);
+        assert_eq!(m.feet(), Vec2::new(0.75, 0.75), "la dilatation n'y change rien");
+        let empty = AlphaMask::from_rgba(4, 4, &[0; 64], 128, 0);
+        assert_eq!(empty.feet(), Vec2::new(0.5, 1.0));
     }
 
     #[test]
