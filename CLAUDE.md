@@ -3,6 +3,7 @@
 Compagne de bureau (Capri, *Cyberpunk: Edgerunners* 2) écrite en Rust, 100 % native, pour macOS
 (cible principale, Apple Silicon) et Windows. Projet de fan non commercial. Le README décrit l'état
 du projet et la feuille de route ; jalons 1 (elle flotte) et 2 (le bandeau Claude Code) faits,
+jalon 3 (elle s'assoit sur tes fenêtres) écrit et testé sans écran, pas encore regardé,
 jalon 4 (lui parler) en cours : saisie, bulle, modèle local (Ollama, LM Studio), fournisseurs
 compatibles OpenAI avec leur clé dans le trousseau (OpenRouter, DeepSeek, ProxyAPI, Ollama en
 ligne, serveur personnalisé), l'API d'Anthropic avec sa clé d'API (son propre format ; testée
@@ -24,6 +25,13 @@ l'ensemble, pas cas par cas) ; mot d'éveil à venir. Sur macOS, une fenêtre de
   chaîne de traitements `Effect` — réverbération, délai, distorsion, égaliseur — avec leurs
   paramètres), ramenée dans les bornes documentées par Apple (`Delivery::bounded`), et la remise
   des échantillons du système en canaux séparés (`planar`). Elle ne sait rien de Capri.
+  Et `perch` : où se poser sur les fenêtres des autres apps, d'après la description neutre qu'en
+  donne `capri-platform` (`DeskWindow` : un numéro, un rectangle, ordinaire ou non, l'opacité, à
+  elle ou non ; rien d'autre) : le passage du repère du système à celui de l'overlay (`DeskFrame`,
+  AppKit compris), le tri (`skip`, `sift`), les morceaux visibles des bords (`ledges`),
+  l'accroche (`landing`), le suivi et le départ (`follow`, `Leave`), la cadence de lecture
+  (`Watch`, en images). Le corps (`body`) a la posture `Perched` et ses deux gestes, ancrés à
+  ses pieds (`AlphaMask::feet`).
 - `capri-claude` : tout ce que Capri sait de Claude Code, lui aussi **sans dépendance système** :
   lecture de l'entrée des hooks, protocole, suivi des sessions, édition de `settings.json` de
   texte à texte, le style de sortie « Capri » (`style` : son texte, la signature qui reconnaît le
@@ -54,8 +62,8 @@ l'ensemble, pas cas par cas) ; mot d'éveil à venir. Sur macOS, une fenêtre de
   système).
   Couleurs prémultipliées de bout en bout.
 - Les appels système et l'`unsafe` lié à l'OS vivent dans **deux crates, et nulle part
-  ailleurs** : `capri-platform` (la fenêtre, la voix, le micro, le trousseau) et `capri-ipc` (le
-  canal local).
+  ailleurs** : `capri-platform` (la fenêtre, la voix, le micro, le trousseau, la liste des
+  fenêtres) et `capri-ipc` (le canal local).
 - `capri-ipc` : socket Unix ou tube nommé Windows, réservés à l'utilisateur. À part de
   `capri-platform` parce que `capri-hook` le charge à chaque événement de Claude Code : ni winit
   ni AppKit ici.
@@ -107,6 +115,11 @@ l'ensemble, pas cas par cas) ; mot d'éveil à venir. Sur macOS, une fenêtre de
   `CredReadW`, `CredDeleteW` ; ailleurs : refus) et la saisie d'une clé sans écho
   (`terminal.rs` : `readpassphrase(3)` sur macOS, qui rend l'écho même sur un signal ; mode de la
   console sous Windows ; ailleurs : refus).
+  La liste des fenêtres des autres apps aussi (`desk.rs` ; `macos/desk.rs` :
+  `CGWindowListCopyWindowInfo` de CoreGraphics, dont le tableau « Copy » est libéré par
+  `CFRetained` ; `windows/desk.rs` : `EnumWindows` et DWM, jamais exécuté ; ailleurs : refus), rendue
+  sous la forme neutre de `capri_core::perch::DeskWindow`, dans le repère du système ;
+  `Overlay::desk_frame` dit où est l'overlay dans ce repère.
 - `capri-app` : assemble le tout. Pas d'appel système direct ici (sauf menus via `tray-icon`).
   La fenêtre passe toujours par `capri_platform::Overlay`, jamais par `winit::window::Window`.
   Les clés passent par `keys` (le trait `KeyStore` : le trousseau du système, ou un trousseau en
@@ -125,6 +138,10 @@ l'ensemble, pas cas par cas) ; mot d'éveil à venir. Sur macOS, une fenêtre de
   la phrase suivante. `voice_rehearsal` (version de débogage seulement) est `capri voice
   rehearse` : la vraie voix, avec et sans effets, exercée sans un bruit (ordre, fin, pause, arrêt,
   repli sur quatre pannes simulées, rendu hors ligne de chaque préréglage).
+  `perch_view` lit la liste des fenêtres quand elle sert et fait faire à Capri ce que décide
+  `capri_core::perch` ; `perch_setup` lit et écrit `perch.json` (la case « S'asseoir sur les
+  fenêtres » de son menu). `perch_rehearsal` (version de débogage seulement) est `capri perch
+  rehearse` : la vraie liste, lue et triée sans rien afficher, qui n'imprime que des nombres.
 
 ## La fenêtre de réglages : ajouter une rubrique
 
@@ -232,6 +249,18 @@ précisément quoi vérifier plutôt que de l'affirmer.
   `Info.plist` l'explique (`tools/macos/Info.plist`) : sinon macOS tue le processus.
 - Raccourcis globaux : une touche y est désignée par sa place, pas par sa lettre. Ne choisir que
   des lettres à la même place en AZERTY et en QWERTY (ni A, Q, W, Z, M, ni la ponctuation).
+- **Les fenêtres des autres apps** : **aucune permission** (ni Accessibilité, ni Enregistrement de
+  l'écran, ni rien qui les demanderait), et **jamais le titre d'une fenêtre ni le nom d'une app**,
+  ni lus, ni gardés, ni écrits dans le journal : sur macOS, seules les clés que `CGWindow.h`
+  promet dans tout dictionnaire de fenêtre (numéro, couche, rectangle, opacité, processus,
+  comparé au nôtre puis oublié) et `kCGWindowIsOnscreen`, jamais `kCGWindowName` ni
+  `kCGWindowOwnerName`. Capri ne garde que des numéros, des rectangles et leur ordre ; le journal
+  et `capri perch rehearse` ne disent que des nombres (le test ignoré `fenetres_du_bureau` le
+  vérifie : à relancer après tout changement de la liste,
+  `cargo test -p capri-app --test fenetres_du_bureau -- --ignored`). La liste n'est lue que
+  quand elle sert (au lâcher, puis posée, à la cadence de `perch::Watch`), jamais quand elle est
+  cachée ; son coût se mesure avec le test ignoré `liste_des_fenetres` de `capri-platform`, en
+  version optimisée, avant de changer une cadence.
 - Aucun nom de modèle écrit en dur : il vient de l'utilisateur ou de la liste que donne le
   serveur. Même règle que pour les API : format et adresses d'un fournisseur se vérifient dans sa
   documentation, pas de mémoire (les sources de chaque adresse sont citées dans

@@ -6,8 +6,8 @@
 //!   pieds ;
 //! - pendant qu'elle est posée, à la cadence de `perch::Watch` : toutes les 6 images (4 fois par
 //!   seconde) quand rien ne bouge, à chaque image (24 fois par seconde) pendant que sa fenêtre
-//!   bouge ou qu'un bouton de la souris est enfoncé. Une lecture coûte environ 0,2 ms sur un
-//!   MacBook Pro M5 Pro (voir le README).
+//!   bouge ou qu'un bouton de la souris est enfoncé. Une lecture coûte 0,16 à 0,17 ms en médiane
+//!   et 0,25 à 0,4 ms en moyenne sur un MacBook Pro M5 Pro (voir le README).
 //!
 //! Jamais pendant qu'on la tient ou qu'elle vole, jamais quand elle est cachée (la boucle ne
 //! l'appelle pas), jamais quand c'est désactivé. Le journal n'en dit que des nombres.

@@ -59,6 +59,56 @@ Limites connues, qui viennent de ce que Claude Code signale ou non :
   jusqu'à la fin de l'outil en question ;
 - dans un dossier que tu n'as pas encore approuvé, Claude Code retient tous les hooks.
 
+## Jalon 3 : elle s'assoit sur tes fenêtres
+
+**Lâche-la doucement** les pieds près du haut d'une fenêtre (à moins de 45 points au-dessus ou en
+dessous de son bord) : elle s'y pose, s'écrase un instant sur ses pieds, rebondit, puis reste
+immobile (elle ne flotte plus ; seul son trait continue de « bouillir »). **Lance-la** : là où elle
+s'arrête, c'est la même règle. Posée, elle **suit la fenêtre** quand tu la déplaces ou la
+redimensionnes, à la même place le long du bord (tirée par un seul côté, la fenêtre ne l'emmène pas :
+le bord sous ses pieds n'a pas bougé), sans quitter le bord ni l'écran. Elle **se remet à flotter
+sur place**, avec un petit étirement, quand :
+
+- sa fenêtre n'est plus à l'écran (fermée, réduite dans le Dock, app masquée, autre bureau) ;
+- une autre fenêtre passe devant le morceau de bord sous ses pieds ;
+- le bord sort de l'écran, ou ne lui laisse plus la place au-dessus de lui (plein écran) ;
+- tu l'attrapes, ou tu décoches « S'asseoir sur les fenêtres ».
+
+Il n'y a qu'un dessin d'elle, debout : « assise » veut dire posée sur le bord. Ne comptent que les
+fenêtres d'app ordinaires (ni menus, ni Dock, ni panneaux flottants), à l'écran, opaques, d'au moins
+90 × 45 points, sur son écran (celui qui porte la barre des menus), et pas les siennes ; et seulement
+les parties visibles de leurs bords : une fenêtre devant cache le bord de celle de derrière.
+
+**Ce qu'elle lit, et ce qu'elle ne lit jamais.** Aucune permission : ni Accessibilité, ni
+Enregistrement de l'écran. Sur macOS, elle lit la liste des fenêtres de CoreGraphics
+(`CGWindowListCopyWindowInfo`), et de chaque fenêtre seulement son numéro, son rectangle, sa couche,
+son opacité, et si elle est à Capri. **Jamais le titre d'une fenêtre ni le nom d'une app** : ni lus,
+ni gardés, ni écrits dans le journal, qui ne dit que des nombres. Elle ne garde que des numéros de
+fenêtre, des rectangles et leur ordre, le temps de décider.
+
+**Ce que ça coûte.** La liste n'est lue que quand elle sert : une fois quand elle s'arrête ; posée,
+4 fois par seconde quand rien ne bouge, 24 fois par seconde pendant que sa fenêtre bouge ou qu'un
+bouton de la souris est enfoncé. Jamais quand elle est cachée, tenue ou en vol, ni quand c'est
+désactivé. Une lecture prend 0,16 à 0,17 ms en médiane et 0,25 à 0,4 ms en moyenne (mesuré sur un
+MacBook Pro M5 Pro, avec 17 à 19 fenêtres à l'écran) : 1 à 1,6 ms par seconde posée au repos, 6 à
+10 ms par seconde pendant un déplacement, soit au plus un centième d'un cœur.
+
+**Le désactiver** : décoche « S'asseoir sur les fenêtres » dans son menu (clic droit sur elle, ou son
+icône dans la barre des menus). C'est retenu d'un lancement à l'autre (`perch.json`, dans son
+dossier) ; activé par défaut.
+
+Limites connues :
+
+- elle mesure 300 points : il lui faut 300 points de place au-dessus du bord. Une fenêtre agrandie,
+  ou dont le haut est près de la barre des menus, ne peut pas la porter ;
+- elle vit sur l'écran qui porte la barre des menus : les fenêtres d'un autre écran ne comptent pas,
+  et elle repart quand sa fenêtre quitte son écran ;
+- une fenêtre fermée, réduite ou passée devant elle au clavier se remarque au plus tard un quart de
+  seconde après ; une fenêtre déplacée à la souris, elle la suit au rythme de ses dessins (24 fois
+  par seconde), donc avec un léger retard ;
+- une fenêtre que le système dit opaque mais qui est transparente par endroits compte comme pleine ;
+- Windows : écrit et compilé, jamais exécuté (voir plus bas) ; Linux : elle flotte comme avant.
+
 ## Jalon 4 : lui parler
 
 **⌃⌥P** (Ctrl+Alt+P), ou « Parler à Capri » dans son menu, ouvre un champ de saisie sous ses
@@ -492,7 +542,9 @@ Aucune permission système n'est nécessaire. Pour plus de détails dans le term
 crates/
   capri-core/      logique pure : animation, mouvement, lancer, hit-test, bandeau, parole, la
                    description d'un formulaire de réglages, et celle de comment dire une phrase
-                   (sound.rs : voix, hauteur, débit, traitements du son, leurs bornes) (testée)
+                   (sound.rs : voix, hauteur, débit, traitements du son, leurs bornes), et où se
+                   poser sur les fenêtres (perch.rs : repères, bords visibles, accroche, suivi,
+                   départ, cadence de lecture) (testée)
   capri-claude/    logique pure : hooks de Claude Code, protocole, sessions, settings.json, style
                    de sortie « Capri », miroir, dossiers de Capri et de Claude Code (testée)
   capri-chat/      logique pure : conversation, fournisseurs et format « chat completions », flux
@@ -516,6 +568,8 @@ crates/
                      chemin traité dans une seule file, et le repli ;
                      macos/voice_stage.rs : la chaîne d'effets (AVAudioEngine)
     ear.rs           son oreille ; macos/ear.rs : le micro et la reconnaissance sur l'appareil
+    desk.rs          la liste des fenêtres des autres apps, sans permission ; macos/desk.rs
+                     (CoreGraphics), windows/desk.rs (Win32 et DWM, jamais exécuté)
     keychain.rs      le trousseau des clés d'API ; macos/keychain.rs, windows/keychain.rs
     terminal.rs      taper une clé sans qu'elle s'affiche
     winit_overlay.rs fenêtre winit, pour Windows et les autres systèmes
@@ -532,7 +586,10 @@ crates/
                    `capri hook` (branchement, miroir, style), `capri chat`, `capri voice`,
                    `capri ear` ; en version de débogage, `capri voice rehearse`
                    (voice_rehearsal.rs : la vraie voix exercée sans bruit, lancée par
-                   tests/voix_en_silence.rs)
+                   tests/voix_en_silence.rs) ; s'asseoir sur les fenêtres (perch_view.rs, et
+                   perch_setup.rs pour perch.json), et en version de débogage `capri perch
+                   rehearse` (perch_rehearsal.rs : la vraie liste des fenêtres, sans rien
+                   afficher, lancée par tests/fenetres_du_bureau.rs)
 tools/             récupération vérifiée des images, fabrication de Capri.app (macOS)
 ```
 
@@ -543,9 +600,10 @@ Règle : tout ce qui peut être testé sans écran va dans `capri-core`, `capri-
 
 Vérifié automatiquement :
 
-- formatage, `clippy -D warnings` et 393 tests sur **macOS Apple Silicon** (plus 4 qui ne
+- formatage, `clippy -D warnings` et 411 tests sur **macOS Apple Silicon** (plus 6 qui ne
   tournent qu'à la main : ils écrivent des images, lisent un vrai `settings.json`, touchent au
-  vrai trousseau, ou créent de vraies voix et un vrai moteur audio, sans bruit) : animation, lancer et rebonds, hit-test, clics, bandeau, parole en pages, bulle
+  vrai trousseau, créent de vraies voix et un vrai moteur audio, sans bruit, ou lisent la vraie
+  liste des fenêtres) : animation, lancer et rebonds, hit-test, clics, bandeau, parole en pages, bulle
   sur plusieurs lignes, conversation, **validation du shader** par le compilateur de wgpu, lecture
   des exemples de hooks de la documentation de Claude Code, suivi des sessions, aller-retour sur
   `settings.json`, socket (droits, connexions simultanées), et le binaire `capri-hook` lancé pour
@@ -616,6 +674,20 @@ Vérifié automatiquement :
   seulement, oubliée quand sa session repart ; l'onglet « Claude Code » de la fenêtre, modèle
   seul puis avec ses effets (le même `settings.json` que `capri hook`, rendu à l'octet près, la
   même sauvegarde, le même fichier du miroir) ;
+- s'asseoir sur les fenêtres, sans écran : le passage du repère des fenêtres à celui de l'overlay
+  (AppKit depuis le bas, CoreGraphics depuis le haut, un écran au-dessus de l'écran principal, les
+  pixels de Windows) ; le tri (à elle, pas ordinaire, peu opaque, ce qui n'est pas un nombre, trop
+  petite, sur un autre écran) ; les bords visibles (cachés par une fenêtre devant, pas par une
+  fenêtre derrière, ni par une qui le touche par en dessous ; coupés au bord de l'écran) ;
+  l'accroche (au-dessus et en dessous du bord, trop loin, le bord le plus proche, un morceau caché
+  ou trop court, ses pieds rentrés loin des coins et dans l'écran, la place de ses pieds dans son
+  image) ; le suivi (immobile, déplacée, tirée par la gauche, rétrécie par la droite, changée des
+  deux côtés, à moitié hors de l'écran) ; le départ (fenêtre disparue,
+  bord recouvert sous ses pieds ou à moitié, plein écran, trop haute, sortie par le bas ou sur un
+  autre écran, une place qui n'est pas un nombre) ; la cadence de lecture ; sa pose (l'écrasement
+  et le rebond tenus 3 et 2 images, ses pieds immobiles, puis plus aucun flottement ; l'étirement
+  au départ ; attrapée, elle quitte le bord) ; `perch.json` (activé sans fichier, retenu, un
+  fichier étrange signalé) ;
 - `clippy -D warnings` en compilation croisée pour **Windows x64** et **Linux x64** (le code
   compile, il n'est pas exécuté).
 
@@ -697,6 +769,28 @@ dossier, et le trousseau d'essai est vide après. Le processus quitte de lui-mê
   s'affiche avec ses nouvelles listes ; un effet, une intensité, une hauteur et un débit choisis
   dans la vraie fenêtre sont écrits dans `voice.json`, puis « Naturelle » de nouveau. « Écouter »
   n'y est jamais pressé.
+
+**Vérifié sur ce Mac, pour le jalon 3** (le 11 novembre 2026, sans rien regarder à l'écran) :
+
+- la vraie liste des fenêtres, par le test ignoré `liste_des_fenetres` (version optimisée,
+  `cargo test --release -p capri-platform --test liste_des_fenetres -- --ignored --nocapture`) :
+  17 à 19 fenêtres à l'écran ; six séries de 500 lectures : 0,14 ms au mieux, 0,16 à 0,17 ms en
+  médiane, 95 % sous 0,23 à 0,46 ms, 0,25 à 0,40 ms en moyenne, et quelques pointes de 4 à 7 ms ;
+  savoir si un bouton de la souris est enfoncé coûte 0,1 µs (médiane) ;
+- `capri perch rehearse` (version de débogage), lancé à la main et par le test ignoré
+  `fenetres_du_bureau` : l'écran principal vu comme l'overlay le voit (3024 × 1964 px, 2 px par
+  point, origine en (0, 0)), 15 fenêtres à l'écran dont 9 comptées (6 écartées parce qu'elles ne
+  sont pas de la couche 0), les bords visibles, et aucun ne lui laissait la place ce
+  jour-là (des fenêtres agrandies, la plus en avant à 33 points du haut) : « aucun bord ne lui
+  laisse la place », comme il se doit. Sa sortie ne contient que des nombres et des mots de son
+  propre code (le test le vérifie), et aucun réglage n'est écrit. Attention : lancé depuis un
+  terminal qui a lui-même l'Enregistrement de l'écran, le processus en héritait (« accordé, rien
+  n'a été demandé ») ; le code n'en dépend pas (il ne lit que des clés présentes sans elle), mais
+  c'est depuis `Capri.app` qu'il faut le constater (liste ci-dessous) ;
+- la vraie app en version de débogage, cinq secondes, avec un dossier, une socket et un trousseau
+  d'essai, à côté d'une Capri déjà lancée et sans y toucher : elle démarre, son menu se construit
+  avec la nouvelle case, rien ne plante, rien n'est écrit. Elle n'a été ni attrapée ni posée
+  (impossible sans souris).
 
 Le rendu réel sous Linux avec un GPU logiciel (le sprite s'affiche, flotte et « bout ») avait été
 vérifié avant le passage à la fenêtre « Overlay » ; il n'a pas été revérifié depuis.
@@ -819,12 +913,59 @@ point 20 ; sa voix activée, depuis `Capri.app` ou `cargo run --release`) :
    le menu et l'onglet restent d'accord, et `settings.json` redevient identique à l'octet près ;
 4. un `capri.md` à toi dans `output-styles/` n'est jamais touché.
 
+**Jalon 3 : à regarder à la main** (rien n'a encore été vu ; depuis `Capri.app` reconstruite, ou
+`RUST_LOG=debug cargo run --release` pour lire le journal) :
+
+1. **se poser** : une fenêtre ordinaire (Finder, TextEdit) dont le haut est vers le milieu de
+   l'écran ; lâche Capri doucement, les pieds un peu au-dessus du bord : elle descend s'y poser, ses
+   pieds sur le bord (ni vide dessous, ni pieds enfoncés dans la barre de titre), s'écrase un
+   instant, rebondit, puis ne bouge plus (plus de flottement). Lâchée les pieds dans la barre de
+   titre : elle remonte sur le bord. Lâchée nettement plus haut (au-delà d'environ 45 points) :
+   elle flotte, comme avant ;
+2. près d'un coin arrondi : ses pieds rentrent un peu sur le bord, elle ne se tient pas dans le
+   vide ; contre le bord de l'écran, elle reste entière à l'écran ;
+3. **la lancer** vers une fenêtre : si elle s'arrête près d'un bord, elle s'y pose ; sinon elle
+   flotte. Les rebonds sur les bords de l'écran sont ceux d'avant ;
+4. **suivre** : déplace sa fenêtre lentement puis vite : elle suit, reste sur le bord et dans
+   l'écran, et part avec la fenêtre dès le début du déplacement (un léger retard, au rythme de ses
+   dessins, est normal). Redimensionne-la par la gauche : elle ne bouge pas ; par la droite,
+   jusqu'à plus étroite que l'endroit où elle était : elle glisse au bout du bord, sans le quitter ;
+   par un coin du haut : elle monte ou descend avec le bord ;
+5. **fenêtre fermée** (⌘W), réduite dans le Dock (⌘M), app masquée (⌘H) : elle se remet à
+   flotter sur place en un quart de seconde au plus, avec un petit étirement, sans sauter ailleurs ;
+6. **bord recouvert** : clique sur une autre fenêtre qui chevauche le bord sous ses pieds, elle
+   repart ; une fenêtre devant mais à côté de ses pieds : elle reste ;
+7. **plein écran** : sa fenêtre en plein écran (bouton vert), elle repart ; une fenêtre agrandie
+   jusqu'en haut de l'écran ne peut pas la porter (pas la place) ;
+8. **second écran** (si tu en as un) : sa fenêtre glissée vers l'autre écran, elle la suit
+   jusqu'au bord de son écran puis repart ; les fenêtres de l'autre écran ne la portent pas ;
+9. **changement de bureau** (⌃→ puis ⌃←) : elle flotte sur l'autre bureau, et au retour elle
+   n'est plus posée ;
+10. **⌃⌥C** : posée, cache-la, déplace sa fenêtre, montre-la : elle rejoint la fenêtre aussitôt
+    (ou flotte si la fenêtre a disparu entre-temps) ;
+11. **le menu** : « S'asseoir sur les fenêtres » est coché, dans le menu de l'icône comme au clic
+    droit ; décoche-le : posée, elle repart, et lâchée près d'un bord elle flotte ; les deux menus
+    restent d'accord ; quitte et relance Capri : toujours décoché ; recoche-le ;
+12. **le processeur au repos**, dans le Moniteur d'activité (% processeur de Capri) : flottante, puis
+    posée sans que rien ne bouge (presque pareil), pendant qu'on déplace sa fenêtre (un peu plus),
+    puis cachée (comme cachée avant ce jalon) ;
+13. aucune demande de permission n'apparaît (ni Accessibilité, ni Enregistrement de l'écran), et
+    elle se pose quand même ;
+14. avec `RUST_LOG=debug`, les lignes « posée sur un bord », « aucun bord sous ses pieds » et
+    « quitte le bord : … » ne contiennent que des nombres ;
+15. si tu utilises Stage Manager ou Mission Control : rien n'a été prévu pour eux, regarder
+    seulement que rien ne casse.
+
 **Pas encore testé sur un vrai PC Windows** : il n'y a pas encore de fenêtre de réglages. Le tube
 nommé de `capri-ipc` n'y a jamais tourné, le champ de saisie et la voix n'y existent pas encore,
 et le chat n'y a jamais été lancé : ni le https (SChannel), ni le Gestionnaire d'identification,
 ni la saisie d'une clé sans écho n'y ont tourné. Le style de sortie (dans
 `%USERPROFILE%\.claude\output-styles`) et le miroir (dans `%LOCALAPPDATA%\Capri`) n'y ont pas
-tourné non plus.
+tourné non plus. La liste des fenêtres (jalon 3 : `EnumWindows`, le cadre et l'état « masquée »
+de DWM, l'état des boutons de la souris) est écrite et compilée, jamais exécutée : sur un vrai PC,
+`cargo test --release -p capri-platform --test liste_des_fenetres -- --ignored --nocapture`, puis
+les points du jalon 3 ci-dessus (les fenêtres d'un autre bureau virtuel et les fenêtres réduites
+ne doivent pas la porter).
 
 Points à surveiller :
 
@@ -840,7 +981,9 @@ Points à surveiller :
 1. ~~Elle flotte, on l'attrape, on la lance~~ ← jalon 1
 2. ~~Le hook Claude Code : un petit binaire Rust, une socket Unix réservée à ton utilisateur, et
    un bandeau qui affiche ce que fait Claude~~ ← jalon 2
-3. Elle s'assoit sur tes fenêtres (macOS : CoreGraphics + Accessibilité ; Windows : Win32).
+3. ~~Elle s'assoit sur tes fenêtres~~ ← jalon 3 (macOS : CoreGraphics, sans aucune permission ;
+   Windows : Win32) : écrit et testé sans écran ; reste à le regarder sur un vrai Mac, et à
+   l'exécuter sur un vrai PC Windows.
 4. Le chat avec un modèle d'IA : ~~la saisie et la bulle~~, ~~un modèle local par Ollama~~,
    ~~les fournisseurs à clé compatibles OpenAI (OpenRouter, DeepSeek, ProxyAPI, Ollama en ligne)
    avec leurs clés dans le trousseau~~, ~~une fenêtre de réglages (macOS)~~, ~~Capri dans Claude
