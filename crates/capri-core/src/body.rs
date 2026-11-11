@@ -479,6 +479,21 @@ mod tests {
     }
 
     #[test]
+    fn a_new_size_keeps_her_whole_on_screen() {
+        // en haut de l'écran, elle grandit : ses pieds descendent juste assez pour que sa tête reste
+        // dedans ; elle ne déborde ni en haut ni sur le côté
+        let screen = Rect::new(Vec2::ZERO, Vec2::new(1920.0, 1080.0));
+        let mut c = Capri::new(Vec2::new(160.0, 300.0), screen, Vec2::new(1700.0, 0.0));
+        c.set_size(Vec2::new(320.0, 600.0));
+        assert_eq!(c.position(), Vec2::new(1600.0, 0.0));
+        assert_eq!(c.feet(), Vec2::new(1760.0, 600.0));
+        // elle rapetisse : ses pieds restent où ils sont
+        c.set_size(Vec2::new(64.0, 120.0));
+        assert_eq!(c.feet(), Vec2::new(1760.0, 600.0));
+        assert_eq!(c.size(), Vec2::new(64.0, 120.0));
+    }
+
+    #[test]
     fn stays_on_screen_when_bounds_shrink() {
         let mut c = capri();
         c.set_bounds(Rect::new(Vec2::ZERO, Vec2::new(600.0, 400.0)));

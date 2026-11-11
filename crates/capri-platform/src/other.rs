@@ -22,6 +22,11 @@ pub fn set_click_through(window: &Window, through: bool) {
     let _ = window.set_cursor_hittest(!through);
 }
 
+/// On ne peut pas l'attraper ici : pas de geste sur elle non plus.
+pub fn zoom_modifier_down() -> bool {
+    false
+}
+
 pub fn set_shown(window: &Window, shown: bool) {
     window.set_visible(shown);
 }

@@ -4,7 +4,7 @@
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use tray_icon::menu::accelerator::{Accelerator, Code, Modifiers};
 use tray_icon::menu::{
-    CheckMenuItem, ContextMenu as _, Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem,
+    CheckMenuItem, ContextMenu as _, Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem, Submenu,
 };
 use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
 
@@ -23,6 +23,10 @@ pub enum Action {
     ToggleVisible,
     /// Lui permettre de s'asseoir sur les fenêtres, ou le lui interdire.
     TogglePerch,
+    /// Sa taille : un cran au-dessus, un cran en dessous, ou celle d'origine.
+    Larger,
+    Smaller,
+    OriginalSize,
     /// Brancher ou débrancher le hook de Claude Code.
     ToggleClaudeHook,
     /// Ouvrir la fenêtre de réglages, ou la ramener devant.
@@ -41,6 +45,10 @@ pub struct Menus {
     voices: Vec<MenuItem>,
     /// La case « S'asseoir sur les fenêtres », dans les deux menus.
     perches: Vec<CheckMenuItem>,
+    /// Le sous-menu « Taille », dans les deux menus : son titre dit la taille du moment.
+    sizes: Vec<Submenu>,
+    larger: Vec<MenuItem>,
+    smaller: Vec<MenuItem>,
 }
 
 /// Un menu et ses éléments, avec ce que chacun déclenche.
@@ -48,6 +56,7 @@ struct Built {
     menu: Menu,
     items: Vec<(Action, MenuItem)>,
     perch: CheckMenuItem,
+    size: Submenu,
 }
 
 impl Menus {
@@ -63,6 +72,7 @@ impl Menus {
         let tray =
             builder.build().inspect_err(|err| log::warn!("pas d'icône de barre des menus : {err}")).ok();
         let perches = vec![a.perch, b.perch];
+        let sizes = vec![a.size, b.size];
         let items: Vec<(Action, MenuItem)> = a.items.into_iter().chain(b.items).collect();
         let items_for = |wanted: Action| -> Vec<MenuItem> {
             items.iter().filter(|(action, _)| *action == wanted).map(|(_, item)| item.clone()).collect()
@@ -79,6 +89,23 @@ impl Menus {
             hooks: items_for(Action::ToggleClaudeHook),
             voices: items_for(Action::ToggleVoice),
             perches,
+            sizes,
+            larger: items_for(Action::Larger),
+            smaller: items_for(Action::Smaller),
+        }
+    }
+
+    /// Sa taille du moment, dans le titre du sous-menu « Taille » des deux menus ; « Plus
+    /// grande » et « Plus petite » s'éteignent aux bornes.
+    pub fn set_size(&self, scale: capri_core::Scale) {
+        for submenu in &self.sizes {
+            submenu.set_text(size_title(scale));
+        }
+        for item in &self.larger {
+            item.set_enabled(!scale.is_largest());
+        }
+        for item in &self.smaller {
+            item.set_enabled(!scale.is_smallest());
         }
     }
 
@@ -156,6 +183,13 @@ fn build_menu() -> Built {
     let shortcut = Accelerator::new(Modifiers::CONTROL | Modifiers::ALT, Code::KeyC);
     let toggle = MenuItem::new("Cacher Capri", true, Some(shortcut));
     let perch = CheckMenuItem::new("S'asseoir sur les fenêtres", true, true, None);
+    let larger = MenuItem::new("Plus grande", true, None);
+    let smaller = MenuItem::new("Plus petite", true, None);
+    let original = MenuItem::new("Taille d'origine", true, None);
+    let size = Submenu::new(size_title(capri_core::Scale::ORIGINAL), true);
+    if let Err(err) = size.append_items(&[&larger, &smaller, &original]) {
+        log::warn!("menu « Taille » incomplet : {err}");
+    }
     let hook = MenuItem::new("Brancher Claude Code", true, None);
     let settings = MenuItem::new("Réglages…", true, None);
     let quit = MenuItem::new("Quitter", true, None);
@@ -163,8 +197,8 @@ fn build_menu() -> Built {
     let separator = PredefinedMenuItem::separator;
     let (first, second, third) = (separator(), separator(), separator());
     if let Err(err) = menu.append_items(&[
-        &title, &first, &talk, &listen, &hush, &forget, &voice, &second, &toggle, &perch, &hook, &settings,
-        &third, &quit,
+        &title, &first, &talk, &listen, &hush, &forget, &voice, &second, &toggle, &perch, &size, &hook,
+        &settings, &third, &quit,
     ]) {
         log::warn!("menu incomplet : {err}");
     }
@@ -175,11 +209,19 @@ fn build_menu() -> Built {
         (Action::Forget, forget),
         (Action::ToggleVoice, voice),
         (Action::ToggleVisible, toggle),
+        (Action::Larger, larger),
+        (Action::Smaller, smaller),
+        (Action::OriginalSize, original),
         (Action::ToggleClaudeHook, hook),
         (Action::Settings, settings),
         (Action::Quit, quit),
     ];
-    Built { menu, items, perch }
+    Built { menu, items, perch, size }
+}
+
+/// « Taille : 80 % ».
+fn size_title(scale: capri_core::Scale) -> String {
+    format!("Taille : {} %", scale.percent())
 }
 
 /// Un masque stylisé (visage en losange, deux yeux en amande), dessiné à la volée :

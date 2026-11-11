@@ -8,6 +8,9 @@
 //! n'écrit aucun réglage, ne demande aucune permission.
 //!
 //! Rend 0 si tout est conforme, 1 sinon.
+//!
+//! Et, pour mesurer comment elle suit une fenêtre qu'on déplace, `CAPRI_PERCH_REHEARSAL=1` au
+//! lancement de la vraie app (voir [`follow`]).
 
 use std::time::{Duration, Instant};
 
@@ -21,12 +24,16 @@ const READS: usize = 200;
 pub fn run_cli(args: &[String]) -> i32 {
     match args {
         [action] if action == "rehearse" => run(),
+        // lancée par la vraie app pendant `CAPRI_PERCH_REHEARSAL`, pas à la main
+        [action, hz] if action == "window" => follow::moving_window(hz.parse().unwrap_or(60.0)),
         _ => {
             eprintln!("usage : capri perch rehearse   la vraie liste des fenêtres, sans rien afficher");
             2
         }
     }
 }
+
+pub use follow::{Follow, Trace};
 
 fn run() -> i32 {
     let mut failed = 0;
@@ -176,12 +183,15 @@ fn run() -> i32 {
 fn stature(scale: f32) -> Stature {
     match crate::assets::load_sprite() {
         Ok(sprite) => Stature {
-            size: crate::display_size(sprite.mask.size(), f64::from(scale)),
+            size: crate::display_size(sprite.mask.size(), f64::from(scale), capri_core::Scale::ORIGINAL),
             feet: sprite.mask.feet(),
         },
         Err(_) => {
             println!("images absentes : proportions d'origine");
-            Stature { size: crate::display_size((220, 420), f64::from(scale)), feet: Vec2::new(0.5, 1.0) }
+            let size = crate::display_size((220, 420), f64::from(scale), capri_core::Scale::ORIGINAL);
+            Stature { size, feet: Vec2::new(0.5, 1.0) }
         }
     }
 }
+
+pub mod follow;

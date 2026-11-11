@@ -5,8 +5,9 @@
 //! Une seule fenêtre transparente, l'overlay de `capri-platform`, couvre l'écran principal. Elle
 //! laisse passer la souris partout, sauf sur Capri elle-même. Le curseur est lu auprès du système
 //! 60 fois par seconde (la fenêtre ne reçoit pas les mouvements quand elle se laisse traverser),
-//! mais on ne redessine que quand sa pose ou son bandeau change : environ 12 fois par seconde au
-//! repos.
+//! à chaque rafraîchissement de l'écran quand on la tient, qu'elle vole ou que sa fenêtre bouge
+//! (`capri_core::pace`), mais on ne redessine que quand sa pose, sa position ou son bandeau
+//! change : environ 12 fois par seconde au repos.
 //!
 //! `capri hook install | uninstall | status | style …` branche Claude Code sur Capri et installe
 //! son style de sortie,
@@ -36,6 +37,7 @@ mod perch_setup;
 mod perch_view;
 #[cfg(any(target_os = "macos", windows))]
 mod settings_view;
+mod size_setup;
 mod style_setup;
 #[cfg(debug_assertions)]
 mod voice_rehearsal;
@@ -45,7 +47,10 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use banner_view::BannerView;
-use capri_core::{AlphaMask, Button, Capri, Pose, Press, Rect, Vec2, frame_at, interpret_press, place_input};
+use capri_core::{
+    AlphaMask, Button, Capri, Pose, Press, Rect, Scale, Stance, Vec2, frame_at, interpret_press, pace,
+    place_input,
+};
 use capri_platform::{Overlay, OverlayEvent};
 use capri_render::{Renderer, SpriteDraw, SpriteImage};
 use global_hotkey::hotkey::{Code, HotKey, Modifiers};
@@ -55,10 +60,6 @@ use winit::event::{MouseButton, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::window::WindowId;
 
-/// Sa hauteur à l'écran, en points (pixels logiques).
-const HEIGHT_POINTS: f64 = 300.0;
-/// Lecture du curseur et pas de simulation.
-const TICK: Duration = Duration::from_micros(16_667);
 /// Amplitude du « boil », en pixels du sprite d'origine.
 const BOIL: f32 = 1.0;
 /// Écart entre ses pieds et le champ de saisie, en points.
@@ -158,6 +159,9 @@ struct App {
     /// Une répétition de la fenêtre de réglages, pour les essais (version de débogage).
     #[cfg(all(debug_assertions, any(target_os = "macos", windows)))]
     rehearsal: Option<Rehearsal>,
+    /// La répétition du suivi d'une fenêtre (`CAPRI_PERCH_REHEARSAL`, version de débogage).
+    #[cfg(debug_assertions)]
+    follow: Option<perch_rehearsal::Follow>,
     fatal: Option<anyhow::Error>,
 }
 
@@ -199,6 +203,18 @@ struct Running {
     frame: u64,
     /// Ce qui est à l'écran : sa pose et, s'il est là, son bandeau.
     drawn: Option<(Pose, Option<SpriteDraw>)>,
+    /// La fréquence de son écran, telle que le système la dit (relue quand l'écran change).
+    refresh: Option<f64>,
+    /// Le réveil des pas pressés, là où l'écran ne réveille pas la boucle lui-même.
+    clock: pace::Clock,
+    /// C'est l'écran qui cadence la boucle ; à défaut de ses nouvelles, un pas est fait quand
+    /// même passé `fallback`.
+    by_screen: bool,
+    fallback: Instant,
+    /// Sa taille, choisie par l'utilisateur (`capri_core::scale`).
+    scale: Scale,
+    /// Changée à la molette et pas encore retenue : depuis quand on n'y a plus touché.
+    unsaved_scale: Option<Instant>,
 }
 
 impl ApplicationHandler for App {
@@ -232,13 +248,22 @@ impl ApplicationHandler for App {
         if let Some(r) = self.running.as_mut() {
             if self.hidden {
                 r.banner.listen_only();
-            } else {
+            } else if r.step_due() {
                 r.tick();
             }
+            r.remember_scale_once_still();
         }
         // sur macOS, le redessin que `tick` vient de demander se fait ici, sans attendre un tour
         self.handle_overlay(event_loop);
-        event_loop.set_control_flow(ControlFlow::WaitUntil(Instant::now() + TICK));
+        #[cfg(debug_assertions)]
+        if let (Some(follow), Some(r)) = (self.follow.as_mut(), self.running.as_mut())
+            && follow.step(r)
+        {
+            event_loop.exit();
+        }
+        let hidden = self.hidden;
+        let wake = self.running.as_mut().map_or_else(|| Instant::now() + pace::REST, |r| r.next_wake(hidden));
+        event_loop.set_control_flow(ControlFlow::WaitUntil(wake));
     }
 }
 
@@ -259,7 +284,13 @@ impl App {
         }
 
         let bounds = Rect::new(Vec2::ZERO, Vec2::new(width as f32, height as f32));
-        let body = display_size(sprite.mask.size(), overlay.scale_factor());
+        let scale = brain_setup::config_dir().and_then(|directory| size_setup::load(&directory));
+        let scale = scale.unwrap_or_else(|err| {
+            log::warn!("elle prend sa taille d'origine : {err:#}");
+            Scale::ORIGINAL
+        });
+        log::info!("taille : {} %", scale.percent());
+        let body = display_size(sprite.mask.size(), overlay.scale_factor(), scale);
         // en bas à droite, au-dessus du Dock ou de la barre des tâches
         let start_at = Vec2::new(bounds.size.x - body.x * 1.8, bounds.size.y - body.y * 1.3);
         let mut capri = Capri::new(body, bounds, start_at);
@@ -282,6 +313,7 @@ impl App {
             self.refresh_voice_menu();
             if let Some(menus) = &self.menus {
                 menus.set_perch_enabled(perch_enabled);
+                menus.set_size(scale);
             }
         }
         #[cfg(all(debug_assertions, any(target_os = "macos", windows)))]
@@ -293,6 +325,12 @@ impl App {
         if !capri_platform::INTERACTIVE {
             log::warn!("système pas encore pris en charge : Capri s'affiche mais ne peut pas être attrapée");
         }
+        #[cfg(debug_assertions)]
+        {
+            self.follow = perch_rehearsal::Follow::from_env();
+        }
+        let refresh = overlay.refresh_rate();
+        log::info!("écran : {refresh:?} Hz");
 
         let now = Instant::now();
         Ok(Running {
@@ -308,6 +346,12 @@ impl App {
             perch: perch_view::PerchView::new(perch_enabled),
             frame: 0,
             drawn: None,
+            refresh,
+            clock: pace::Clock::new(),
+            by_screen: false,
+            fallback: now,
+            scale,
+            unsaved_scale: None,
         })
     }
 
@@ -323,10 +367,12 @@ impl App {
                     r.renderer.resize(width, height);
                     r.capri.set_bounds(Rect::new(Vec2::ZERO, Vec2::new(width as f32, height as f32)));
                     r.overlay.request_redraw();
+                    r.refresh = r.overlay.refresh_rate();
                 }
                 OverlayEvent::ScaleFactorChanged(scale) => {
                     log::debug!("overlay : densité {scale}");
-                    r.capri.set_size(display_size(r.mask.size(), scale));
+                    r.refresh = r.overlay.refresh_rate();
+                    r.capri.set_size(display_size(r.mask.size(), scale, r.scale));
                     r.banner.rescaled();
                 }
                 OverlayEvent::Pressed { button, ctrl } => {
@@ -364,6 +410,18 @@ impl App {
                 }
                 OverlayEvent::InputSubmitted(message) => r.banner.say(&message),
                 OverlayEvent::InputCancelled => log::debug!("saisie abandonnée"),
+                // pas pendant qu'on la tient : elle sauterait sous le curseur
+                OverlayEvent::Zoom { steps } if !r.capri.is_held() => {
+                    let scale = r.scale.zoomed(steps);
+                    if r.resize(scale) {
+                        r.unsaved_scale = Some(Instant::now());
+                        #[cfg(any(target_os = "macos", windows))]
+                        if let Some(menus) = &self.menus {
+                            menus.set_size(scale);
+                        }
+                    }
+                }
+                OverlayEvent::Zoom { .. } => {}
             }
         }
     }
@@ -409,6 +467,9 @@ impl App {
                     menu::Action::ToggleVoice => self.toggle_voice(),
                     menu::Action::ToggleVisible => self.toggle_hidden(),
                     menu::Action::TogglePerch => self.toggle_perch(),
+                    menu::Action::Larger => self.choose_size(Scale::larger),
+                    menu::Action::Smaller => self.choose_size(Scale::smaller),
+                    menu::Action::OriginalSize => self.choose_size(|_| Scale::ORIGINAL),
                     menu::Action::ToggleClaudeHook => self.toggle_claude_hook(),
                     menu::Action::Settings => self.open_settings(),
                     menu::Action::Quit => event_loop.exit(),
@@ -680,6 +741,18 @@ impl App {
         }
     }
 
+    /// Sa taille, choisie dans son menu : appliquée tout de suite, et retenue dans son dossier.
+    #[cfg(any(target_os = "macos", windows))]
+    fn choose_size(&mut self, choose: impl FnOnce(Scale) -> Scale) {
+        let Some(r) = self.running.as_mut() else { return };
+        let scale = choose(r.scale);
+        r.resize(scale);
+        r.remember_scale();
+        if let Some(menus) = &self.menus {
+            menus.set_size(r.scale);
+        }
+    }
+
     /// Branche Claude Code sur Capri, ou le débranche s'il l'est déjà.
     #[cfg(any(target_os = "macos", windows))]
     fn toggle_claude_hook(&mut self) {
@@ -813,7 +886,10 @@ impl Running {
         }
         self.frame = frame_at(now - self.start);
         self.capri.step(dt, self.frame);
-        self.perch.tick(&mut self.capri, &self.overlay, self.frame);
+        self.banner.update(self.frame, self.overlay.scale_factor(), &mut self.renderer);
+        // sa fenêtre est lue le plus tard possible avant de dessiner : le dessin la montre plus fraîche
+        let (seconds, period) = (self.seconds(), pace::refresh_period(self.refresh).as_secs_f64());
+        self.perch.tick(&mut self.capri, &self.overlay, seconds, period);
 
         // La souris traverse la fenêtre partout, sauf sur elle ou tant qu'on la tient.
         let over = self.cursor.is_some_and(|c| self.is_over(c));
@@ -823,10 +899,79 @@ impl Running {
             self.click_through = through;
         }
 
-        self.banner.update(self.frame, self.overlay.scale_factor(), &mut self.renderer);
         if self.drawn != Some(self.scene()) {
             self.overlay.request_redraw();
         }
+    }
+
+    /// Lui donne la taille `scale`, tout de suite : ses pieds restent où ils sont, elle reste
+    /// entière à l'écran (`Capri::set_size`), son bandeau et sa bulle se replacent au dessin
+    /// suivant ; posée, elle reste sur son bord s'il lui laisse la place, sinon elle repart flotter.
+    /// Rend `false` si c'était déjà sa taille.
+    fn resize(&mut self, scale: Scale) -> bool {
+        if scale == self.scale {
+            return false;
+        }
+        log::debug!("taille : {} %", scale.percent());
+        self.scale = scale;
+        self.capri.set_size(display_size(self.mask.size(), self.overlay.scale_factor(), scale));
+        let seconds = self.seconds();
+        self.perch.resized(&mut self.capri, &self.overlay, seconds);
+        true
+    }
+
+    /// Retient sa taille dans son dossier ; si on ne peut pas, elle le dit, et la garde quand même
+    /// jusqu'à ce qu'on la quitte.
+    fn remember_scale(&mut self) {
+        self.unsaved_scale = None;
+        let saved = brain_setup::config_dir().and_then(|directory| size_setup::save(&directory, self.scale));
+        if let Err(err) = saved {
+            log::error!("taille : {err:#}");
+            self.banner.notify(
+                "Je n'ai pas pu retenir ma taille, détails dans le journal",
+                capri_claude::Tone::Failed,
+            );
+        }
+    }
+
+    /// Changée à la molette : retenue une demi-seconde après le dernier cran, pas à chaque cran.
+    fn remember_scale_once_still(&mut self) {
+        if self.unsaved_scale.is_some_and(|at| at.elapsed() >= Duration::from_millis(500)) {
+            self.remember_scale();
+        }
+    }
+
+    /// Quand se réveiller ensuite. Au repos (elle flotte, ou posée sur une fenêtre immobile), dans
+    /// un pas de 60 Hz, comme avant. Pressée (on la tient, elle vole, ou sa fenêtre bouge), à
+    /// chaque rafraîchissement de l'écran : sur macOS, c'est l'écran qui réveille la boucle ;
+    /// ailleurs, un minuteur à sa fréquence. Cachée, jamais pressée.
+    fn next_wake(&mut self, hidden: bool) -> Instant {
+        let now = Instant::now();
+        let carried = matches!(self.capri.stance(), Stance::Held { .. } | Stance::Thrown { .. });
+        let hurried = !hidden && (carried || self.perch.hurried(&self.capri, self.seconds()));
+        self.by_screen = self.overlay.follow_refresh(hurried);
+        if !hurried {
+            self.clock.reset();
+            return now + pace::REST;
+        }
+        let period = pace::refresh_period(self.refresh);
+        if self.by_screen {
+            // l'écran la réveillera avant : ce réveil-ci ne sert que s'il cessait de le faire
+            self.clock.reset();
+            self.fallback = now + period * 3;
+            self.fallback
+        } else {
+            self.clock.next(now, period)
+        }
+    }
+
+    /// Faut-il faire un pas à ce réveil ? Toujours, sauf quand c'est l'écran qui cadence la
+    /// boucle : alors seulement quand c'est lui qui l'a réveillée (ou que son réveil de secours
+    /// est passé). Les autres réveils (sur macOS, il en vient un après chaque image présentée) ne
+    /// refont pas le pas, qui n'aurait rien de neuf à montrer.
+    fn step_due(&mut self) -> bool {
+        let refreshed = self.overlay.refreshed();
+        !self.by_screen || refreshed || Instant::now() >= self.fallback
     }
 
     /// Ce qu'il faut dessiner maintenant : sa pose, et son bandeau s'il y en a un.
@@ -850,7 +995,16 @@ impl Running {
             opacity: 1.0,
         };
         let overlay = &self.overlay;
+        #[cfg(debug_assertions)]
+        let drawing = perch_rehearsal::follow::wall_us();
         self.renderer.render(&draw, banner.as_ref(), || overlay.pre_present_notify());
+        #[cfg(debug_assertions)]
+        {
+            self.perch.drawn += 1;
+            if let Some(trace) = self.perch.trace.as_mut() {
+                trace.drawn(drawing, &self.capri);
+            }
+        }
         self.drawn = Some((pose, banner));
     }
 }
@@ -864,10 +1018,11 @@ fn core_button(button: MouseButton) -> Button {
     }
 }
 
-/// Sa taille à l'écran en pixels physiques, en gardant les proportions du sprite.
-fn display_size((width, height): (u32, u32), scale_factor: f64) -> Vec2 {
-    let h = (HEIGHT_POINTS * scale_factor) as f32;
-    Vec2::new(h * width as f32 / height as f32, h)
+/// Sa taille à l'écran en pixels physiques, pour un écran de `density` pixels par point, à
+/// l'échelle `scale` choisie par l'utilisateur. Le sprite d'aujourd'hui est son dessin debout : il
+/// donne lui-même la hauteur à laquelle l'échelle se rapporte (voir `capri_core::scale`).
+fn display_size(image: (u32, u32), density: f64, scale: Scale) -> Vec2 {
+    scale.display_size(image, image.1, density)
 }
 
 /// ⌃⌥C (Ctrl+Alt+C) la cache ou la fait revenir, ⌃⌥P ouvre le champ pour lui parler, depuis

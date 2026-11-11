@@ -12,6 +12,10 @@
 //! rectangles, que la liste des fenêtres de `capri-platform` lui décrit. [`sheets`] décrit les
 //! planches de sa pose assise (cases, dessins, où passe le bord de la fenêtre). [`music`] décide,
 //! d'après une suite d'écoutes oui/non, si de la musique joue.
+//! [`pace`] dit quand la boucle se réveille : ses dessins restent à 24 i/s, mais sa position suit
+//! le curseur ou sa fenêtre à la cadence de l'écran.
+//! [`scale`] dit sa taille, choisie par l'utilisateur : une échelle rapportée à sa hauteur debout,
+//! que tous ses dessins partagent.
 
 pub mod anim;
 pub mod banner;
@@ -21,7 +25,9 @@ pub mod geom;
 pub mod input;
 pub mod mask;
 pub mod music;
+pub mod pace;
 pub mod perch;
+pub mod scale;
 pub mod sheets;
 pub mod sound;
 pub mod speech;
@@ -32,4 +38,5 @@ pub use body::{Capri, Pose, Stance};
 pub use geom::{Rect, Vec2};
 pub use input::{Button, Press, interpret_press};
 pub use mask::AlphaMask;
+pub use scale::Scale;
 pub use speech::{Speech, SpeechView};

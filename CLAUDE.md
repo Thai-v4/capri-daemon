@@ -29,6 +29,11 @@ micro ouvert en permanence). Sur macOS, une fenêtre de réglages
   des échantillons du système en canaux séparés (`planar`). Elle ne sait rien de Capri.
   Et `sheets` : les planches de sa pose assise (cases, dessins tenus en deux, ligne du bord de la
   fenêtre), mesurées sur les images.
+  Et `scale` : **sa taille**, choisie par l'utilisateur, est une échelle `Scale` rapportée à sa
+  hauteur **debout** d'origine (300 points), de 40 % à 140 % (au-delà, son dessin de 420 pixels de
+  haut serait agrandi plus de 2 fois sur un écran Retina), jamais des dimensions en dur. Tout
+  dessin d'elle, quelles que soient ses proportions, se dessine à `Scale::display_size`, à la
+  densité de son dessin debout : un nouveau dessin (assise…) n'ajoute pas sa propre taille.
   Et `perch` : où se poser sur les fenêtres des autres apps, d'après la description neutre qu'en
   donne `capri-platform` (`DeskWindow` : un numéro, un rectangle, ordinaire ou non, l'opacité, à
   elle ou non ; rien d'autre) : le passage du repère du système à celui de l'overlay (`DeskFrame`,
@@ -140,6 +145,9 @@ micro ouvert en permanence). Sur macOS, une fenêtre de réglages
   un thread à part, résultats relevés à chaque pas de la boucle. `style_setup` écrit le style de
   sortie dans `output-styles/` du dossier de Claude Code ; `claude::Feed` reçoit la ligne du
   miroir, que `banner_view` fait dire par `chat::Chat::relay` quand Capri est libre.
+  Sa taille est retenue par `size_setup` (`size.json` du dossier de Capri, rien d'autre) et
+  appliquée par `Running::resize` (menus « Taille », et `OverlayEvent::Zoom` : la molette sur elle
+  avec `capri_platform::ZOOM_MODIFIER` tenue, ⌥ sur macOS, Ctrl sous Windows).
   `voice_setup::delivery` fait la description de la voix pour la conversation, « Écouter » et
   `capri voice test` ; un changement fait dans la fenêtre est relu par `Chat::refresh_voice` dès
   la phrase suivante. `voice_rehearsal` (version de débogage seulement) est `capri voice
@@ -223,9 +231,18 @@ précisément quoi vérifier plutôt que de l'affirmer.
 - Chaque bloc `unsafe` a un commentaire `// SAFETY:` qui justifie pourquoi il est sûr.
 - Commentaires et textes affichés en français ; identifiants en anglais.
 - Animation façon anime : poses clés tenues un nombre entier d'images à 24 i/s, pas
-  d'interpolation (voir `capri-core/src/anim.rs`).
-- Elle tourne toute la journée : ne redessiner que quand la pose change, rester léger en CPU et
-  en batterie.
+  d'interpolation (voir `capri-core/src/anim.rs`). Cela vaut pour ses **dessins**, pas pour sa
+  **position** : ce qui la porte (le curseur qui la tient, la fenêtre où elle est posée, son vol)
+  est suivi à la cadence de l'écran (`capri_core::pace`, `perch::Watch`, en secondes et non en
+  images d'animation).
+- Elle tourne toute la journée : ne redessiner que quand la pose ou la position change, rester
+  léger en CPU et en batterie. Au repos, la boucle se réveille à 60 Hz (`pace::REST`) ; pressée
+  seulement (tenue, en vol, ou sa fenêtre qui bouge ou un bouton de la souris enfoncé, plus une
+  demi-seconde), elle suit l'écran : `Overlay::follow_refresh` (sur macOS 14 et suivants, un
+  `CADisplayLink` de la vue, en pause le reste du temps ; ailleurs, refus, et un `pace::Clock` à
+  la fréquence de `Overlay::refresh_rate`), et seuls les réveils de l'écran
+  (`Overlay::refreshed`) refont le pas. Mesurer avant de changer la cadence :
+  `CAPRI_PERCH_REHEARSAL=1` (version de débogage ; voir le README).
 - **Ne jamais copier de code** de mochiiwuff/capri-desktop, CyberMoonie/capri-macos ou
   lachydotmcg/capri-desktop (licence PolyForm Noncommercial). S'inspirer des idées, réécrire.
 - **Images** : jamais commitées (`assets/capri/` est ignoré). Elles viennent de

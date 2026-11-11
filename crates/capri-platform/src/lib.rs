@@ -96,7 +96,18 @@ pub enum OverlayEvent {
     InputSubmitted(String),
     /// Le champ de saisie a été fermé sans valider : Échap, ou un clic ailleurs.
     InputCancelled,
+    /// La molette (ou deux doigts sur le pavé tactile) sur elle, avec [`ZOOM_MODIFIER`] tenue :
+    /// `steps` crans, positifs vers le haut (plus grande), négatifs vers le bas. Sans la touche,
+    /// rien n'est rapporté : faire défiler ne la change jamais de taille. Sur macOS, l'élan qui suit
+    /// un geste sur le pavé tactile ne compte pas : elle s'arrête quand les doigts se lèvent.
+    Zoom { steps: f64 },
 }
+
+/// La touche à tenir pour la changer de taille à la molette, sur elle : ⌥ (Option) sur macOS, Ctrl
+/// sous Windows (Alt y ouvrirait le menu de l'app au premier plan en la relâchant, et Ctrl +
+/// molette y est le geste habituel pour agrandir ; sur macOS, Ctrl + molette est le zoom de
+/// l'Accessibilité).
+pub const ZOOM_MODIFIER: &str = if cfg!(target_os = "macos") { "⌥" } else { "Ctrl" };
 
 #[derive(Debug, thiserror::Error)]
 pub enum OverlayError {
@@ -152,6 +163,28 @@ impl Overlay {
     /// Afficher ou cacher sans voler le focus de l'app au premier plan.
     pub fn set_shown(&self, shown: bool) {
         self.0.set_shown(shown);
+    }
+
+    /// La fréquence de rafraîchissement de son écran, en Hz (60, ou 120 en ProMotion), telle que
+    /// le système la donne ; `None` s'il ne la donne pas.
+    pub fn refresh_rate(&self) -> Option<f64> {
+        self.0.refresh_rate()
+    }
+
+    /// Demande que l'écran réveille la boucle à chaque rafraîchissement (`on`), ou plus. Rend
+    /// `true` si c'est désormais le cas (macOS 14 et suivants : un `CADisplayLink`) ; `false` si ce
+    /// système ne sait pas le faire (Windows, Linux, macOS plus ancien) : c'est alors à l'app de
+    /// se réveiller elle-même à la fréquence de [`Overlay::refresh_rate`].
+    pub fn follow_refresh(&self, on: bool) -> bool {
+        self.0.follow_refresh(on)
+    }
+
+    /// Pendant [`Overlay::follow_refresh`] : l'écran a-t-il réveillé la boucle depuis le dernier
+    /// appel ? La boucle se réveille aussi pour d'autres raisons (sur macOS, après chaque image
+    /// présentée) : seuls les réveils de l'écran doivent faire avancer Capri. Toujours `false` là
+    /// où l'écran ne réveille pas la boucle.
+    pub fn refreshed(&self) -> bool {
+        self.0.refreshed()
     }
 
     /// Demande un [`OverlayEvent::RedrawRequested`].
