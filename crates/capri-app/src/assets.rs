@@ -64,8 +64,6 @@ fn union_mask<'a>(cell: (u32, u32), cells: impl Iterator<Item = (&'a [u8], u32, 
 /// Les planches de sa pose assise (`assets/capri/perch/`, voir CREDITS.md et
 /// `capri_core::sheets`).
 pub mod perch {
-    #![allow(dead_code, reason = "branché par le lot qui la fera s'asseoir avec ces planches")]
-
     use std::path::Path;
 
     use capri_core::AlphaMask;
@@ -116,10 +114,18 @@ pub mod perch {
 
     /// **Tolérant** : s'il en manque une, si l'une est illisible ou n'a pas la taille attendue,
     /// rend `None` (une ligne dans le journal, sans rien d'autre que le nom du fichier et des
-    /// nombres), et elle se pose avec son dessin debout, comme avant. Environ 70 Mo en mémoire une
-    /// fois lues : à lâcher dès qu'elles sont confiées au GPU.
+    /// nombres), et elle se pose debout, comme avant. Environ 68 Mo en mémoire une fois lues et
+    /// remises en grilles : à lâcher dès qu'elles sont confiées au GPU.
     pub fn load() -> Option<PerchSheets> {
         load_from(&super::assets_dir()?)
+    }
+
+    /// Ses planches assises sont-elles toutes là (sans les lire) ?
+    #[cfg(debug_assertions)]
+    pub fn present() -> bool {
+        super::assets_dir().is_some_and(|dir| {
+            Strip::ALL.iter().all(|strip| dir.join(sheets::DIR).join(strip.file()).is_file())
+        })
     }
 
     pub(super) fn load_from(dir: &Path) -> Option<PerchSheets> {
@@ -348,6 +354,23 @@ mod tests {
         assert!(alpha(rest.0 - 6, seat) == 0 && alpha(rest.1 + 6, seat) == 0);
         // rien sous ce qui pend
         assert!((0..sheets::NARROW).all(|x| alpha(x, seat + sheets::HANG) == 0));
+        // rien hors de sa largeur mesurée, dans aucun dessin des quatre boucles
+        let (from, to) = sheets::SPAN;
+        for strip in [Strip::Perch, Strip::PerchBlink, Strip::PerchTalk, Strip::PerchMusic] {
+            for index in 0..strip.count() {
+                let cell = sheets::cell_pixels(strip, &sheets.get(strip).rgba, index).unwrap();
+                let outside = (0..sheets::CELL_HEIGHT)
+                    .flat_map(|y| (0..from).chain(to..sheets::NARROW).map(move |x| (x, y)))
+                    .any(|(x, y)| cell[((y * sheets::NARROW + x) * 4 + 3) as usize] != 0);
+                assert!(!outside, "{strip:?} {index}");
+            }
+        }
+        // ses masques de clic : sur elle là où elle est assise, pas à côté
+        let masks = sheets.masks();
+        let uv = |x: u32, y: u32| capri_core::Vec2::new(x as f32 / 196.0, y as f32 / 384.0);
+        assert!(masks.narrow.hit(uv(rest.0 + 10, seat - 2)), "sa main sur le bord");
+        assert!(!masks.narrow.hit(uv(2, 10)), "le coin de la case");
+        assert!((0.1..0.6).contains(&masks.narrow.coverage()), "{}", masks.narrow.coverage());
     }
 
     mod standing {

@@ -186,6 +186,10 @@ fn run() -> i32 {
 /// (220 × 420), les pieds au milieu du bas.
 fn stature(scale: f32) -> Stature {
     let height = crate::standing_height(f64::from(scale), capri_core::Scale::ORIGINAL);
+    if crate::assets::perch::present() {
+        println!("pose sur les fenêtres : assise, ses planches");
+        return capri_core::look::seated_stature(height);
+    }
     if crate::assets::stand::present() {
         println!("pose debout : ses planches");
         let stand = capri_core::sheets::stand::cell_size(height);

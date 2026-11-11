@@ -36,6 +36,8 @@ mod music_rehearsal;
 mod perch_rehearsal;
 mod perch_setup;
 mod perch_view;
+#[cfg(test)]
+mod portraits;
 #[cfg(any(target_os = "macos", windows))]
 mod settings_view;
 mod size_setup;
@@ -93,15 +95,15 @@ fn main() -> Result<()> {
     init_log();
     let loaded = Instant::now();
     let sprite = assets::load_sprite()?;
-    // ses planches debout ; sans elles, son dessin d'avant
-    let stand = assets::stand::load();
+    // ses planches debout et assise ; sans elles, son dessin d'avant
+    let (stand, perch) = (assets::stand::load(), assets::perch::load());
     log::info!("images lues en {} ms", loaded.elapsed().as_millis());
 
     let mut builder = EventLoop::builder();
     capri_platform::configure_event_loop(&mut builder);
     let event_loop = builder.build().context("création de la boucle d'événements")?;
 
-    let mut app = App { images: Some(Images { sprite, stand }), ..App::default() };
+    let mut app = App { images: Some(Images { sprite, stand, perch }), ..App::default() };
     event_loop.run_app(&mut app)?;
     app.fatal.map_or(Ok(()), Err)
 }
@@ -152,6 +154,7 @@ impl log::Log for NoWireLog {
 struct Images {
     sprite: assets::Sprite,
     stand: Option<assets::stand::StandSheets>,
+    perch: Option<assets::perch::PerchSheets>,
 }
 
 #[derive(Default)]
@@ -279,7 +282,7 @@ impl ApplicationHandler for App {
 
 impl App {
     fn start(&mut self, event_loop: &ActiveEventLoop) -> Result<Running> {
-        let Images { sprite, stand } = self.images.take().context("démarrage déjà fait")?;
+        let Images { sprite, stand, perch } = self.images.take().context("démarrage déjà fait")?;
         let overlay = Overlay::new(event_loop)?;
 
         let (width, height) = overlay.size();
@@ -297,10 +300,12 @@ impl App {
         log::info!("taille : {} %", scale.percent());
         let standing = standing_height(overlay.scale_factor(), scale);
         // ses images confiées à la carte graphique, puis lâchées
-        let figure = figure::Figure::new(sprite, stand, None, standing, |image| renderer.add_image(image))?;
+        let figure = figure::Figure::new(sprite, stand, perch, standing, |image| renderer.add_image(image))?;
+        let look = &figure.look;
         log::info!(
-            "dessins : {} debout ; mémoire graphique : {:.1} Mo",
-            if figure.look.has_stand() { "planches" } else { "dessin d'avant" },
+            "dessins : debout {}, sur les fenêtres {} ; mémoire graphique : {:.1} Mo",
+            if look.has_stand() { "ses planches" } else { "son dessin d'avant" },
+            if look.has_perch() { "assise" } else { "debout" },
             renderer.image_bytes() as f64 / 1_000_000.0
         );
         let body = figure.look.standing_size();
