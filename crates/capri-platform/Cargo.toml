@@ -104,6 +104,7 @@ objc2-app-kit = { version = "0.3.2", default-features = false, features = [
     "NSPopUpButton",
     "NSPopUpButtonCell",
     "NSResponder",
+    "NSRunningApplication", # en version de débogage : la fenêtre d'essai, sans icône dans le Dock
     "NSScreen",
     "NSScrollView",
     "NSClipView",
@@ -118,6 +119,14 @@ objc2-app-kit = { version = "0.3.2", default-features = false, features = [
     "NSView",
     "NSWindow",
     "objc2-core-foundation", # CGFloat, pour backingScaleFactor
+    "objc2-quartz-core", # NSView.displayLink : réveiller la boucle à chaque rafraîchissement
+] }
+# Le CADisplayLink de la vue : quand elle suit sa fenêtre ou qu'on la tient, la boucle se réveille
+# au rythme de l'écran (120 Hz en ProMotion). Déjà tiré par wgpu : aucun crate de plus.
+objc2-quartz-core = { version = "0.3.2", default-features = false, features = [
+    "std",
+    "CADisplayLink",
+    "CAFrameRateRange",
 ] }
 
 [target.'cfg(windows)'.dependencies]

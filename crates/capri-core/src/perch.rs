@@ -38,14 +38,13 @@ pub const MIN_HEIGHT: f32 = 0.15;
 /// voit pas.
 pub const MIN_OPACITY: f32 = 0.9;
 
-/// Posée, elle relit la liste des fenêtres toutes les `SLOW_FRAMES` images (à 24 i/s) tant que
-/// sa fenêtre ne bouge pas…
-pub const SLOW_FRAMES: u64 = 6;
-/// … à chaque image pendant que sa fenêtre bouge, ou qu'un bouton de la souris est enfoncé (on
-/// est peut-être en train de la déplacer)…
-pub const FAST_FRAMES: u64 = 1;
-/// … et encore ce nombre d'images après le dernier mouvement vu.
-pub const KEEP_FAST_FRAMES: u64 = 12;
+/// Posée, elle relit la liste des fenêtres toutes les `SLOW` secondes (4 fois par seconde) tant
+/// que sa fenêtre ne bouge pas…
+pub const SLOW: f64 = 0.25;
+/// … à chaque rafraîchissement de l'écran pendant que sa fenêtre bouge, ou qu'un bouton de la
+/// souris est enfoncé (on est peut-être en train de la déplacer), et encore ce nombre de secondes
+/// après le dernier mouvement vu.
+pub const KEEP_FAST: f64 = 0.5;
 
 /// Une fenêtre telle que le système la décrit, dans son propre repère. Rien d'autre : ni titre,
 /// ni app. Le système ne donne que les fenêtres à l'écran, de la plus en avant à la plus en
@@ -351,13 +350,14 @@ fn overlaps(a: Rect, b: Rect) -> bool {
     a.min.x < b.max().x && b.min.x < a.max().x && a.min.y < b.max().y && b.min.y < a.max().y
 }
 
-/// Quand relire la liste des fenêtres pendant qu'elle est posée. Le temps est compté en images
-/// d'animation (24 par seconde) : elle suit sa fenêtre au rythme de ses dessins.
+/// Quand relire la liste des fenêtres pendant qu'elle est posée. Le temps est compté en secondes,
+/// pas en images d'animation : suivre sa fenêtre, c'est comme être tenue par la souris, à la
+/// cadence de l'écran (voir [`crate::pace`]) ; ses dessins, eux, restent à 24 i/s.
 #[derive(Clone, Debug, Default)]
 pub struct Watch {
-    last_read: Option<u64>,
+    last_read: Option<f64>,
     last_rect: Option<Rect>,
-    moved_at: Option<u64>,
+    moved_at: Option<f64>,
 }
 
 impl Watch {
@@ -370,19 +370,32 @@ impl Watch {
         *self = Self::default();
     }
 
-    /// Faut-il relire à l'image `frame` ? `mouse_down` : un bouton de la souris est enfoncé.
-    pub fn due(&self, frame: u64, mouse_down: bool) -> bool {
-        let Some(last) = self.last_read else { return true };
-        let moving = self.moved_at.is_some_and(|at| frame.saturating_sub(at) < KEEP_FAST_FRAMES);
-        frame.saturating_sub(last) >= if mouse_down || moving { FAST_FRAMES } else { SLOW_FRAMES }
+    /// Est-elle pressée à l'instant `now` (secondes) : un bouton de la souris est enfoncé
+    /// (`mouse_down`), ou sa fenêtre a bougé il y a moins de [`KEEP_FAST`] ? Alors elle relit à
+    /// chaque rafraîchissement de l'écran, et la boucle doit se réveiller aussi souvent.
+    pub fn hurried(&self, now: f64, mouse_down: bool) -> bool {
+        mouse_down || self.moved_at.is_some_and(|at| now - at < KEEP_FAST)
     }
 
-    /// Une lecture vient d'être faite à l'image `frame` ; `rect` : sa fenêtre, telle que lue.
-    pub fn saw(&mut self, frame: u64, rect: Option<Rect>) {
+    /// Faut-il relire à l'instant `now` ? `period` : la durée d'un rafraîchissement de l'écran, en
+    /// secondes. Pressée, une fois par rafraîchissement : un quart de période suffit entre deux
+    /// lectures, pour qu'un réveil d'écran arrivé en retard (une lecture prend jusqu'à 3,5 ms
+    /// pendant qu'une fenêtre bouge, mesuré) ne fasse pas sauter le suivant, tout en ne relisant
+    /// pas pour un réveil de plus dans la même image. Sinon toutes les [`SLOW`] secondes.
+    pub fn due(&self, now: f64, mouse_down: bool, period: f64) -> bool {
+        let Some(last) = self.last_read else { return true };
+        let wait = if self.hurried(now, mouse_down) { period * 0.25 } else { SLOW };
+        // un instant qui n'est pas un nombre : relire plutôt que se figer
+        let elapsed = now - last;
+        elapsed >= wait || elapsed.is_nan()
+    }
+
+    /// Une lecture vient d'être faite à l'instant `now` ; `rect` : sa fenêtre, telle que lue.
+    pub fn saw(&mut self, now: f64, rect: Option<Rect>) {
         if self.last_read.is_some() && rect != self.last_rect {
-            self.moved_at = Some(frame);
+            self.moved_at = Some(now);
         }
-        self.last_read = Some(frame);
+        self.last_read = Some(now);
         self.last_rect = rect;
     }
 }
@@ -639,27 +652,45 @@ mod tests {
     }
 
     #[test]
-    fn the_watch_reads_slowly_at_rest_and_quickly_while_her_window_moves() {
+    fn the_watch_reads_slowly_at_rest_and_at_every_refresh_while_her_window_moves() {
+        // un écran à 120 Hz
+        let period = 1.0 / 120.0;
         let r = rect(200.0, 1000.0, 1600.0, 800.0);
         let mut watch = Watch::new();
-        assert!(watch.due(0, false), "première lecture tout de suite");
-        watch.saw(0, Some(r));
-        assert!(!watch.due(SLOW_FRAMES - 1, false));
-        assert!(watch.due(SLOW_FRAMES, false), "au repos : toutes les {SLOW_FRAMES} images");
-        // un bouton de la souris enfoncé : à chaque image
-        assert!(watch.due(FAST_FRAMES, true));
-        // la fenêtre bouge : à chaque image, et encore un moment après
+        assert!(watch.due(0.0, false, period), "première lecture tout de suite");
+        watch.saw(0.0, Some(r));
+        assert!(!watch.hurried(0.0, false));
+        assert!(!watch.due(0.2, false, period));
+        assert!(watch.due(SLOW, false, period), "au repos : 4 fois par seconde");
+
+        // un bouton de la souris enfoncé : pressée, à chaque rafraîchissement
+        assert!(watch.hurried(0.01, true));
+        assert!(watch.due(0.01, true, period));
+        // mais pas deux fois dans la même image (un réveil de plus ne relit pas)…
+        watch.saw(0.01, Some(r));
+        assert!(!watch.due(0.01 + period * 0.2, true, period));
+        // … et un réveil d'écran qui suit de près un réveil en retard ne fait pas sauter l'image
+        assert!(watch.due(0.01 + period * 0.5, true, period));
+
+        // la fenêtre bouge : pressée, et encore un moment après le dernier mouvement vu
         let moved = rect(210.0, 1000.0, 1600.0, 800.0);
-        watch.saw(6, Some(moved));
-        assert!(watch.due(7, false));
-        watch.saw(7, Some(moved));
-        assert!(watch.due(8, false), "elle vient de bouger");
-        let later = 6 + KEEP_FAST_FRAMES;
+        watch.saw(1.0, Some(moved));
+        assert!(watch.hurried(1.0, false));
+        assert!(watch.due(1.0 + period, false, period));
+        watch.saw(1.0 + period, Some(moved));
+        assert!(watch.hurried(1.0 + KEEP_FAST - 0.01, false), "elle vient de bouger");
+        assert!(watch.due(1.0 + period * 2.0, false, period));
+        let later = 1.0 + KEEP_FAST;
         watch.saw(later, Some(moved));
-        assert!(!watch.due(later + 1, false), "immobile depuis un moment : de nouveau lente");
-        assert!(watch.due(later + SLOW_FRAMES, false));
+        assert!(!watch.hurried(later, false), "immobile depuis un moment : de nouveau au repos");
+        assert!(!watch.due(later + period, false, period));
+        assert!(watch.due(later + SLOW, false, period));
+
         // revenue d'être cachée : tout de suite
         watch.wake();
-        assert!(watch.due(later + 1, false));
+        assert!(watch.due(later + period, false, period));
+        // un instant qui n'est pas un nombre ne la fige pas
+        watch.saw(2.0, Some(r));
+        assert!(watch.due(f64::NAN, false, period));
     }
 }

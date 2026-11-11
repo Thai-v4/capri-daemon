@@ -90,3 +90,51 @@ pub fn main_screen() -> Option<(capri_core::perch::DeskFrame, (u32, u32))> {
 pub fn main_screen() -> Option<(capri_core::perch::DeskFrame, (u32, u32))> {
     None
 }
+
+/// En version de débogage, pour `capri perch window` : une petite fenêtre d'essai, ordinaire et
+/// opaque, qu'on déplace par programme (macOS seulement).
+#[cfg(all(debug_assertions, target_os = "macos"))]
+#[path = "macos/test_window.rs"]
+mod test_window;
+#[cfg(all(debug_assertions, target_os = "macos"))]
+pub use test_window::TestWindow;
+
+/// En version de débogage, pour mesurer ce que coûte Capri : le temps de processeur consommé par
+/// tout le processus depuis son lancement. `None` ailleurs que sur macOS.
+#[cfg(all(debug_assertions, target_os = "macos"))]
+pub fn cpu_time() -> Option<std::time::Duration> {
+    /// `CLOCK_PROCESS_CPUTIME_ID`, de `<_time.h>`.
+    const CLOCK_PROCESS_CPUTIME_ID: std::ffi::c_int = 12;
+    clock_nanos(CLOCK_PROCESS_CPUTIME_ID)
+}
+
+/// Comme [`cpu_time`], pour le seul fil qui appelle.
+#[cfg(all(debug_assertions, target_os = "macos"))]
+pub fn thread_cpu_time() -> Option<std::time::Duration> {
+    /// `CLOCK_THREAD_CPUTIME_ID`, de `<_time.h>`.
+    const CLOCK_THREAD_CPUTIME_ID: std::ffi::c_int = 16;
+    clock_nanos(CLOCK_THREAD_CPUTIME_ID)
+}
+
+#[cfg(all(debug_assertions, target_os = "macos"))]
+fn clock_nanos(clock: std::ffi::c_int) -> Option<std::time::Duration> {
+    // `<_time.h>` du SDK de macOS : `__uint64_t clock_gettime_nsec_np(clockid_t __clock_id);`,
+    // où `clockid_t` est une énumération C (un `int`). Elle rend 0 en cas d'erreur.
+    unsafe extern "C" {
+        fn clock_gettime_nsec_np(clock_id: std::ffi::c_int) -> u64;
+    }
+    // SAFETY: fonction de la bibliothèque C du système, déclarée comme dans son en-tête, qui ne
+    // prend qu'un entier et ne touche à aucune mémoire de l'appelant.
+    let nanos = unsafe { clock_gettime_nsec_np(clock) };
+    (nanos > 0).then(|| std::time::Duration::from_nanos(nanos))
+}
+
+#[cfg(all(debug_assertions, not(target_os = "macos")))]
+pub fn cpu_time() -> Option<std::time::Duration> {
+    None
+}
+
+#[cfg(all(debug_assertions, not(target_os = "macos")))]
+pub fn thread_cpu_time() -> Option<std::time::Duration> {
+    None
+}

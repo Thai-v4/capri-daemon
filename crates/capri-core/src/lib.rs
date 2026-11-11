@@ -10,6 +10,8 @@
 //! sans rien savoir du système : `capri-chat` la compose, la voix de `capri-platform` l'applique.
 //! [`perch`] décide où elle se pose sur les fenêtres des autres apps, d'après leurs seuls
 //! rectangles, que la liste des fenêtres de `capri-platform` lui décrit.
+//! [`pace`] dit quand la boucle se réveille : ses dessins restent à 24 i/s, mais sa position suit
+//! le curseur ou sa fenêtre à la cadence de l'écran.
 
 pub mod anim;
 pub mod banner;
@@ -18,6 +20,7 @@ pub mod form;
 pub mod geom;
 pub mod input;
 pub mod mask;
+pub mod pace;
 pub mod perch;
 pub mod sound;
 pub mod speech;

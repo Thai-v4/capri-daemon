@@ -218,9 +218,18 @@ précisément quoi vérifier plutôt que de l'affirmer.
 - Chaque bloc `unsafe` a un commentaire `// SAFETY:` qui justifie pourquoi il est sûr.
 - Commentaires et textes affichés en français ; identifiants en anglais.
 - Animation façon anime : poses clés tenues un nombre entier d'images à 24 i/s, pas
-  d'interpolation (voir `capri-core/src/anim.rs`).
-- Elle tourne toute la journée : ne redessiner que quand la pose change, rester léger en CPU et
-  en batterie.
+  d'interpolation (voir `capri-core/src/anim.rs`). Cela vaut pour ses **dessins**, pas pour sa
+  **position** : ce qui la porte (le curseur qui la tient, la fenêtre où elle est posée, son vol)
+  est suivi à la cadence de l'écran (`capri_core::pace`, `perch::Watch`, en secondes et non en
+  images d'animation).
+- Elle tourne toute la journée : ne redessiner que quand la pose ou la position change, rester
+  léger en CPU et en batterie. Au repos, la boucle se réveille à 60 Hz (`pace::REST`) ; pressée
+  seulement (tenue, en vol, ou sa fenêtre qui bouge ou un bouton de la souris enfoncé, plus une
+  demi-seconde), elle suit l'écran : `Overlay::follow_refresh` (sur macOS 14 et suivants, un
+  `CADisplayLink` de la vue, en pause le reste du temps ; ailleurs, refus, et un `pace::Clock` à
+  la fréquence de `Overlay::refresh_rate`), et seuls les réveils de l'écran
+  (`Overlay::refreshed`) refont le pas. Mesurer avant de changer la cadence :
+  `CAPRI_PERCH_REHEARSAL=1` (version de débogage ; voir le README).
 - **Ne jamais copier de code** de mochiiwuff/capri-desktop ou CyberMoonie/capri-macos (licence
   PolyForm Noncommercial). S'inspirer des idées, réécrire.
 - **Images** : jamais commitées (`assets/capri/` est ignoré). Elles viennent de

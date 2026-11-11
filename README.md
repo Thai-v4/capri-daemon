@@ -66,7 +66,10 @@ dessous de son bord) : elle s'y pose, s'écrase un instant sur ses pieds, rebond
 immobile (elle ne flotte plus ; seul son trait continue de « bouillir »). **Lance-la** : là où elle
 s'arrête, c'est la même règle. Posée, elle **suit la fenêtre** quand tu la déplaces ou la
 redimensionnes, à la même place le long du bord (tirée par un seul côté, la fenêtre ne l'emmène pas :
-le bord sous ses pieds n'a pas bougé), sans quitter le bord ni l'écran. Elle **se remet à flotter
+le bord sous ses pieds n'a pas bougé), sans quitter le bord ni l'écran, à chaque rafraîchissement de
+l'écran (120 fois par seconde sur un écran ProMotion, 60 sur la plupart des autres ; de même quand
+on la tient ou qu'elle vole). Ses dessins, eux, restent des poses tenues à 24 images par seconde :
+seule sa position suit l'écran. Elle **se remet à flotter
 sur place**, avec un petit étirement, quand :
 
 - sa fenêtre n'est plus à l'écran (fermée, réduite dans le Dock, app masquée, autre bureau) ;
@@ -87,11 +90,39 @@ ni gardés, ni écrits dans le journal, qui ne dit que des nombres. Elle ne gard
 fenêtre, des rectangles et leur ordre, le temps de décider.
 
 **Ce que ça coûte.** La liste n'est lue que quand elle sert : une fois quand elle s'arrête ; posée,
-4 fois par seconde quand rien ne bouge, 24 fois par seconde pendant que sa fenêtre bouge ou qu'un
-bouton de la souris est enfoncé. Jamais quand elle est cachée, tenue ou en vol, ni quand c'est
-désactivé. Une lecture prend 0,16 à 0,17 ms en médiane et 0,25 à 0,4 ms en moyenne (mesuré sur un
-MacBook Pro M5 Pro, avec 17 à 19 fenêtres à l'écran) : 1 à 1,6 ms par seconde posée au repos, 6 à
-10 ms par seconde pendant un déplacement, soit au plus un centième d'un cœur.
+4 fois par seconde quand rien ne bouge ; à chaque rafraîchissement de l'écran pendant que sa fenêtre
+bouge ou qu'un bouton de la souris est enfoncé, et encore une demi-seconde après. Jamais quand elle
+est cachée, tenue ou en vol, ni quand c'est désactivé. Au repos, la boucle de l'app se réveille
+60 fois par seconde, comme avant ; pressée, c'est l'écran qui la réveille (sur macOS 14 et suivants,
+un `CADisplayLink`, en pause le reste du temps). Elle ne se redessine que quand sa pose ou sa
+position change. Mesuré le 11 novembre 2026 sur un MacBook Pro M5 Pro (écran à 120 Hz), processeur
+de tout le processus, version optimisée, par la répétition `CAPRI_PERCH_REHEARSAL` (plus bas) :
+
+| moment | processeur (% d'un cœur) | lectures par seconde | images par seconde |
+| ------ | ------------------------ | -------------------- | ------------------ |
+| elle flotte | 2,3 à 2,7 | 0 | 12 |
+| posée, rien ne bouge | 2,1 à 2,7 | 4 à 5 | 12 |
+| posée, un bouton de la souris enfoncé, la fenêtre immobile | 5,2 à 5,3 | 120 | 12 |
+| posée, sa fenêtre déplacée | 12,4 à 14,3 | 115 à 119 | 100 à 108 |
+| *avant ce réglage*, sa fenêtre déplacée | 4,7 (une mesure) | 24 | 24 |
+
+Posée au repos, elle ne coûte donc rien de plus que flottante. Pendant un déplacement, chaque image
+coûte : c'est le prix de 100 positions par seconde au lieu de 24, et seulement le temps du
+déplacement (une demi-seconde après son arrêt, elle revient au repos). Une lecture de la liste prend
+0,16 ms au repos ; pendant qu'une fenêtre bouge, elle prend 3,5 ms (médiane), mais seulement
+0,15 ms de processeur : le reste est l'attente de la réponse du serveur de fenêtres.
+
+**Son retard sur la fenêtre.** Elle n'est pas collée à sa fenêtre : elle la suit avec environ une
+image de retard. CoreGraphics donne la position d'une fenêtre après coup : déplacée par programme,
+la liste la montre 6,4 à 6,9 ms plus tard (médiane ; une fois sur vingt seulement tout de suite).
+La position qu'elle dessine a environ 7 ms quand l'image part (8 ms pour 90 % des images), puis
+l'écran la montre au rafraîchissement suivant (jusqu'à 8,3 ms de plus, que rien ne mesure ici).
+Pour une fenêtre qui file jusqu'à 785 points par seconde, l'écart entre elle et la fenêtre est de
+4 points en médiane, de moins de 7 points neuf fois sur dix (avant ce réglage : 12 points en
+médiane, jusqu'à 29 neuf fois sur dix, et elle avançait par sauts). Lire la position plus tard
+n'y changerait rien : elle est déjà lue juste avant de dessiner (0,3 ms entre la lecture et l'image
+envoyée) ; le retard est dans CoreGraphics et dans l'écran. Ces chiffres viennent d'une fenêtre
+déplacée par programme : une fenêtre tirée à la main n'a pas été mesurée.
 
 **Le désactiver** : décoche « S'asseoir sur les fenêtres » dans son menu (clic droit sur elle, ou son
 icône dans la barre des menus). C'est retenu d'un lancement à l'autre (`perch.json`, dans son
@@ -104,10 +135,17 @@ Limites connues :
 - elle vit sur l'écran qui porte la barre des menus : les fenêtres d'un autre écran ne comptent pas,
   et elle repart quand sa fenêtre quitte son écran ;
 - une fenêtre fermée, réduite ou passée devant elle au clavier se remarque au plus tard un quart de
-  seconde après ; une fenêtre déplacée à la souris, elle la suit au rythme de ses dessins (24 fois
-  par seconde), donc avec un léger retard ;
+  seconde après ; une fenêtre déplacée à la souris, elle la suit à chaque rafraîchissement de
+  l'écran, avec environ une image de retard (voir plus haut) ; une fenêtre déplacée sans la souris
+  (un raccourci, un gestionnaire de fenêtres), elle ne la voit partir qu'à sa lecture suivante, un
+  quart de seconde au plus, puis la suit de même ;
+- sur macOS avant la version 14, pas de `CADisplayLink` de vue : un minuteur réglé sur la fréquence
+  de l'écran le remplace (non essayé) ;
 - une fenêtre que le système dit opaque mais qui est transparente par endroits compte comme pleine ;
-- Windows : écrit et compilé, jamais exécuté (voir plus bas) ; Linux : elle flotte comme avant.
+- Windows : écrit et compilé, jamais exécuté (voir plus bas). La fréquence de l'écran y vient de
+  winit (`EnumDisplaySettingsExW`), les pas pressés d'un minuteur à cette fréquence (winit prend un
+  minuteur à haute résolution), et la présentation (`Fifo`) se cale sur l'écran ; Linux : elle
+  flotte comme avant.
 
 ## Jalon 4 : lui parler
 
@@ -562,7 +600,8 @@ crates/
                    description d'un formulaire de réglages, et celle de comment dire une phrase
                    (sound.rs : voix, hauteur, débit, traitements du son, leurs bornes), et où se
                    poser sur les fenêtres (perch.rs : repères, bords visibles, accroche, suivi,
-                   départ, cadence de lecture) (testée)
+                   départ, cadence de lecture), et quand la boucle se réveille (pace.rs : 60 Hz
+                   au repos, la fréquence de l'écran quand elle suit quelque chose) (testée)
   capri-claude/    logique pure : hooks de Claude Code, protocole, sessions, settings.json, style
                    de sortie « Capri », miroir, dossiers de Capri et de Claude Code (testée)
   capri-chat/      logique pure : conversation, fournisseurs et format « chat completions », flux
@@ -577,7 +616,8 @@ crates/
     sprite.wgsl    le shader : boil et copie violette
     banner.rs      le texte du bandeau et de la bulle, tracé avec les polices du système
   capri-platform/  la fenêtre « Overlay » : première des deux couches qui parlent au système
-    macos.rs         AppKit via objc2 : un NSPanel non activant, sans fenêtre winit
+    macos.rs         AppKit via objc2 : un NSPanel non activant, sans fenêtre winit, et le
+                     CADisplayLink qui réveille la boucle au rythme de l'écran quand il le faut
     macos/input.rs   le champ de saisie : un des deux panneaux qui prennent le clavier, sur demande
     settings_window.rs la fenêtre de réglages, qui affiche un formulaire de capri-core ;
                      macos/settings_window.rs : un NSPanel à onglets (refus ailleurs)
@@ -587,7 +627,8 @@ crates/
                      macos/voice_stage.rs : la chaîne d'effets (AVAudioEngine)
     ear.rs           son oreille ; macos/ear.rs : le micro et la reconnaissance sur l'appareil
     desk.rs          la liste des fenêtres des autres apps, sans permission ; macos/desk.rs
-                     (CoreGraphics), windows/desk.rs (Win32 et DWM, jamais exécuté)
+                     (CoreGraphics), windows/desk.rs (Win32 et DWM, jamais exécuté) ; en version
+                     de débogage, macos/test_window.rs (la fenêtre d'essai qu'on déplace)
     keychain.rs      le trousseau des clés d'API ; macos/keychain.rs, windows/keychain.rs
     terminal.rs      taper une clé sans qu'elle s'affiche
     winit_overlay.rs fenêtre winit, pour Windows et les autres systèmes
@@ -607,7 +648,8 @@ crates/
                    tests/voix_en_silence.rs) ; s'asseoir sur les fenêtres (perch_view.rs, et
                    perch_setup.rs pour perch.json), et en version de débogage `capri perch
                    rehearse` (perch_rehearsal.rs : la vraie liste des fenêtres, sans rien
-                   afficher, lancée par tests/fenetres_du_bureau.rs)
+                   afficher, lancée par tests/fenetres_du_bureau.rs) et `CAPRI_PERCH_REHEARSAL`
+                   (perch_rehearsal/follow.rs : le suivi d'une fenêtre d'essai, mesuré)
 tools/             récupération vérifiée des images, fabrication de Capri.app (macOS)
 ```
 
@@ -618,7 +660,7 @@ Règle : tout ce qui peut être testé sans écran va dans `capri-core`, `capri-
 
 Vérifié automatiquement :
 
-- formatage, `clippy -D warnings` et 423 tests sur **macOS Apple Silicon** (plus 6 qui ne
+- formatage, `clippy -D warnings` et 425 tests sur **macOS Apple Silicon** (plus 6 qui ne
   tournent qu'à la main : ils écrivent des images, lisent un vrai `settings.json`, touchent au
   vrai trousseau, créent de vraies voix et un vrai moteur audio, sans bruit, ou lisent la vraie
   liste des fenêtres) : animation, lancer et rebonds, hit-test, clics, bandeau, parole en pages, bulle
@@ -704,7 +746,11 @@ Vérifié automatiquement :
   image) ; le suivi (immobile, déplacée, tirée par la gauche, rétrécie par la droite, changée des
   deux côtés, à moitié hors de l'écran) ; le départ (fenêtre disparue,
   bord recouvert sous ses pieds ou à moitié, plein écran, trop haute, sortie par le bas ou sur un
-  autre écran, une place qui n'est pas un nombre) ; la cadence de lecture ; sa pose (l'écrasement
+  autre écran, une place qui n'est pas un nombre) ; la cadence de lecture (4 fois par seconde au
+  repos, à chaque rafraîchissement de l'écran pendant que sa fenêtre bouge ou qu'un bouton est
+  enfoncé, et une demi-seconde après, sans lire deux fois dans la même image ni sauter celle qui
+  suit un réveil en retard) et celle de la boucle (la fréquence de l'écran crue seulement dans des
+  bornes sensées, un minuteur qui ne dérive pas et ne repousse jamais un réveil) ; sa pose (l'écrasement
   et le rebond tenus 3 et 2 images, ses pieds immobiles, puis plus aucun flottement ; l'étirement
   au départ ; attrapée, elle quitte le bord) ; `perch.json` (activé sans fichier, retenu, un
   fichier étrange signalé) ;
@@ -810,7 +856,23 @@ dossier, et le trousseau d'essai est vide après. Le processus quitte de lui-mê
 - la vraie app en version de débogage, cinq secondes, avec un dossier, une socket et un trousseau
   d'essai, à côté d'une Capri déjà lancée et sans y toucher : elle démarre, son menu se construit
   avec la nouvelle case, rien ne plante, rien n'est écrit. Elle n'a été ni attrapée ni posée
-  (impossible sans souris).
+  (impossible sans souris) ;
+- le suivi d'une fenêtre (le 11 novembre 2026, plus tard), par la répétition
+  `CAPRI_PERCH_REHEARSAL=1` de la vraie app : un second processus (`capri perch window`, version de
+  débogage) ouvre une petite fenêtre d'essai à lui (400 × 240 points, au milieu de l'écran, sans
+  prendre le clavier), Capri y est posée comme si on l'avait lâchée au-dessus de son bord, la
+  fenêtre reste immobile, puis fait un va-et-vient de 250 points par programme pendant deux
+  secondes, et se ferme : moins de quatre secondes à l'écran. Le journal donne le processeur de
+  chaque étape, les lectures et les images par seconde, et le retard : ce sont les chiffres
+  ci-dessus. `CAPRI_PERCH_REHEARSAL=avant` fait la même chose avec la cadence d'avant, pour
+  comparer. Mesuré en version optimisée avec les assertions de débogage de `capri-app` et
+  `capri-platform` seulement (la répétition n'existe pas dans la version livrée) : `cargo build
+  --release -p capri-app --config 'profile.release.package.capri-app.debug-assertions=true'
+  --config 'profile.release.package.capri-platform.debug-assertions=true'`, puis lancée avec un
+  dossier, un trousseau et une socket d'essai, à côté de la Capri de l'utilisateur sans y toucher
+  (deux Capri à l'écran pendant une douzaine de secondes, ses raccourcis restant à la première).
+  Cinq passages dans cette configuration (quatre avec la nouvelle cadence, un avec celle d'avant),
+  et d'autres avant, compilés autrement, qui disent la même chose.
 
 Le rendu réel sous Linux avec un GPU logiciel (le sprite s'affiche, flotte et « bout ») avait été
 vérifié avant le passage à la fenêtre « Overlay » ; il n'a pas été revérifié depuis.
@@ -958,8 +1020,10 @@ ne peut ouvrir le micro ; seule la logique de décision, sur une horloge factice
    le menu et l'onglet restent d'accord, et `settings.json` redevient identique à l'octet près ;
 4. un `capri.md` à toi dans `output-styles/` n'est jamais touché.
 
-**Jalon 3 : à regarder à la main** (rien n'a encore été vu ; depuis `Capri.app` reconstruite, ou
-`RUST_LOG=debug cargo run --release` pour lire le journal) :
+**Jalon 3 : à regarder à la main** (le 11 novembre 2026, sur le MacBook Pro à écran ProMotion :
+**se poser a été vu fonctionner** ; le reste de la liste n'a pas été regardé point par point, et
+elle saccadait en suivant sa fenêtre, d'où la nouvelle cadence ; depuis `Capri.app` reconstruite,
+ou `RUST_LOG=debug cargo run --release` pour lire le journal) :
 
 1. **se poser** : une fenêtre ordinaire (Finder, TextEdit) dont le haut est vers le milieu de
    l'écran ; lâche Capri doucement, les pieds un peu au-dessus du bord : elle descend s'y poser, ses
@@ -971,9 +1035,14 @@ ne peut ouvrir le micro ; seule la logique de décision, sur une horloge factice
    vide ; contre le bord de l'écran, elle reste entière à l'écran ;
 3. **la lancer** vers une fenêtre : si elle s'arrête près d'un bord, elle s'y pose ; sinon elle
    flotte. Les rebonds sur les bords de l'écran sont ceux d'avant ;
-4. **suivre** : déplace sa fenêtre lentement puis vite : elle suit, reste sur le bord et dans
-   l'écran, et part avec la fenêtre dès le début du déplacement (un léger retard, au rythme de ses
-   dessins, est normal). Redimensionne-la par la gauche : elle ne bouge pas ; par la droite,
+4. **suivre** : déplace sa fenêtre lentement puis vite, sur l'écran ProMotion : elle suit **sans
+   saccades**, glisse avec la fenêtre au lieu d'avancer par petits sauts, reste sur le bord et dans
+   l'écran, et part avec la fenêtre dès le début du déplacement. Un retard d'environ une image
+   (quelques points à grande vitesse) est attendu ; un décalage plus grand, ou des à-coups
+   réguliers, ne le sont pas. Ses dessins (le trait qui bout) restent au rythme d'avant pendant ce
+   temps. Lâche la fenêtre : elle s'arrête avec elle, sans rebond ni dernier saut un instant après.
+   Fais de même en la tenant elle-même (attrapée, sans fenêtre) : elle suit le curseur aussi
+   doucement. Redimensionne-la par la gauche : elle ne bouge pas ; par la droite,
    jusqu'à plus étroite que l'endroit où elle était : elle glisse au bout du bord, sans le quitter ;
    par un coin du haut : elle monte ou descend avec le bord ;
 5. **fenêtre fermée** (⌘W), réduite dans le Dock (⌘M), app masquée (⌘H) : elle se remet à
@@ -991,9 +1060,10 @@ ne peut ouvrir le micro ; seule la logique de décision, sur une horloge factice
 11. **le menu** : « S'asseoir sur les fenêtres » est coché, dans le menu de l'icône comme au clic
     droit ; décoche-le : posée, elle repart, et lâchée près d'un bord elle flotte ; les deux menus
     restent d'accord ; quitte et relance Capri : toujours décoché ; recoche-le ;
-12. **le processeur au repos**, dans le Moniteur d'activité (% processeur de Capri) : flottante, puis
-    posée sans que rien ne bouge (presque pareil), pendant qu'on déplace sa fenêtre (un peu plus),
-    puis cachée (comme cachée avant ce jalon) ;
+12. **le processeur**, dans le Moniteur d'activité (% processeur de Capri) : flottante, puis posée
+    sans que rien ne bouge (pareil), pendant qu'on déplace sa fenêtre (nettement plus, une dizaine
+    de % d'un cœur mesurés, seulement le temps du déplacement), une demi-seconde après l'avoir
+    lâchée (de retour au repos), puis cachée (comme cachée avant ce jalon) ;
 13. aucune demande de permission n'apparaît (ni Accessibilité, ni Enregistrement de l'écran), et
     elle se pose quand même ;
 14. avec `RUST_LOG=debug`, les lignes « posée sur un bord », « aucun bord sous ses pieds » et
@@ -1027,8 +1097,9 @@ Points à surveiller :
 2. ~~Le hook Claude Code : un petit binaire Rust, une socket Unix réservée à ton utilisateur, et
    un bandeau qui affiche ce que fait Claude~~ ← jalon 2
 3. ~~Elle s'assoit sur tes fenêtres~~ ← jalon 3 (macOS : CoreGraphics, sans aucune permission ;
-   Windows : Win32) : écrit et testé sans écran ; reste à le regarder sur un vrai Mac, et à
-   l'exécuter sur un vrai PC Windows.
+   Windows : Win32) : écrit et testé sans écran ; se poser vu sur un vrai Mac le 11 novembre 2026,
+   puis le suivi rendu fluide (à la cadence de l'écran, mesuré sans écran) ; reste à regarder le
+   reste sur un vrai Mac, et à l'exécuter sur un vrai PC Windows.
 4. Le chat avec un modèle d'IA : ~~la saisie et la bulle~~, ~~un modèle local par Ollama~~,
    ~~les fournisseurs à clé compatibles OpenAI (OpenRouter, DeepSeek, ProxyAPI, Ollama en ligne)
    avec leurs clés dans le trousseau~~, ~~une fenêtre de réglages (macOS)~~, ~~Capri dans Claude

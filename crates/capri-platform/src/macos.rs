@@ -15,13 +15,17 @@ use std::rc::Rc;
 
 use dispatch2::MainThreadBound;
 use objc2::rc::Retained;
-use objc2::{DefinedClass, MainThreadMarker, define_class, msg_send, sel};
+use objc2::runtime::{NSObject, NSObjectProtocol};
+use objc2::{DefinedClass, MainThreadMarker, MainThreadOnly, define_class, msg_send, sel};
 use objc2_app_kit::{
     NSApplicationDidChangeScreenParametersNotification, NSBackingStoreType, NSColor, NSEvent,
     NSEventModifierFlags, NSPanel, NSScreen, NSStatusWindowLevel, NSView, NSWindowCollectionBehavior,
     NSWindowStyleMask,
 };
-use objc2_foundation::{NSNotification, NSNotificationCenter, NSPoint, NSRect};
+use objc2_foundation::{
+    NSNotification, NSNotificationCenter, NSPoint, NSRect, NSRunLoop, NSRunLoopCommonModes,
+};
+use objc2_quartz_core::{CADisplayLink, CAFrameRateRange};
 use raw_window_handle::{
     AppKitWindowHandle, DisplayHandle, HandleError, HasDisplayHandle, HasWindowHandle, RawWindowHandle,
     WindowHandle,
@@ -51,6 +55,8 @@ struct Shared {
     size: Cell<(u32, u32)>,
     scale: Cell<f64>,
     redraw: Cell<bool>,
+    /// L'écran a réveillé la boucle (son `CADisplayLink`) depuis la dernière fois qu'on l'a demandé.
+    refreshed: Cell<bool>,
 }
 
 impl Shared {
@@ -137,6 +143,38 @@ define_class!(
     }
 );
 
+define_class!(
+    // SAFETY: NSObject n'impose rien à ses sous-classes, et `FrameTarget` n'implémente pas `Drop`.
+    // Elle ne vit que sur le thread principal, où le lien l'appelle (il est ajouté à sa boucle).
+    #[unsafe(super(NSObject))]
+    #[thread_kind = MainThreadOnly]
+    #[name = "CapriFrameTarget"]
+    #[ivars = Rc<Shared>]
+    struct FrameTarget;
+
+    // SAFETY: NSObjectProtocol n'a rien à implémenter de plus pour un NSObject.
+    unsafe impl NSObjectProtocol for FrameTarget {}
+
+    impl FrameTarget {
+        /// Appelée par le `CADisplayLink` à chaque rafraîchissement de l'écran, sur la boucle
+        /// principale. Être appelée réveille la boucle (winit rappelle `about_to_wait` avant
+        /// qu'elle se rendorme : c'est là que Capri fait son pas) ; on note seulement que c'est
+        /// l'écran qui l'a réveillée, pour que l'app ne refasse pas son pas à chaque autre réveil.
+        #[unsafe(method(step:))]
+        fn step(&self, _link: &CADisplayLink) {
+            self.ivars().refreshed.set(true);
+        }
+    }
+);
+
+impl FrameTarget {
+    fn new(mtm: MainThreadMarker, shared: Rc<Shared>) -> Retained<Self> {
+        let this = mtm.alloc::<Self>().set_ivars(shared);
+        // SAFETY: l'initialiseur de NSObject, sur un objet tout juste alloué.
+        unsafe { msg_send![super(this), init] }
+    }
+}
+
 impl OverlayView {
     fn pressed(&self, button: MouseButton, event: &NSEvent) {
         let ctrl = event.modifierFlags().contains(NSEventModifierFlags::Control);
@@ -171,6 +209,18 @@ pub struct Overlay {
     shared: Rc<Shared>,
     /// Le champ de saisie, fermé tant qu'on ne le demande pas.
     input: Retained<input::InputPanel>,
+    /// Le réveil au rythme de l'écran (macOS 14 et suivants), en pause tant qu'on ne le demande
+    /// pas ; `None` là où le système ne le propose pas.
+    frame_link: Option<Retained<CADisplayLink>>,
+}
+
+impl Drop for Overlay {
+    fn drop(&mut self) {
+        // la boucle principale le retient (et sa cible) tant qu'il n'est pas invalidé
+        if let Some(link) = &self.frame_link {
+            link.invalidate();
+        }
+    }
 }
 
 impl Overlay {
@@ -184,6 +234,7 @@ impl Overlay {
             size: Cell::new(physical_size(frame, scale)),
             scale: Cell::new(scale),
             redraw: Cell::new(false),
+            refreshed: Cell::new(false),
         });
 
         // Sans bordure (valeur 0) et non activant : un clic dessus n'active pas l'app.
@@ -240,7 +291,35 @@ impl Overlay {
         // Créé dès maintenant, encore fermé : s'il y a un problème avec ce panneau, autant le
         // découvrir au lancement qu'à la première question.
         let input = input::InputPanel::create(mtm, Rc::clone(&shared));
-        Ok(Self { panel, view, shared, input })
+        let frame_link = frame_link(mtm, &view, &screen, Rc::clone(&shared));
+        Ok(Self { panel, view, shared, input, frame_link })
+    }
+
+    /// La fréquence de rafraîchissement de son écran, en Hz (120 en ProMotion), d'après
+    /// `NSScreen.maximumFramesPerSecond` (macOS 12 et suivants). `None` si le système ne la dit pas.
+    pub fn refresh_rate(&self) -> Option<f64> {
+        let mtm = MainThreadMarker::from(&*self.view);
+        let screen = primary_screen(mtm)?;
+        let fps =
+            screen.respondsToSelector(sel!(maximumFramesPerSecond)).then(|| screen.maximumFramesPerSecond());
+        fps.filter(|&fps| fps > 0).map(|fps| fps as f64)
+    }
+
+    /// Se réveiller à chaque rafraîchissement de l'écran (`true`), ou plus (`false`). Rend `true`
+    /// si c'est l'écran qui réveille désormais la boucle ; `false` s'il ne le peut pas (avant
+    /// macOS 14), et c'est alors à l'app de se réveiller elle-même assez souvent.
+    pub fn follow_refresh(&self, on: bool) -> bool {
+        let Some(link) = &self.frame_link else { return false };
+        if link.isPaused() == on {
+            link.setPaused(!on);
+            self.shared.refreshed.set(false);
+        }
+        on
+    }
+
+    /// L'écran a-t-il réveillé la boucle depuis le dernier appel ?
+    pub fn refreshed(&self) -> bool {
+        self.shared.refreshed.replace(false)
     }
 
     pub fn show_input(&self, placeholder: &str, place: impl FnOnce(f64, f64) -> (f64, f64)) -> bool {
@@ -353,6 +432,40 @@ fn view_handle(view: &OverlayView) -> WindowHandle<'_> {
     // SAFETY: le pointeur désigne une NSView vivante, et la poignée ne peut pas survivre à
     // l'emprunt de `view` dont elle porte la durée de vie.
     unsafe { WindowHandle::borrow_raw(raw) }
+}
+
+/// Un `CADisplayLink` de la vue, en pause, ajouté à la boucle principale : il la réveillera à
+/// chaque rafraîchissement de l'écran où est la vue (`NSView.h` : « en phase avec l'écran de la
+/// vue » ; il ne se déclenche pas quand la vue est cachée). `None` avant macOS 14, où
+/// `displayLinkWithTarget:selector:` n'existe pas (l'appeler lèverait une exception).
+fn frame_link(
+    mtm: MainThreadMarker,
+    view: &OverlayView,
+    screen: &NSScreen,
+    shared: Rc<Shared>,
+) -> Option<Retained<CADisplayLink>> {
+    if !view.respondsToSelector(sel!(displayLinkWithTarget:selector:)) {
+        log::info!("pas de réveil au rythme de l'écran avant macOS 14 : un minuteur le remplace");
+        return None;
+    }
+    let target = FrameTarget::new(mtm, shared);
+    // SAFETY: `target` est un objet vivant (le lien le retient jusqu'à `invalidate`), dont la
+    // méthode `step:` a la signature qu'exige `CADisplayLink.h` : `(void)selector:(CADisplayLink
+    // *)sender`.
+    let link = unsafe { view.displayLinkWithTarget_selector(&target, sel!(step:)) };
+    link.setPaused(true);
+    // ProMotion : demander toute la fréquence de l'écran, pas la cadence que le système choisirait
+    if screen.respondsToSelector(sel!(maximumFramesPerSecond)) {
+        let hz = screen.maximumFramesPerSecond() as f32;
+        if hz > 0.0 {
+            link.setPreferredFrameRateRange(CAFrameRateRange { minimum: hz, maximum: hz, preferred: hz });
+        }
+    }
+    // SAFETY: la boucle principale (on est sur le thread principal, la vue en témoigne) et le mode
+    // commun, constante de Foundation valable toute la vie du processus ; `CADisplayLink.h` : un lien
+    // n'est ajouté qu'à une seule boucle, ce qu'on fait une fois.
+    unsafe { link.addToRunLoop_forMode(&NSRunLoop::mainRunLoop(), NSRunLoopCommonModes) };
+    Some(link)
 }
 
 /// L'écran qui porte la barre des menus, à l'origine du repère global.

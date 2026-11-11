@@ -5,8 +5,9 @@
 //! Une seule fenêtre transparente, l'overlay de `capri-platform`, couvre l'écran principal. Elle
 //! laisse passer la souris partout, sauf sur Capri elle-même. Le curseur est lu auprès du système
 //! 60 fois par seconde (la fenêtre ne reçoit pas les mouvements quand elle se laisse traverser),
-//! mais on ne redessine que quand sa pose ou son bandeau change : environ 12 fois par seconde au
-//! repos.
+//! à chaque rafraîchissement de l'écran quand on la tient, qu'elle vole ou que sa fenêtre bouge
+//! (`capri_core::pace`), mais on ne redessine que quand sa pose, sa position ou son bandeau
+//! change : environ 12 fois par seconde au repos.
 //!
 //! `capri hook install | uninstall | status | style …` branche Claude Code sur Capri et installe
 //! son style de sortie,
@@ -39,11 +40,15 @@ mod style_setup;
 mod voice_rehearsal;
 mod voice_setup;
 
-use std::time::{Duration, Instant};
+#[cfg(all(debug_assertions, any(target_os = "macos", windows)))]
+use std::time::Duration;
+use std::time::Instant;
 
 use anyhow::{Context, Result};
 use banner_view::BannerView;
-use capri_core::{AlphaMask, Button, Capri, Pose, Press, Rect, Vec2, frame_at, interpret_press, place_input};
+use capri_core::{
+    AlphaMask, Button, Capri, Pose, Press, Rect, Stance, Vec2, frame_at, interpret_press, pace, place_input,
+};
 use capri_platform::{Overlay, OverlayEvent};
 use capri_render::{Renderer, SpriteDraw, SpriteImage};
 use global_hotkey::hotkey::{Code, HotKey, Modifiers};
@@ -55,8 +60,6 @@ use winit::window::WindowId;
 
 /// Sa hauteur à l'écran, en points (pixels logiques).
 const HEIGHT_POINTS: f64 = 300.0;
-/// Lecture du curseur et pas de simulation.
-const TICK: Duration = Duration::from_micros(16_667);
 /// Amplitude du « boil », en pixels du sprite d'origine.
 const BOIL: f32 = 1.0;
 /// Écart entre ses pieds et le champ de saisie, en points.
@@ -153,6 +156,9 @@ struct App {
     /// Une répétition de la fenêtre de réglages, pour les essais (version de débogage).
     #[cfg(all(debug_assertions, any(target_os = "macos", windows)))]
     rehearsal: Option<Rehearsal>,
+    /// La répétition du suivi d'une fenêtre (`CAPRI_PERCH_REHEARSAL`, version de débogage).
+    #[cfg(debug_assertions)]
+    follow: Option<perch_rehearsal::Follow>,
     fatal: Option<anyhow::Error>,
 }
 
@@ -194,6 +200,14 @@ struct Running {
     frame: u64,
     /// Ce qui est à l'écran : sa pose et, s'il est là, son bandeau.
     drawn: Option<(Pose, Option<SpriteDraw>)>,
+    /// La fréquence de son écran, telle que le système la dit (relue quand l'écran change).
+    refresh: Option<f64>,
+    /// Le réveil des pas pressés, là où l'écran ne réveille pas la boucle lui-même.
+    clock: pace::Clock,
+    /// C'est l'écran qui cadence la boucle ; à défaut de ses nouvelles, un pas est fait quand
+    /// même passé `fallback`.
+    by_screen: bool,
+    fallback: Instant,
 }
 
 impl ApplicationHandler for App {
@@ -227,13 +241,21 @@ impl ApplicationHandler for App {
         if let Some(r) = self.running.as_mut() {
             if self.hidden {
                 r.banner.listen_only();
-            } else {
+            } else if r.step_due() {
                 r.tick();
             }
         }
         // sur macOS, le redessin que `tick` vient de demander se fait ici, sans attendre un tour
         self.handle_overlay(event_loop);
-        event_loop.set_control_flow(ControlFlow::WaitUntil(Instant::now() + TICK));
+        #[cfg(debug_assertions)]
+        if let (Some(follow), Some(r)) = (self.follow.as_mut(), self.running.as_mut())
+            && follow.step(r)
+        {
+            event_loop.exit();
+        }
+        let hidden = self.hidden;
+        let wake = self.running.as_mut().map_or_else(|| Instant::now() + pace::REST, |r| r.next_wake(hidden));
+        event_loop.set_control_flow(ControlFlow::WaitUntil(wake));
     }
 }
 
@@ -288,6 +310,12 @@ impl App {
         if !capri_platform::INTERACTIVE {
             log::warn!("système pas encore pris en charge : Capri s'affiche mais ne peut pas être attrapée");
         }
+        #[cfg(debug_assertions)]
+        {
+            self.follow = perch_rehearsal::Follow::from_env();
+        }
+        let refresh = overlay.refresh_rate();
+        log::info!("écran : {refresh:?} Hz");
 
         let now = Instant::now();
         Ok(Running {
@@ -303,6 +331,10 @@ impl App {
             perch: perch_view::PerchView::new(perch_enabled),
             frame: 0,
             drawn: None,
+            refresh,
+            clock: pace::Clock::new(),
+            by_screen: false,
+            fallback: now,
         })
     }
 
@@ -318,9 +350,11 @@ impl App {
                     r.renderer.resize(width, height);
                     r.capri.set_bounds(Rect::new(Vec2::ZERO, Vec2::new(width as f32, height as f32)));
                     r.overlay.request_redraw();
+                    r.refresh = r.overlay.refresh_rate();
                 }
                 OverlayEvent::ScaleFactorChanged(scale) => {
                     log::debug!("overlay : densité {scale}");
+                    r.refresh = r.overlay.refresh_rate();
                     r.capri.set_size(display_size(r.mask.size(), scale));
                     r.banner.rescaled();
                 }
@@ -808,7 +842,10 @@ impl Running {
         }
         self.frame = frame_at(now - self.start);
         self.capri.step(dt, self.frame);
-        self.perch.tick(&mut self.capri, &self.overlay, self.frame);
+        self.banner.update(self.frame, self.overlay.scale_factor(), &mut self.renderer);
+        // sa fenêtre est lue le plus tard possible avant de dessiner : le dessin la montre plus fraîche
+        let (seconds, period) = (self.seconds(), pace::refresh_period(self.refresh).as_secs_f64());
+        self.perch.tick(&mut self.capri, &self.overlay, seconds, period);
 
         // La souris traverse la fenêtre partout, sauf sur elle ou tant qu'on la tient.
         let over = self.cursor.is_some_and(|c| self.is_over(c));
@@ -818,10 +855,42 @@ impl Running {
             self.click_through = through;
         }
 
-        self.banner.update(self.frame, self.overlay.scale_factor(), &mut self.renderer);
         if self.drawn != Some(self.scene()) {
             self.overlay.request_redraw();
         }
+    }
+
+    /// Quand se réveiller ensuite. Au repos (elle flotte, ou posée sur une fenêtre immobile), dans
+    /// un pas de 60 Hz, comme avant. Pressée (on la tient, elle vole, ou sa fenêtre bouge), à
+    /// chaque rafraîchissement de l'écran : sur macOS, c'est l'écran qui réveille la boucle ;
+    /// ailleurs, un minuteur à sa fréquence. Cachée, jamais pressée.
+    fn next_wake(&mut self, hidden: bool) -> Instant {
+        let now = Instant::now();
+        let carried = matches!(self.capri.stance(), Stance::Held { .. } | Stance::Thrown { .. });
+        let hurried = !hidden && (carried || self.perch.hurried(&self.capri, self.seconds()));
+        self.by_screen = self.overlay.follow_refresh(hurried);
+        if !hurried {
+            self.clock.reset();
+            return now + pace::REST;
+        }
+        let period = pace::refresh_period(self.refresh);
+        if self.by_screen {
+            // l'écran la réveillera avant : ce réveil-ci ne sert que s'il cessait de le faire
+            self.clock.reset();
+            self.fallback = now + period * 3;
+            self.fallback
+        } else {
+            self.clock.next(now, period)
+        }
+    }
+
+    /// Faut-il faire un pas à ce réveil ? Toujours, sauf quand c'est l'écran qui cadence la
+    /// boucle : alors seulement quand c'est lui qui l'a réveillée (ou que son réveil de secours
+    /// est passé). Les autres réveils (sur macOS, il en vient un après chaque image présentée) ne
+    /// refont pas le pas, qui n'aurait rien de neuf à montrer.
+    fn step_due(&mut self) -> bool {
+        let refreshed = self.overlay.refreshed();
+        !self.by_screen || refreshed || Instant::now() >= self.fallback
     }
 
     /// Ce qu'il faut dessiner maintenant : sa pose, et son bandeau s'il y en a un.
@@ -845,7 +914,16 @@ impl Running {
             opacity: 1.0,
         };
         let overlay = &self.overlay;
+        #[cfg(debug_assertions)]
+        let drawing = perch_rehearsal::follow::wall_us();
         self.renderer.render(&draw, banner.as_ref(), || overlay.pre_present_notify());
+        #[cfg(debug_assertions)]
+        {
+            self.perch.drawn += 1;
+            if let Some(trace) = self.perch.trace.as_mut() {
+                trace.drawn(drawing, &self.capri);
+            }
+        }
         self.drawn = Some((pose, banner));
     }
 }

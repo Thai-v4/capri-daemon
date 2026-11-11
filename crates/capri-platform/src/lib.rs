@@ -152,6 +152,28 @@ impl Overlay {
         self.0.set_shown(shown);
     }
 
+    /// La fréquence de rafraîchissement de son écran, en Hz (60, ou 120 en ProMotion), telle que
+    /// le système la donne ; `None` s'il ne la donne pas.
+    pub fn refresh_rate(&self) -> Option<f64> {
+        self.0.refresh_rate()
+    }
+
+    /// Demande que l'écran réveille la boucle à chaque rafraîchissement (`on`), ou plus. Rend
+    /// `true` si c'est désormais le cas (macOS 14 et suivants : un `CADisplayLink`) ; `false` si ce
+    /// système ne sait pas le faire (Windows, Linux, macOS plus ancien) : c'est alors à l'app de
+    /// se réveiller elle-même à la fréquence de [`Overlay::refresh_rate`].
+    pub fn follow_refresh(&self, on: bool) -> bool {
+        self.0.follow_refresh(on)
+    }
+
+    /// Pendant [`Overlay::follow_refresh`] : l'écran a-t-il réveillé la boucle depuis le dernier
+    /// appel ? La boucle se réveille aussi pour d'autres raisons (sur macOS, après chaque image
+    /// présentée) : seuls les réveils de l'écran doivent faire avancer Capri. Toujours `false` là
+    /// où l'écran ne réveille pas la boucle.
+    pub fn refreshed(&self) -> bool {
+        self.0.refreshed()
+    }
+
     /// Demande un [`OverlayEvent::RedrawRequested`].
     pub fn request_redraw(&self) {
         self.0.request_redraw();

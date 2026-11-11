@@ -76,6 +76,22 @@ impl Overlay {
         imp::set_shown(&self.window, shown);
     }
 
+    /// Celle de l'écran où est la fenêtre, d'après winit (sous Windows : `EnumDisplaySettingsExW`).
+    pub fn refresh_rate(&self) -> Option<f64> {
+        let millihertz = self.window.current_monitor()?.refresh_rate_millihertz()?;
+        Some(f64::from(millihertz) / 1000.0)
+    }
+
+    /// Pas de réveil au rythme de l'écran avec une fenêtre winit : l'app règle son minuteur sur
+    /// [`Overlay::refresh_rate`], et la présentation (`Fifo`) se cale sur l'écran.
+    pub fn follow_refresh(&self, _on: bool) -> bool {
+        false
+    }
+
+    pub fn refreshed(&self) -> bool {
+        false
+    }
+
     pub fn request_redraw(&self) {
         self.window.request_redraw();
     }
