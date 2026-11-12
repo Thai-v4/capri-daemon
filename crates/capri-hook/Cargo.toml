@@ -12,9 +12,5 @@ license.workspace = true
 capri-claude = { path = "../capri-claude" }
 capri-ipc = { path = "../capri-ipc" }
 
-[dev-dependencies]
-capri-claude = { path = "../capri-claude" }
-capri-ipc = { path = "../capri-ipc" }
-
 [lints]
 workspace = true
