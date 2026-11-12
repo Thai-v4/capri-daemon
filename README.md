@@ -1430,5 +1430,13 @@ Points à surveiller :
 
 ## Licence
 
-Licence du **code** à choisir (MIT ou Apache-2.0 par exemple). Les **images** n'en relèvent pas :
-voir [CREDITS.md](CREDITS.md).
+Le **code** est sous licence **MIT** ou **Apache-2.0**, au choix de qui l'utilise :
+[LICENSE-MIT](LICENSE-MIT) et [LICENSE-APACHE](LICENSE-APACHE).
+
+Sauf demande contraire de votre part, toute contribution soumise pour être incluse dans ce projet,
+au sens de la licence Apache-2.0, est placée sous cette même double licence, sans condition
+supplémentaire.
+
+Les **images** n'en relèvent pas, et elles ne sont pas dans le dépôt : voir
+[CREDITS.md](CREDITS.md). Cela ne change rien au reste : Capri reste un projet de fan non
+commercial, sans affiliation avec les ayants droit du personnage.

@@ -5,6 +5,7 @@ version.workspace = true
 edition.workspace = true
 publish.workspace = true
 rust-version.workspace = true
+license.workspace = true
 
 # Ce crate est chargé par capri-hook à chaque événement de Claude Code : il doit rester minuscule.
 # Pas de winit, pas d'AppKit ici.
