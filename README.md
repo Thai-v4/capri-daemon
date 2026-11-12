@@ -1065,13 +1065,15 @@ Vérifié automatiquement :
   abonnement ordinaire, lui, ne reçoit rien. Mesuré au passage : AppKit n'avait pas suspendu la
   livraison (Capri n'ayant jamais été active, elle n'a jamais cessé de l'être) ; la livraison
   immédiate la protège pour le jour où il le ferait. Ni la sortie ni le journal (au niveau
-  `trace`) ne contiennent les faux titre, artiste et album de l'annonce. Pas vérifié : une vraie
-  annonce de Spotify ou de Musique (voir la liste suivante) ;
+  `trace`) ne contiennent les faux titre, artiste et album de l'annonce. Pas vérifié ce jour-là :
+  une vraie annonce de Spotify ou de Musique (celles de Spotify l'ont été le 12 novembre 2026 :
+  « Vérifié à la main sur un vrai Mac », point 22, plus bas ; celles de Musique jamais) ;
 - la vraie app lancée quelques secondes avec des lieux d'essai : planches lues en 44 ms, 47 Mo de
   textures, 2,3 % d'un cœur flottante au repos ; puis avec son seul dessin d'avant
   (`CAPRI_ASSETS`) : elle démarre, le journal dit qu'elle garde son dessin d'avant, 0,4 Mo de
-  textures. Ni le mouvement, ni le suivi d'une vraie fenêtre, ni une vraie musique n'ont été
-  regardés : voir la liste suivante.
+  textures. Ce jour-là, ni le mouvement, ni le suivi d'une vraie fenêtre, ni une vraie musique
+  n'ont été regardés (le mouvement et la musique de Spotify l'ont été le 12 novembre 2026 :
+  « Vérifié à la main sur un vrai Mac », points 21 et 22, plus bas).
 
 **Vérifié en ligne de commande sur ce Mac** (le 10 novembre 2026, sans la clé d'un vrai
 fournisseur) :
@@ -1265,6 +1267,23 @@ vérifié avant le passage à la fenêtre « Overlay » ; il n'a pas été revé
 20. Les effets de voix, écoutés le 11 novembre 2026 depuis `Capri.app` : « cela fonctionne bien »,
     sans retour cas par cas (voir plus bas ceux qui n'ont pas été confirmés un par un).
 
+21. Ses dessins, regardés le 12 novembre 2026 : sa boucle debout et son flottement vont bien, et
+    elle s'assoit bien sur les fenêtres, avec ses planches. Pas de retour point par point (voir
+    plus bas la liste « Ses dessins et la musique ») ; l'échelle de 1,20 entre ses deux poses n'a
+    pas encore été jugée en mouvement.
+
+22. Sa musique avec Spotify, le 12 novembre 2026 : elle se balance à la lecture et s'arrête à la
+    pause. La vraie app a reçu de vraies annonces de Spotify (quatre pauses, quatre lectures), et
+    l'utilisateur a confirmé que ça fonctionne. Musique (Apple Music) n'a jamais été essayée.
+
+23. L'ouverture de session, le 12 novembre 2026 : la case cochée dans le vrai menu, le fichier de
+    l'agent écrit, et valide. Puis l'agent chargé à la main (`launchctl bootstrap`), Ollama arrêté :
+    Capri a été lancée, elle a lancé `/opt/homebrew/bin/ollama serve` 7 secondes plus tard, qui a
+    répondu une seconde après sur `127.0.0.1:11434`, et qui a continué de tourner une fois Capri
+    quittée (par un signal, pas par son menu). Pas fait : une vraie fermeture puis réouverture de
+    session, ce que dit son bandeau, le micro quand elle est lancée ainsi, ce qu'affiche Réglages
+    Système.
+
 **Pas encore vérifié** : une vraie conversation avec DeepSeek, ProxyAPI ou Ollama en ligne (ils
 passent par le même code qu'OpenRouter, mais n'ont pas été essayés) ; rien avec le vrai service
 d'Anthropic (voir la liste plus bas) ; un vrai LM Studio ; la
@@ -1354,8 +1373,9 @@ ne peut ouvrir le micro ; seule la logique de décision, sur une horloge factice
 
 **Jalon 3 : à regarder à la main** (le 11 novembre 2026, sur le MacBook Pro à écran ProMotion :
 **se poser a été vu fonctionner** ; le reste de la liste n'a pas été regardé point par point, et
-elle saccadait en suivant sa fenêtre, d'où la nouvelle cadence ; depuis `Capri.app` reconstruite,
-ou `RUST_LOG=debug cargo run --release` pour lire le journal) :
+elle saccadait en suivant sa fenêtre, d'où la nouvelle cadence ; le 12 novembre 2026, elle s'y
+assoit bien, avec ses planches : « Vérifié à la main sur un vrai Mac », point 21, plus haut ;
+depuis `Capri.app` reconstruite, ou `RUST_LOG=debug cargo run --release` pour lire le journal) :
 
 1. **se poser** : une fenêtre ordinaire (Finder, TextEdit) dont le haut est vers le milieu de
    l'écran ; lâche Capri doucement, les pieds un peu au-dessus du bord : elle disparaît et
@@ -1371,7 +1391,7 @@ ou `RUST_LOG=debug cargo run --release` pour lire le journal) :
    saccades**, glisse avec la fenêtre au lieu d'avancer par petits sauts, reste sur le bord et dans
    l'écran, et part avec la fenêtre dès le début du déplacement. Un retard d'environ une image
    (quelques points à grande vitesse) est attendu ; un décalage plus grand, ou des à-coups
-   réguliers, ne le sont pas. Ses dessins (le trait qui bout) restent au rythme d'avant pendant ce
+   réguliers, ne le sont pas. Ses dessins restent au rythme d'avant pendant ce
    temps. Lâche la fenêtre : elle s'arrête avec elle, sans rebond ni dernier saut un instant après.
    Fais de même en la tenant elle-même (attrapée, sans fenêtre) : elle suit le curseur aussi
    doucement. Redimensionne-la par la gauche : elle ne bouge pas ; par la droite,
@@ -1424,8 +1444,11 @@ ou `RUST_LOG=debug cargo run --release` pour lire le journal) :
 21. **le flou** : à 140 %, son dessin est nettement plus doux qu'à 100 % (attendu) ; à 40 %, son
     trait ne doit ni scintiller ni s'émietter sur l'écran Retina.
 
-**Ses dessins et la musique : à regarder et à écouter à la main** (rien de cette liste n'a été
-regardé en mouvement ; les images fixes, elles, l'ont été, voir plus haut) :
+**Ses dessins et la musique : à regarder et à écouter à la main** (le 12 novembre 2026, sa boucle
+debout et son flottement, elle assise sur les fenêtres, et Spotify en lecture puis en pause ont été
+regardés et confirmés, sans retour point par point : « Vérifié à la main sur un vrai Mac », points
+21 et 22, plus haut ; le reste de cette liste n'a pas été regardé en mouvement ; les images fixes,
+elles, l'ont été, voir plus haut) :
 
 1. **debout** : elle flotte doucement, monte et descend en 2,5 s ; ses cheveux retombent quand
    elle est au plus bas : les deux ensemble, sans à-coup ni dessin qui saute à la fin d'un tour.
@@ -1458,14 +1481,14 @@ regardé en mouvement ; les images fixes, elles, l'ont été, voir plus haut) :
    avait vu à 1,11 en mouvement) ; ce qui reste à voir, c'est 1,20 lui-même en mouvement. Les
    images rendues `cote-a-cote.png` (à 1,20) et `cote-a-cote-a-1-11.png` (à 1,11, celui du projet
    d'origine) montrent les deux ;
-10. **Spotify, lecture puis pause** : Capri lancée, assise, mets un morceau dans Spotify : au début
-    du tour suivant de sa boucle (jusqu'à 2,5 s), elle se balance, les yeux fermés ; mets en pause :
-    elle reprend sa boucle au tour suivant ; relance la lecture : elle se balance de nouveau. Si
-    rien ne se passe, c'est que Spotify n'annonce pas ce qu'on croit (le nom de l'annonce et les
-    valeurs `Playing` / `Paused` n'ont été vus que dans son binaire, jamais reçus pour de vrai) ;
-    `capri music rehearse` (version de débogage) dit combien d'annonces de Spotify elle a reçues
-    pendant qu'elle tourne. Écris-lui pendant la musique : elle parle tout de suite, puis reprend
-    la musique au tour suivant ;
+10. **Spotify, lecture puis pause** (fait le 12 novembre 2026 pour la lecture et la pause :
+    « Vérifié à la main sur un vrai Mac », point 22 ; reste à essayer : lui écrire pendant la
+    musique) : Capri lancée, assise, mets un morceau dans Spotify : au début du tour suivant de sa
+    boucle (jusqu'à 2,5 s), elle se balance, les yeux fermés ; mets en pause : elle reprend sa
+    boucle au tour suivant ; relance la lecture : elle se balance de nouveau. `capri music
+    rehearse` (version de débogage) dit combien d'annonces de Spotify elle a reçues pendant qu'elle
+    tourne. Écris-lui pendant la musique : elle parle tout de suite, puis reprend la musique au tour
+    suivant ;
 11. **Musique, lecture puis pause** : la même chose dans l'app Musique d'Apple ;
 12. **changement de morceau** : pendant la lecture, passe au morceau suivant (bouton, ou laisse
     finir le morceau) dans Spotify, puis dans Musique : elle continue de se balancer, sans revenir
@@ -1500,8 +1523,12 @@ regardé en mouvement ; les images fixes, elles, l'ont été, voir plus haut) :
 22. **dans `Capri.app`** (et non le binaire seul) : les points 10 et 13 au moins, puisque les
     essais automatiques n'ont lancé que le binaire de débogage.
 
-**L'ouverture de session : à vérifier à la main** (rien de cette liste n'a été fait ; dans
-`Capri.app`, refaite par `tools/bundle-macos.sh`) :
+**L'ouverture de session : à vérifier à la main** (le 12 novembre 2026, une partie du point 1 et
+du point 4, voir « Vérifié à la main sur un vrai Mac », point 23 : la case cochée dans le vrai
+menu et le fichier écrit, valide ; Capri lancée par l'agent chargé à la main, Ollama lancé par
+elle et qui répond, toujours là après qu'elle a été quittée par un signal ; ni son bandeau, ni
+« Quitter » de son menu. Le reste de la liste n'a pas été fait ; dans `Capri.app`, refaite par
+`tools/bundle-macos.sh`) :
 
 1. **la case** : « Se lancer à l'ouverture de session » décochée dans les deux menus ; cochée dans
    l'un, elle l'est dans l'autre, et le bandeau le dit ; le fichier
@@ -1531,8 +1558,10 @@ Homebrew) : c'est sans doute pour cela qu'il ne tournait plus après le redémar
 qu'une déduction : `brew services start ollama` l'inscrirait pour de bon, indépendamment de Capri.
 
 **Pas encore testé sur un vrai PC Windows** : la CI de GitHub y compile et y lance les tests
-(477 réussis le 12 novembre 2026, dont ceux du tube nommé et du hook), mais personne n'y a encore
-lancé Capri. Il n'y a pas encore de fenêtre de réglages. Le tube nommé de `capri-ipc` n'y a
+(477 réussis le 12 novembre 2026 au commit `81e348b`, dont ceux du tube nommé et du hook ; au
+commit `807ab78`, quatre essais de l'ouverture de session y ont échoué, écrits pour des chemins
+d'Unix, puis corrigés par `6f8b876`, dont le résultat dans la CI n'est pas encore connu), mais
+personne n'y a encore lancé Capri. Il n'y a pas encore de fenêtre de réglages. Le tube nommé de `capri-ipc` n'y a
 tourné que dans ces tests, le champ de saisie et la voix n'y existent pas encore,
 et le chat n'y a jamais été lancé : ni le https (SChannel), ni le Gestionnaire d'identification,
 ni la saisie d'une clé sans écho n'y ont tourné. « Se lancer à l'ouverture de session » y est
@@ -1565,9 +1594,10 @@ Points à surveiller :
    Windows : Win32) : écrit et testé sans écran ; se poser vu sur un vrai Mac le 11 novembre 2026,
    puis le suivi rendu fluide (à la cadence de l'écran, mesuré sans écran) ; ~~les dessins de
    l'artiste du projet Capri, debout et assise~~, ~~se balancer sur ta musique~~ (écrits, testés
-   sans écran, images fixes rendues et regardées ; pas encore regardés en mouvement ; la musique
-   reconnue par les annonces de Spotify et de Musique, reçues dans la vraie app pour une annonce
-   d'essai, jamais encore pour une vraie) ; reste à
+   sans écran, images fixes rendues et regardées ; regardés en mouvement le 12 novembre 2026 : sa
+   boucle debout, son flottement, assise sur les fenêtres, l'échelle de 1,20 pas encore jugée ainsi ;
+   la musique reconnue par les annonces de Spotify et de Musique : de vraies annonces de Spotify
+   reçues par la vraie app et confirmées le 12 novembre 2026, Musique jamais essayée) ; reste à
    regarder le reste sur un vrai Mac, et à l'exécuter sur un vrai PC Windows.
 4. Le chat avec un modèle d'IA : ~~la saisie et la bulle~~, ~~un modèle local par Ollama~~,
    ~~les fournisseurs à clé compatibles OpenAI (OpenRouter, DeepSeek, ProxyAPI, Ollama en ligne)

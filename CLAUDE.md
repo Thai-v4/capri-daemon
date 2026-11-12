@@ -3,10 +3,13 @@
 Compagne de bureau (Capri, *Cyberpunk: Edgerunners* 2) écrite en Rust, 100 % native, pour macOS
 (cible principale, Apple Silicon) et Windows. Projet de fan non commercial. Le README décrit l'état
 du projet et la feuille de route ; jalons 1 (elle flotte) et 2 (le bandeau Claude Code) faits,
-jalon 3 (elle s'assoit sur tes fenêtres) écrit et testé sans écran, pas encore regardé,
-jalon 4 (lui parler) en cours : saisie, bulle, modèle local (Ollama, LM Studio), fournisseurs
-compatibles OpenAI avec leur clé dans le trousseau (OpenRouter, DeepSeek, ProxyAPI, Ollama en
-ligne, serveur personnalisé), l'API d'Anthropic avec sa clé d'API (son propre format ; testée
+jalon 3 (elle s'assoit sur tes fenêtres) écrit et testé sans écran, puis regardé sur un vrai Mac
+le 12 novembre 2026 dans l'ensemble, pas point par point (sa boucle debout et son flottement vont
+bien, elle s'assoit bien sur les fenêtres ; avec Spotify, elle se balance à la lecture et s'arrête
+à la pause ; l'échelle de 1,20 entre ses deux poses pas encore jugée en mouvement, Musique jamais
+essayée), jalon 4 (lui parler) en cours : saisie, bulle, modèle local (Ollama, LM Studio),
+fournisseurs compatibles OpenAI avec leur clé dans le trousseau (OpenRouter, DeepSeek, ProxyAPI,
+Ollama en ligne, serveur personnalisé), l'API d'Anthropic avec sa clé d'API (son propre format ; testée
 contre un faux serveur local seulement, pas encore essayée avec une vraie clé), voix et écoute au
 micro en place, effets de voix, hauteur et débit écrits, vérifiés sans bruit et écoutés dans
 l'ensemble ; Capri dans Claude Code (un style de sortie, et le miroir qui lui fait dire la ligne
@@ -18,7 +21,9 @@ micro ouvert en permanence). Sur macOS, une fenêtre de réglages
 macOS toujours, « Se lancer à l'ouverture de session » (case de son menu, décochée par défaut)
 l'inscrit par un agent de lancement et, cochée, lui fait lancer Ollama à chaque lancement s'il est
 son cerveau sur cette machine et que rien n'y répond (écrit et testé sans ouverture de session ;
-pas encore essayé à une vraie ouverture de session).
+le 12 novembre 2026, case cochée dans le vrai menu et agent chargé à la main par `launchctl
+bootstrap` : Capri lancée, et Ollama lancé par elle ; pas encore essayé à une vraie ouverture de
+session).
 
 ## Architecture : où va quoi
 
