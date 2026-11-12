@@ -79,8 +79,20 @@ pub fn save_mirror(directory: &Path, settings: MirrorSettings) -> Result<PathBuf
 }
 
 pub fn install(settings_file: &Path, hook: &Path, dry_run: bool) -> Result<Outcome> {
-    let hook = hook.to_str().with_context(|| format!("le chemin {} n'est pas de l'UTF-8", hook.display()))?;
+    let hook = utf8(hook)?;
     rewrite(settings_file, dry_run, |text| settings::install(text, hook))
+}
+
+/// Rebranche le hook sur `hook`, seulement s'il est déjà branché (`settings::follow`) : ce que
+/// demande `tools/install-macos.sh` quand l'app change de place. Sans hook de Capri, rien n'est
+/// écrit, pas même un fichier absent. La décision est prise sur le texte même qui est remplacé.
+pub fn follow(settings_file: &Path, hook: &Path, dry_run: bool) -> Result<Outcome> {
+    let hook = utf8(hook)?;
+    rewrite(settings_file, dry_run, |text| settings::follow(text, hook))
+}
+
+fn utf8(hook: &Path) -> Result<&str> {
+    hook.to_str().with_context(|| format!("le chemin {} n'est pas de l'UTF-8", hook.display()))
 }
 
 pub fn uninstall(settings_file: &Path, dry_run: bool) -> Result<Outcome> {
@@ -222,6 +234,9 @@ fn prune_backups(directory: &Path) {
 
 const USAGE: &str = "\
 usage : capri hook install [--dry-run]    brancher Capri sur Claude Code
+        capri hook install --if-plugged [--dry-run]
+                                          la rebrancher sur ce binaire-ci, seulement si elle
+                                          l'est déjà (quand l'app a changé de place)
         capri hook uninstall [--dry-run]  la débrancher
         capri hook status                 où en sont le branchement, le miroir et le style
         capri hook mirror on | off        qu'elle dise, ou non, la ligne que Claude écrit pour elle
@@ -234,6 +249,10 @@ pub fn run_cli(args: &[String]) -> i32 {
     let done = match args.iter().map(String::as_str).collect::<Vec<_>>()[..] {
         [action @ ("install" | "uninstall")] => cli(action, false),
         [action @ ("install" | "uninstall"), "--dry-run"] => cli(action, true),
+        ["install", "--if-plugged"] => follow_cli(false),
+        ["install", "--if-plugged", "--dry-run"] | ["install", "--dry-run", "--if-plugged"] => {
+            follow_cli(true)
+        }
         ["status"] => cli("status", false),
         ["mirror", "on"] => mirror_cli(true),
         ["mirror", "off"] => mirror_cli(false),
@@ -286,6 +305,47 @@ fn cli(action: &str, dry_run: bool) -> Result<()> {
         ),
         (true, false) => {
             println!("Claude Code est {verb}.");
+            println!("réglages   : {} ({delta:+} lignes)", outcome.settings.display());
+            if let Some(backup) = &outcome.backup {
+                println!("sauvegarde : {}", backup.display());
+            }
+            println!("Les sessions ouvertes le prennent en compte toutes seules ; vérifie avec /hooks.");
+        }
+    }
+    Ok(())
+}
+
+/// `capri hook install --if-plugged` : le hook suit l'app qui a changé de place, s'il est branché.
+fn follow_cli(dry_run: bool) -> Result<()> {
+    let settings_file = settings_path()?;
+    let hook = hook_binary()?;
+    // pour le dire seulement : la décision est prise par `follow`, sur le texte qu'il remplace
+    let before = status(&settings_file)?;
+    let outcome = follow(&settings_file, &hook, dry_run)?;
+    let delta = outcome.lines_after as i64 - outcome.lines_before as i64;
+    match (outcome.changed, dry_run) {
+        (false, _) if before.is_installed() => {
+            println!("Rien à faire : Claude Code est déjà branché sur {}.", hook.display())
+        }
+        (false, _) => {
+            println!(
+                "Claude Code n'est pas branché sur Capri : rien n'est écrit, --if-plugged ne branche jamais."
+            );
+            println!("réglages   : {}", outcome.settings.display());
+            println!("Pour le brancher : capri hook install");
+        }
+        (true, true) => println!(
+            "Simulation, rien n'est écrit : le hook passerait de {} à {} ({} : {} à {} lignes, {delta:+}).",
+            before.commands.join(", "),
+            hook.display(),
+            outcome.settings.display(),
+            outcome.lines_before,
+            outcome.lines_after
+        ),
+        (true, false) => {
+            println!("Le hook de Claude Code suit Capri.");
+            println!("avant      : {}", before.commands.join(", "));
+            println!("maintenant : {}", hook.display());
             println!("réglages   : {} ({delta:+} lignes)", outcome.settings.display());
             if let Some(backup) = &outcome.backup {
                 println!("sauvegarde : {}", backup.display());
@@ -467,6 +527,42 @@ mod tests {
             .filter(|e| e.file_name().to_string_lossy().contains("capri-tmp"))
             .collect();
         assert!(leftovers.is_empty());
+    }
+
+    #[test]
+    fn following_rewrites_only_a_file_where_capri_is_already_plugged() {
+        let dir = scratch_dir("suivre");
+        let moved = PathBuf::from("/Applications/Capri.app/Contents/MacOS/capri-hook");
+        let file = dir.join("settings.json");
+
+        // pas de fichier : il n'est pas créé
+        let nothing = follow(&file, &moved, false).unwrap();
+        assert!(!nothing.changed && nothing.backup.is_none());
+        assert!(!file.exists());
+
+        // les hooks d'un autre outil, pas les nôtres : rien n'est écrit, pas même une sauvegarde
+        std::fs::write(&file, ORIGINAL).unwrap();
+        assert!(!follow(&file, &moved, false).unwrap().changed);
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), ORIGINAL);
+        assert!(backups(&dir).is_empty());
+
+        // branché sur l'ancien chemin : il suit, avec sa sauvegarde ; l'autre outil reste intact
+        install(&file, &hook(), false).unwrap();
+        let plugged = std::fs::read_to_string(&file).unwrap();
+        let simulated = follow(&file, &moved, true).unwrap();
+        assert!(simulated.changed && simulated.backup.is_none());
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), plugged, "une simulation n'écrit rien");
+        let done = follow(&file, &moved, false).unwrap();
+        assert!(done.changed);
+        assert_eq!(std::fs::read_to_string(done.backup.unwrap()).unwrap(), plugged);
+        let now = status(&file).unwrap();
+        assert!(now.is_complete());
+        assert_eq!(now.commands, [moved.to_str().unwrap()]);
+        // une seconde fois : déjà au bon endroit
+        assert!(!follow(&file, &moved, false).unwrap().changed);
+        // débranché, le fichier redevient l'original, à l'octet près
+        uninstall(&file, false).unwrap();
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), ORIGINAL);
     }
 
     #[test]

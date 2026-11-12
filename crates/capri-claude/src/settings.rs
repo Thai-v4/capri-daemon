@@ -113,6 +113,17 @@ pub fn install(original: &str, hook_command: &str) -> Result<String, SettingsErr
     Ok(layout.render(&root))
 }
 
+/// Le texte du fichier une fois le hook **rebranché** sur `hook_command`, seulement s'il est déjà
+/// branché (sur ce chemin ou sur un autre) : ce qu'il faut quand l'app change de place. Sans hook
+/// de Capri, le texte est rendu tel quel, même dans une forme que [`install`] refuserait : on ne
+/// branche jamais Capri à la place de l'utilisateur.
+pub fn follow(original: &str, hook_command: &str) -> Result<String, SettingsError> {
+    if !status(original)?.is_installed() {
+        return Ok(original.to_owned());
+    }
+    install(original, hook_command)
+}
+
 /// Le texte du fichier une fois le hook débranché. Sans hook de Capri, le texte est rendu tel quel.
 pub fn uninstall(original: &str) -> Result<String, SettingsError> {
     let (mut root, layout) = read(original)?;
@@ -423,6 +434,36 @@ mod tests {
         assert!(!moved.contains(HOOK));
         assert_eq!(status(&moved).unwrap().commands, ["/Applications/Capri.app/Contents/MacOS/capri-hook"]);
         assert_eq!(uninstall(&moved).unwrap(), OTHER_TOOLS);
+    }
+
+    #[test]
+    fn following_moves_an_existing_hook_and_never_plugs_a_new_one() {
+        const MOVED: &str = "/Applications/Capri.app/Contents/MacOS/capri-hook";
+        // pas branché : rien ne change, quelle que soit la forme du fichier
+        for untouched in [OTHER_TOOLS, "", "{}\n", "{\n    \"theme\": \"dark\"\n}\n", "{\"theme\":\"dark\"}"]
+        {
+            assert_eq!(follow(untouched, MOVED).unwrap(), untouched, "{untouched}");
+        }
+        // branché ailleurs : il suit, comme un nouveau branchement, sans toucher aux autres outils
+        let before = install(OTHER_TOOLS, HOOK).unwrap();
+        let after = follow(&before, MOVED).unwrap();
+        assert_eq!(after, install(OTHER_TOOLS, MOVED).unwrap());
+        assert_eq!(status(&after).unwrap().commands, [MOVED]);
+        assert!(status(&after).unwrap().is_complete());
+        assert_eq!(uninstall(&after).unwrap(), OTHER_TOOLS);
+        // déjà au bon endroit : rien ne change
+        assert_eq!(follow(&after, MOVED).unwrap(), after);
+        // branché en partie (une version plus ancienne suivait moins d'événements) : complété
+        let mut partial: Value = serde_json::from_str(&before).unwrap();
+        partial["hooks"].as_object_mut().unwrap().shift_remove("StopFailure");
+        let partial = serde_json::to_string_pretty(&partial).unwrap() + "\n";
+        assert!(!status(&partial).unwrap().is_complete());
+        assert!(status(&follow(&partial, MOVED).unwrap()).unwrap().is_complete());
+        // branché, mais dans une forme qu'on ne sait pas réécrire : refusé, comme par `install`
+        let four_spaces = before.replace("\n  ", "\n    ");
+        assert!(status(&four_spaces).unwrap().is_installed());
+        assert_eq!(follow(&four_spaces, MOVED), Err(SettingsError::NotCanonical));
+        assert!(matches!(follow("{", MOVED), Err(SettingsError::InvalidJson(_))));
     }
 
     #[test]
