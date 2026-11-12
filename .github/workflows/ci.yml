@@ -11,6 +11,9 @@ jobs:
       matrix:
         os: [macos-latest, windows-latest, ubuntu-latest]
     runs-on: ${{ matrix.os }}
+    # Un blocage échoue vite au lieu de durer des heures (le job complet prend une dizaine de
+    # minutes sur macOS, cache vide compris).
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -23,7 +26,9 @@ jobs:
       - name: Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Tests
-        run: cargo test --workspace
+        # Tous les crates, même quand l'un échoue : une exécution dit tout d'un coup.
+        timeout-minutes: 20
+        run: cargo test --workspace --no-fail-fast
       - name: Build release
         if: matrix.os != 'ubuntu-latest'
         run: cargo build --release -p capri-app -p capri-hook
