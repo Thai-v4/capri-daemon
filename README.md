@@ -1631,13 +1631,21 @@ la vraie Capri qui tournait depuis `target/Capri.app` (la liste des processus lu
 pas le script entier. **Pas essayé** : la remise en place d'une installation précédente quand le
 renommage échoue ou qu'on interrompt le script (lue, pas exécutée).
 
-**L'app installée : à vérifier à la main** (rien de cette liste n'a été fait) :
+**L'app installée : à vérifier à la main** (le 12 novembre 2026, installée pour de bon dans
+`/Applications` sur le Mac de l'utilisateur : le point 1 ; du point 2, la ligne du journal, pas
+ce qui se voit ; du point 4, l'agent qui nomme `/Applications/Capri.app` après le premier
+lancement (« réparée » dans le journal), pas l'ouverture de session ; du point 5, `hook status`
+et les événements d'une session ouverte reçus par l'app installée, pas `/hooks`. Dans le vrai
+`settings.json`, comparé à sa sauvegarde : tout est identique en dehors de nos entrées, mais
+celles-ci ne changent pas seulement de chemin, elles passent **à la fin** de la liste de chaque
+événement (`install` les retire puis les rajoute) ; sans conséquence, les hooks d'un événement
+ne dépendant pas de leur ordre. Le reste de la liste n'a pas été fait) :
 
 1. quitte Capri par son menu, puis `./tools/install-macos.sh` : il dit que le hook suit (si
    Claude Code était branché), que `target/Capri.app` est retirée, et ne lance rien ;
 2. lancée par `open --stderr /tmp/capri.log /Applications/Capri.app` : elle apparaît avec ses
    planches (debout, puis assise sur une fenêtre), et `/tmp/capri.log` dit
-   `sprite : /Applications/Capri.app/Contents/Resources/assets/capri/capri-cutout.png` ;
+   `sprite : /Applications/Capri.app/Contents/MacOS/../Resources/assets/capri/capri-cutout.png` ;
 3. le micro (⌃⌥D) : macOS redemande le micro et la reconnaissance vocale, puis elle t'écoute ;
 4. case « Se lancer à l'ouverture de session » cochée avant l'installation : après ce premier
    lancement, `~/Library/LaunchAgents/local.capri-daemon.capri.login.plist` nomme
@@ -1650,10 +1658,11 @@ renommage échoue ou qu'on interrompt le script (lue, pas exécutée).
 7. `cargo clean` dans le dépôt : elle se relance toujours, avec ses images ;
 8. dans le Finder, `Capri.app` a l'icône générique des apps : elle n'a pas d'icône à elle.
 
-Note : aujourd'hui, Ollama est lancé par `brew services`, mais aucun fichier `sh.brew.ollama.plist`
-n'est dans `~/Library/LaunchAgents` (celui que `brew services` charge est dans le dossier de
-Homebrew) : c'est sans doute pour cela qu'il ne tournait plus après le redémarrage. Ce n'est
-qu'une déduction : `brew services start ollama` l'inscrirait pour de bon, indépendamment de Capri.
+Note : jusqu'au 12 novembre 2026, Ollama était lancé à la main par `brew services run`, qui ne
+l'inscrit pas pour les ouvertures de session suivantes : c'est sans doute pour cela qu'il ne
+tournait plus après un redémarrage (une déduction). Depuis l'essai de ce jour-là, `brew services`
+est arrêté pour Ollama, et c'est Capri qui l'a lancé ; case cochée, c'est elle qui le relancera.
+`brew services start ollama` l'inscrirait pour de bon, indépendamment de Capri.
 
 **Pas encore testé sur un vrai PC Windows** : la CI de GitHub y compile et y lance les tests
 (477 réussis le 12 novembre 2026 au commit `81e348b`, dont ceux du tube nommé et du hook ; au
@@ -1710,8 +1719,10 @@ Points à surveiller :
    voix). Le mot d'éveil est écarté : il demanderait un micro ouvert en permanence, et Capri ne
    l'ouvre que sur un geste.
 5. ~~Une `Capri.app` qui ne dépend plus du dépôt : ses images dedans, installée dans
-   `/Applications` par `tools/install-macos.sh`~~ (écrit, essayé vers un dossier temporaire ; pas
-   encore lancée depuis `/Applications`, voir plus haut). Reste : une app signée et notarisée, un
+   `/Applications` par `tools/install-macos.sh`~~ (écrit, essayé vers un dossier temporaire, puis
+   installée pour de bon le 12 novembre 2026 : elle lit ses images dans l'app, son inscription à
+   l'ouverture de session et le hook de Claude Code ont suivi ; ce qui se voit, le micro et une
+   vraie ouverture de session restent à vérifier, voir plus haut). Reste : une app signée et notarisée, un
    installeur, des mises à jour (il y faut un compte développeur Apple).
 
 ## Licence

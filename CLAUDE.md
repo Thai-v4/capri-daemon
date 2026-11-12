@@ -24,9 +24,10 @@ son cerveau sur cette machine et que rien n'y répond (écrit et testé sans ouv
 le 12 novembre 2026, case cochée dans le vrai menu et agent chargé à la main par `launchctl
 bootstrap` : Capri lancée, et Ollama lancé par elle ; pas encore essayé à une vraie ouverture de
 session). Jalon 5, sa première moitié : une `Capri.app` qui emporte ses images, installée dans
-`/Applications` par `tools/install-macos.sh` (écrit, essayé vers un dossier temporaire seulement ;
-pas encore lancée depuis `/Applications`). Pas de vraie signature, de notarisation ni de mises à
-jour.
+`/Applications` par `tools/install-macos.sh` (écrit, essayé vers un dossier temporaire, puis
+installée pour de bon le 12 novembre 2026 : images lues dans l'app, inscription à l'ouverture de
+session réparée, hook de Claude Code qui suit ; ni ce qui se voit, ni le micro, ni une vraie
+ouverture de session vérifiés depuis). Pas de vraie signature, de notarisation ni de mises à jour.
 
 ## Architecture : où va quoi
 
