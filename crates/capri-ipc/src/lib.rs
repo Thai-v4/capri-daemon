@@ -10,7 +10,10 @@
 //! - Windows : un tube nommé, en lecture seule côté serveur, refusant les clients distants, dont
 //!   le nom aléatoire est publié dans un fichier du profil de l'utilisateur.
 //!
-//! Une connexion porte une ligne : le client se connecte, écrit, raccroche.
+//! Une connexion porte une ligne : le client se connecte, écrit, raccroche. Des clients arrivés
+//! alors que Capri n'attend pas dans [`Listener::next_line`] sont servis quand même, dans l'ordre :
+//! sous Unix par la file d'attente de la socket, sous Windows par un thread qui sert le tube sans
+//! arrêt (voir `windows.rs`).
 
 use std::path::PathBuf;
 use std::time::Duration;
@@ -200,6 +203,43 @@ mod channel_tests {
         send_line(&endpoint, "sans saut de ligne", SOON).unwrap();
         assert_eq!(listener.next_line().unwrap(), "{\"v\":1,\"kind\":\"turn_end\"}");
         assert_eq!(listener.next_line().unwrap(), "sans saut de ligne");
+    }
+
+    #[test]
+    fn hooks_that_come_while_capri_is_busy_elsewhere_are_still_heard() {
+        // Comme les tests de `capri-hook` : un envoi, une lecture, un envoi, une lecture… Sous
+        // Windows, servir le tube seulement pendant `next_line` perdait le second envoi, puis
+        // attendait pour toujours.
+        let endpoint = endpoint_in(&scratch_dir("entre"));
+        let mut listener = Listener::bind(&endpoint, MAX).unwrap();
+        for round in 0..5 {
+            send_line(&endpoint, &format!("tour {round}"), SOON).unwrap();
+            std::thread::sleep(Duration::from_millis(20)); // Capri fait autre chose
+            assert_eq!(listener.next_line().unwrap(), format!("tour {round}"));
+        }
+        // Et plusieurs d'affilée avant de lire, bien plus longues qu'une vraie ligne du hook
+        // (quelques centaines d'octets, 2,5 Kio au plus avec le miroir). Pas `MAX` : sous macOS,
+        // une ligne de 8 Kio écrite avant que Capri n'accepte dépasse le tampon de la socket et
+        // l'envoi échoue à son échéance (mesuré).
+        let big: Vec<String> = (0..3).map(|i| format!("{i}{}", "x".repeat(MAX / 2 - 1))).collect();
+        for line in &big {
+            send_line(&endpoint, line, SOON).unwrap();
+        }
+        for line in &big {
+            assert_eq!(&listener.next_line().unwrap(), line);
+        }
+    }
+
+    #[test]
+    fn closing_capri_is_quick_and_frees_the_place() {
+        let endpoint = endpoint_in(&scratch_dir("fermeture"));
+        for _ in 0..3 {
+            let listener = Listener::bind(&endpoint, MAX).unwrap();
+            let started = Instant::now();
+            drop(listener);
+            assert!(started.elapsed() < Duration::from_millis(400), "{:?}", started.elapsed());
+            assert!(matches!(send_line(&endpoint, "x", SOON), Err(IpcError::NotRunning)));
+        }
     }
 
     #[test]
