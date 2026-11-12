@@ -2,8 +2,7 @@
 //!
 //! Sa personnalité demande à Capri de ne pas écrire de Markdown, mais un modèle l'oublie souvent :
 //! `*insistance*`, `**gras**`, `` `code` ``, titres en `#`, blocs entre ```` ``` ````. Dans une
-//! bulle (et plus tard à voix haute), ces signes n'ont aucun sens : on les retire, en gardant les
-//! mots.
+//! bulle comme à voix haute, ces signes n'ont aucun sens : on les retire, en gardant les mots.
 //!
 //! La réponse arrive par morceaux, et ce qui est montré ne doit jamais être repris : le texte
 //! nettoyé d'un début de réponse est toujours le début du texte nettoyé de la réponse entière.

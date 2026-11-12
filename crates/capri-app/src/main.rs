@@ -1,6 +1,7 @@
 //! Capri : elle flotte sur ton bureau, on peut l'attraper, la poser et la lancer (jalon 1), un
-//! bandeau au-dessus d'elle dit ce que fait Claude Code (jalon 2), et on peut lui parler : elle
-//! répond dans une bulle, avec le modèle qu'on lui a donné, local ou chez un fournisseur (jalon 4).
+//! bandeau au-dessus d'elle dit ce que fait Claude Code (jalon 2), elle s'assoit sur tes fenêtres
+//! (jalon 3), et on peut lui parler : elle répond dans une bulle, avec le modèle qu'on lui a donné,
+//! local ou chez un fournisseur (jalon 4).
 //!
 //! Une seule fenêtre transparente, l'overlay de `capri-platform`, couvre l'écran principal. Elle
 //! laisse passer la souris partout, sauf sur Capri elle-même. Le curseur est lu auprès du système
@@ -9,11 +10,13 @@
 //! (`capri_core::pace`), mais on ne redessine que quand sa pose, sa position ou son bandeau
 //! change : environ 12 fois par seconde au repos.
 //!
-//! `capri hook install | uninstall | status | style …` branche Claude Code sur Capri et installe
-//! son style de sortie,
+//! `capri hook install | uninstall | status | mirror … | style …` branche Claude Code sur Capri,
+//! règle le miroir et installe son style de sortie,
 //! `capri chat use | key | models | status | test | off` lui choisit un cerveau (et range la clé
-//! d'un fournisseur dans le trousseau du système), et
-//! `capri voice on | off | status | list | use | test` lui donne une voix, sans lancer la fenêtre.
+//! d'un fournisseur dans le trousseau du système),
+//! `capri voice on | off | status | list | use | effect | intensity | pitch | rate | test` lui
+//! donne une voix et sa façon de parler, et `capri ear status` dit si elle peut écouter, sans
+//! lancer la fenêtre.
 //! Sur macOS, « Réglages… » dans son menu ouvre une fenêtre qui fait la même chose sans terminal
 //! (`settings_view`), et « Se lancer à l'ouverture de session » l'inscrit auprès du système
 //! (`login_setup`) ; cochée, elle lance aussi Ollama à chaque lancement s'il est son cerveau sur
