@@ -150,11 +150,6 @@ impl Capri {
         self.feet = feet;
     }
 
-    /// Où sont ses pieds dans son image debout (coordonnées normalisées).
-    pub fn feet_in_image(&self) -> Vec2 {
-        self.feet
-    }
-
     /// Le milieu de ses pieds, là où elle touche un bord ; posée, le point posé sur le bord.
     pub fn feet(&self) -> Vec2 {
         match self.stance {
