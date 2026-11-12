@@ -308,6 +308,9 @@ ollama pull <modèle>                      # à choisir sur ollama.com/library, 
 ./target/release/capri chat off           # lui retirer son cerveau
 ```
 
+Sur macOS, Capri peut aussi lancer Ollama elle-même quand il ne tourne pas : coche « Se lancer à
+l'ouverture de session » dans son menu ([plus bas](#se-lancer-à-louverture-de-session)).
+
 **Chez un fournisseur, sur Internet** : [OpenRouter](https://openrouter.ai),
 [DeepSeek](https://platform.deepseek.com), [ProxyAPI](https://proxyapi.ru),
 [Ollama en ligne](https://docs.ollama.com/cloud) (les serveurs d'Ollama, joints directement, avec
@@ -701,6 +704,84 @@ Ce qui reste en ligne de commande : `capri ear status`, `capri chat status` (qui
 le serveur), et sa personnalité (`persona.md`). Sous Windows, il n'y a pas encore de fenêtre de
 réglages : « Réglages… » le dit, et tout passe par `capri chat`, `capri voice` et `capri hook`.
 
+## Se lancer à l'ouverture de session
+
+Sur macOS, **« Se lancer à l'ouverture de session »** dans son menu (icône de la barre des menus,
+ou clic droit sur elle), décochée par défaut. Cochée, deux choses :
+
+- **Capri se lance toute seule** quand tu ouvres ta session, sans passer au premier plan ;
+- **à chaque lancement** (à l'ouverture de session ou à la main), si son cerveau est **Ollama sur
+  cette machine** (`http://localhost:11434/v1`, ou une autre adresse de la machine) et que rien n'y
+  répond, **elle lance Ollama**, et le dit : « J'ai lancé Ollama, mon cerveau est prêt ». Si
+  quelque chose y répond déjà, elle ne fait rien et ne dit rien. Cocher la case regarde aussi tout
+  de suite.
+
+Décochée, elle ne lance jamais rien. Elle dit dans son bandeau ce qu'elle vient de faire : « Je me
+lancerai à l'ouverture de ta session, et Ollama avec moi » (ou sans Ollama, si ce n'est pas son
+cerveau ici), « Je ne me lancerai plus à l'ouverture de ta session ».
+
+**Comment elle s'inscrit.** Par un agent de lancement de ton utilisateur,
+`~/Library/LaunchAgents/local.capri-daemon.capri.login.plist`, qui ne fait qu'une chose :
+`/usr/bin/open -g -a <ton Capri.app>`, c'est-à-dire ouvrir l'app comme un double-clic (ses
+permissions, le micro par exemple, restent celles de l'app). La case dit si ce fichier est là,
+rien d'autre ne le retient. Il est écrit d'un seul coup et signé d'un commentaire `capri-managed` :
+Capri n'écrase ni ne retire jamais un fichier qui ne porte pas cette signature, ni un lien, et ne
+touche à aucun autre fichier du dossier. Décocher retire ce fichier, et rien d'autre (elle ne
+demande rien à `launchctl` : la tâche déjà chargée dans ta session y reste jusqu'à ce que tu la
+fermes, sans plus jamais rien lancer). Si tu déplaces `Capri.app`, l'inscription se répare au
+lancement suivant, case cochée, depuis la nouvelle place ; une seconde copie de l'app ne la prend
+pas tant que la première existe (décoche puis recoche depuis celle que tu veux).
+
+Pourquoi un agent de lancement plutôt que `SMAppService`, l'API de macOS 13 pour les éléments
+d'ouverture : d'après son en-tête (`SMAppService.h`), l'app doit être signée, et l'inscription doit
+être refaite quand l'exécutable change. Capri est signée « ad hoc » et reconstruite souvent : un
+fichier lié à un chemin survit aux reconstructions, et se vérifie sans écran.
+
+**Seulement depuis `Capri.app`** (`tools/bundle-macos.sh`) : lancée par `cargo run` ou
+`target/release/capri`, cocher la case refuse (« Pour m'inscrire, lance-moi depuis Capri.app ») :
+le binaire seul n'aurait pas les permissions de l'app. Le lancement d'Ollama, lui, vaut aussi
+pour le binaire, case cochée.
+
+**Comment elle trouve et lance Ollama.** À des emplacements fixes, jamais par le `PATH` (celui
+qu'une tâche de `launchd` reçoit, `/usr/bin:/bin:/usr/sbin:/sbin`, ne contient pas celui de
+Homebrew) : `/Applications/Ollama.app` puis `~/Applications/Ollama.app` (seulement pour l'adresse
+par défaut, `localhost` ou `127.0.0.1` au port 11434 : l'app ne prend pas sa configuration de qui
+la lance), puis `/opt/homebrew/bin/ollama` (Homebrew), `/usr/local/bin/ollama` (Homebrew sur Intel,
+ou le lien que pose l'app), et le programme contenu dans l'app. Le programme est lancé avec
+`serve` et `OLLAMA_HOST` réglé sur l'hôte et le port de ton adresse (`localhost` devient
+`127.0.0.1`, l'adresse par défaut d'Ollama d'après [sa documentation](https://docs.ollama.com/faq)) :
+il n'écoute que sur cette machine. Pour savoir si quelque chose répond, elle ouvre une connexion à
+l'adresse et la referme aussitôt, sans rien envoyer, une fois par seconde. Elle laisse **6 s** à un
+Ollama qui serait déjà en train de démarrer (par `brew services`, à l'ouverture de session), puis
+le lance **une seule fois**, et attend au plus **30 s** qu'il réponde. Tout cela sur un thread à
+part : elle apparaît sans attendre.
+
+**Elle ne l'arrête jamais** : un Ollama lancé par elle continue de tourner quand tu la quittes
+(un autre outil peut s'en servir). Il est détaché d'elle : un Ctrl+C dans le terminal qui l'a
+lancée ne l'atteint pas non plus.
+
+Ce qu'elle dit quand ça ne va pas, sans jamais renvoyer à une commande : « Ollama ne répond pas, et
+je ne le trouve pas sur ce Mac » (installe-le), « Je n'ai pas pu lancer Ollama, détails dans le
+journal », « J'ai lancé Ollama, mais il ne répond pas encore », « Un fichier qui n'est pas à moi
+porte déjà ce nom, je n'y touche pas ».
+
+Ses limites :
+
+- **elle ne lance qu'Ollama** : ni LM Studio (son serveur se démarre dans LM Studio), ni un
+  Ollama d'une autre machine, ni une adresse en `https://`, ni rien d'autre. Elle ne lance jamais
+  Claude Code ;
+- **sous Windows et ailleurs, la case est grisée** : rien n'y est écrit. Il y faudrait une entrée
+  dans `HKCU\…\Run` ou le dossier « Démarrage », et de quoi lancer `ollama.exe` : pas encore écrit ;
+- si tu désactives Capri dans Réglages Système (Général → Ouverture, « Autoriser en
+  arrière-plan »), le fichier reste et la case reste cochée : elle ne le sait pas ;
+- avec `brew services start ollama` (qui le lance à chaque ouverture de session et le relance s'il
+  s'arrête), Capri n'a rien à faire, et attend 6 s avant de rien lancer. Si Ollama mettait plus
+  longtemps à démarrer, les deux lanceraient chacun le leur : un seul obtient le port, et celui de
+  `brew services` réessaierait sans cesse tant que celui de Capri le tient. C'est déduit de leurs
+  réglages, pas observé ;
+- macOS peut afficher une notification « Éléments d'arrière-plan ajoutés » quand la case est
+  cochée : pas encore vu.
+
 ## Installer et lancer
 
 Il faut [Rust](https://rustup.rs) 1.90 ou plus récent (`rustup update`).
@@ -738,17 +819,21 @@ crates/
                    ses planches (sheets.rs, sheets/stand.rs : cases, dessins tenus en deux, ligne
                    d'assise, grilles serrées des seuls dessins montrés), et son dessin (look.rs :
                    quelle case montrer, où, ce qui l'attrape, ce qu'il lui faut sur un bord),
-                   et si de la musique joue (music.rs : l'état annoncé par les lecteurs) (testée)
+                   et si de la musique joue (music.rs : l'état annoncé par les lecteurs), et le
+                   texte de son inscription à l'ouverture de session (login.rs : l'agent de
+                   lancement, la reconnaissance du nôtre, sa réparation) (testée)
   capri-claude/    logique pure : hooks de Claude Code, protocole, sessions, settings.json, style
                    de sortie « Capri », miroir, dossiers de Capri et de Claude Code (testée)
   capri-chat/      logique pure : conversation, fournisseurs et format « chat completions », flux
                    de réponse, règles d'adresse et de clé, réglages du cerveau, personnalité,
                    phrases à dire, dictée, les effets de voix (voice.rs : préréglages,
-                   intensité, hauteur, débit, voice.json), et le modèle de la fenêtre de
+                   intensité, hauteur, débit, voice.json), lancer Ollama au lancement (startup.rs :
+                   faut-il, où le chercher, le délai, ce qu'elle en dit), et le modèle de la fenêtre de
                    réglages (settings/ : rubriques « Cerveau », « Voix » et « Claude Code »)
                    (testée)
   capri-net/       le seul crate qui parle au réseau : envoyer la conversation (en https par le TLS
-                   du système), lire la réponse au fil de l'eau (testé contre un faux serveur local)
+                   du système), lire la réponse au fil de l'eau (testé contre un faux serveur local),
+                   et frapper à une adresse de cette machine seulement (knock : Ollama tourne-t-il ?)
   capri-render/    rendu wgpu : Metal sur macOS, DirectX 12 + DirectComposition sur Windows ;
                    ses images confiées une fois, une case de grille par dessin ; Offscreen, le
                    même rendu dans une image en mémoire, pour les essais
@@ -771,6 +856,10 @@ crates/
     music.rs         les annonces de Spotify et de Musique, dont seul l'état est lu ;
                      macos/music.rs (NSDistributedNotificationCenter ; refus ailleurs)
     keychain.rs      le trousseau des clés d'API ; macos/keychain.rs, windows/keychain.rs
+    login.rs         son agent de lancement : écrit, lu, retiré, dans un dossier passé en
+                     paramètre (refus ailleurs que sur macOS)
+    launch.rs        lancer Ollama : un programme détaché, par son chemin absolu, ou une app par
+                     open (refus ailleurs que sur macOS)
     terminal.rs      taper une clé sans qu'elle s'affiche
     winit_overlay.rs fenêtre winit, pour Windows et les autres systèmes
     windows.rs       Win32 via windows-sys
@@ -798,7 +887,9 @@ crates/
                    l'abonnement aux annonces, le lecteur disparu ; music_setup.rs pour
                    music.json ; en version de débogage `capri music rehearse` et
                    `CAPRI_MUSIC_REHEARSAL`, music_rehearsal.rs, lancés par
-                   tests/musique_sans_titre.rs)
+                   tests/musique_sans_titre.rs) ; l'ouverture de session (login_setup.rs : la case,
+                   l'état lu dans le système, la réparation ; ollama_view.rs : Ollama veillé et
+                   lancé sur un thread à part)
 tools/             récupération vérifiée des images, fabrication de Capri.app (macOS)
 ```
 
@@ -809,7 +900,7 @@ Règle : tout ce qui peut être testé sans écran va dans `capri-core`, `capri-
 
 Vérifié automatiquement :
 
-- formatage, `clippy -D warnings` et 489 tests sur **macOS Apple Silicon** (plus 12 qui ne
+- formatage, `clippy -D warnings` et 524 tests sur **macOS Apple Silicon** (plus 12 qui ne
   tournent qu'à la main : ils écrivent des images ou dessinent sur la vraie carte graphique,
   lisent un vrai `settings.json`, touchent au vrai trousseau, créent de vraies voix et un vrai
   moteur audio, sans bruit, lisent la vraie liste des fenêtres, ou guettent une annonce d'essai
@@ -932,6 +1023,22 @@ Vérifié automatiquement :
   quand le système ne sait pas ; un lecteur cru en lecture vérifié une fois toutes les 5 s, oublié
   s'il a disparu, plus aucune vérification sans lecture ; `music.json` (permis sans fichier,
   retenu, un fichier étrange signalé) ;
+- se lancer à l'ouverture de session, sans toucher au vrai `~/Library/LaunchAgents` (des dossiers
+  d'essai) ni à un vrai Ollama : le texte de l'agent (l'app par `open -g -a`, `RunAtLoad`, session
+  graphique seulement, rien qui la relance, aucun autre programme), un chemin étrange écrit et relu,
+  seul le chemin absolu d'une app inscrit (jamais un binaire nu), le nôtre reconnu par sa signature
+  et rien d'autre (sans elle, ailleurs qu'en tête, en binaire, trop gros, un dossier, un lien) ;
+  inscrit, relu, mis à jour, retiré sans rien laisser ni toucher à ses voisins, lisible par tous et
+  modifiable par l'utilisateur seul ; l'app déplacée réparée au lancement suivant, une seconde copie
+  qui ne prend pas l'inscription, rien de réécrit hors d'une app ; Ollama veillé seulement case
+  cochée, cerveau Ollama, sur cette machine et en `http` (ni LM Studio, ni le réseau privé, ni
+  Internet) ; `OLLAMA_HOST` (`localhost` devenu `127.0.0.1`, IPv6 entre crochets) ; les emplacements,
+  tous absolus, l'app seulement pour l'adresse par défaut ; un Ollama déjà là laissé tranquille et
+  sans un mot, un Ollama qui démarre attendu 6 s, lancé une seule fois, puis 30 s pour répondre,
+  sur une horloge factice ; introuvable, lancement raté ou muet dits sans commande ; la vraie
+  façon de frapper contre de faux serveurs locaux (rien d'envoyé, `localhost` sans résolution,
+  refusée avant toute connexion ailleurs que sur cette machine ou en `https`) ; un programme
+  inoffensif (`/bin/sh`) lancé détaché avec ses arguments et son environnement ;
 - `clippy -D warnings` en compilation croisée pour **Windows x64** et **Linux x64** (le code
   compile, il n'est pas exécuté).
 
@@ -1091,6 +1198,16 @@ dossier, et le trousseau d'essai est vide après. Le processus quitte de lui-mê
 
 Le rendu réel sous Linux avec un GPU logiciel (le sprite s'affiche, flotte et « bout ») avait été
 vérifié avant le passage à la fenêtre « Overlay » ; il n'a pas été revérifié depuis.
+
+**Vérifié sur ce Mac, pour l'ouverture de session** (le 12 novembre 2026, sans inscrire Capri) :
+
+- notre agent, tel que Capri l'écrit (seuls l'étiquette, l'identifiant associé et le chemin de
+  l'app changés pour l'essai, vers une app qui n'existe pas), accepté par `plutil -lint` et chargé
+  par `launchctl bootstrap gui/501` : `launchd` y lit `/usr/bin/open -g -a <app>`, le lance aussitôt
+  (`RunAtLoad` : une exécution, `open` sort en erreur faute d'app), et lui donne pour `PATH`
+  `/usr/bin:/bin:/usr/sbin:/sbin` (d'où les emplacements fixes d'Ollama). Retiré aussitôt
+  (`launchctl bootout`, fichier supprimé, rien dans `~/Library/LaunchAgents`) ;
+- `ollama serve --help` (Ollama 0.40.14, Homebrew) : `OLLAMA_HOST`, « default 127.0.0.1:11434 ».
 
 **Vérifié à la main sur un vrai Mac** (MacBook Pro M5 Pro, macOS 27.2, le 10 novembre 2026) :
 
@@ -1383,12 +1500,43 @@ regardé en mouvement ; les images fixes, elles, l'ont été, voir plus haut) :
 22. **dans `Capri.app`** (et non le binaire seul) : les points 10 et 13 au moins, puisque les
     essais automatiques n'ont lancé que le binaire de débogage.
 
+**L'ouverture de session : à vérifier à la main** (rien de cette liste n'a été fait ; dans
+`Capri.app`, refaite par `tools/bundle-macos.sh`) :
+
+1. **la case** : « Se lancer à l'ouverture de session » décochée dans les deux menus ; cochée dans
+   l'un, elle l'est dans l'autre, et le bandeau le dit ; le fichier
+   `~/Library/LaunchAgents/local.capri-daemon.capri.login.plist` est là, et nomme ton
+   `Capri.app` ; une notification de macOS sur les éléments d'arrière-plan, ou pas (à noter) ;
+2. **Réglages Système** → Général → Ouverture (éléments d'arrière-plan) : Capri y figure, sous son
+   nom ;
+3. **l'ouverture de session** : ferme ta session (ou redémarre), rouvre-la : Capri apparaît seule,
+   sans prendre le clavier à l'app au premier plan ; le micro (⌃⌥D) marche comme après un
+   double-clic ;
+4. **Ollama arrêté** (`brew services stop ollama`, puisqu'il tourne aujourd'hui par
+   `brew services`), cerveau Ollama sur `localhost:11434` : relance Capri ; au bout de 6 à 10 s,
+   « J'ai lancé Ollama, mon cerveau est prêt », et elle répond (⌃⌥P) ; quitte Capri : Ollama tourne
+   encore (`curl http://127.0.0.1:11434/` répond « Ollama is running ») ;
+5. **Ollama déjà lancé** : relance Capri : rien n'est dit, aucun second Ollama
+   (`pgrep -fl "ollama serve"`) ;
+6. **décoche** : le bandeau le dit, le fichier a disparu, les autres fichiers du dossier sont
+   intacts ; à la session suivante, elle ne se lance plus ;
+7. **déplacée** : case cochée, déplace `Capri.app`, lance-la depuis sa nouvelle place : le
+   fichier nomme la nouvelle place ;
+8. **depuis le terminal** (`cargo run --release`) : cocher la case dit « Pour m'inscrire,
+   lance-moi depuis Capri.app », et rien n'est écrit.
+
+Note : aujourd'hui, Ollama est lancé par `brew services`, mais aucun fichier `sh.brew.ollama.plist`
+n'est dans `~/Library/LaunchAgents` (celui que `brew services` charge est dans le dossier de
+Homebrew) : c'est sans doute pour cela qu'il ne tournait plus après le redémarrage. Ce n'est
+qu'une déduction : `brew services start ollama` l'inscrirait pour de bon, indépendamment de Capri.
+
 **Pas encore testé sur un vrai PC Windows** : la CI de GitHub y compile et y lance les tests
 (477 réussis le 12 novembre 2026, dont ceux du tube nommé et du hook), mais personne n'y a encore
 lancé Capri. Il n'y a pas encore de fenêtre de réglages. Le tube nommé de `capri-ipc` n'y a
 tourné que dans ces tests, le champ de saisie et la voix n'y existent pas encore,
 et le chat n'y a jamais été lancé : ni le https (SChannel), ni le Gestionnaire d'identification,
-ni la saisie d'une clé sans écho n'y ont tourné. Le style de sortie (dans
+ni la saisie d'une clé sans écho n'y ont tourné. « Se lancer à l'ouverture de session » y est
+grisée : ni l'inscription, ni le lancement d'Ollama n'y sont écrits. Le style de sortie (dans
 `%USERPROFILE%\.claude\output-styles`) et le miroir (dans `%LOCALAPPDATA%\Capri`) n'y ont pas
 tourné non plus. La liste des fenêtres (jalon 3 : `EnumWindows`, le cadre et l'état « masquée »
 de DWM, l'état des boutons de la souris) est écrite et compilée, jamais exécutée : sur un vrai PC,

@@ -23,6 +23,11 @@
 //! les clés d'API ([`keychain`]), la saisie d'une clé sans l'afficher ([`terminal`]) et la
 //! fenêtre de réglages ([`SettingsWindow`]), qui affiche un formulaire décrit par
 //! `capri_core::form` sans rien savoir de ce qu'il règle.
+//!
+//! Et son inscription à l'ouverture de session ([`login`] : un agent de lancement de macOS, dans
+//! un dossier passé en paramètre), et le lancement d'Ollama quand c'est son cerveau sur cette
+//! machine ([`launch`] : un programme par son chemin absolu, détaché, jamais arrêté ; une app par
+//! `open`). Refus explicite ailleurs que sur macOS.
 
 use raw_window_handle::{HandleError, HasDisplayHandle, HasWindowHandle, WindowHandle};
 use winit::event::{MouseButton, WindowEvent};
@@ -31,6 +36,8 @@ use winit::event_loop::{ActiveEventLoop, EventLoopBuilder};
 pub mod desk;
 mod ear;
 pub mod keychain;
+pub mod launch;
+pub mod login;
 pub mod music;
 pub mod settings_window;
 pub mod terminal;

@@ -20,6 +20,8 @@
 //!   voix, réglages) ;
 //! - [`settings`] : le modèle de la fenêtre de réglages, ses rubriques (« Cerveau », « Voix »),
 //!   ce qu'elle affiche et ce qu'elle demande à l'app de faire ;
+//! - [`startup`] : se lancer à l'ouverture de session avec Ollama, quand c'est son cerveau sur
+//!   cette machine : faut-il le lancer, où le chercher, ce qu'elle en dit ;
 //! - [`echo`] : le cerveau de secours, qui répète ce qu'on lui dit tant qu'aucun modèle n'est
 //!   choisi.
 //!
@@ -40,6 +42,7 @@ pub mod plain;
 pub mod reply;
 pub mod settings;
 pub mod sse;
+pub mod startup;
 pub mod voice;
 pub mod wire;
 

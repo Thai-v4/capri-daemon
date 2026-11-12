@@ -17,6 +17,8 @@
 //! le curseur ou sa fenêtre à la cadence de l'écran.
 //! [`scale`] dit sa taille, choisie par l'utilisateur : une échelle rapportée à sa hauteur debout,
 //! que tous ses dessins partagent.
+//! [`login`] dit le texte de son inscription à l'ouverture de session (un agent de lancement de
+//! macOS) et reconnaît la nôtre : `capri-platform` l'écrit et la retire.
 
 pub mod anim;
 pub mod banner;
@@ -24,6 +26,7 @@ pub mod body;
 pub mod form;
 pub mod geom;
 pub mod input;
+pub mod login;
 pub mod look;
 pub mod mask;
 pub mod music;

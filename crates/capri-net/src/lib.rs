@@ -25,6 +25,9 @@
 //!   SChannel sur Windows) et son magasin de certificats : un certificat refusé arrête tout avant
 //!   le moindre octet de la conversation, et rien ne repasse jamais en clair.
 //!
+//! Il sait aussi frapper à une adresse **de cette machine seulement** ([`knock`]) : une connexion
+//! ouverte puis fermée, sans rien envoyer, pour savoir si Ollama tourne avant de le lancer.
+//!
 //! Ailleurs (Linux), pas de TLS du tout : il y faudrait OpenSSL. Une adresse en `https://` y est
 //! refusée avec un message clair, avant toute connexion.
 
@@ -556,6 +559,63 @@ fn before_the_reply(error: ureq::Error) -> Problem {
         // connexion refusée, hôte introuvable ou injoignable, connexion fermée sans un mot
         _ => Problem::Unreachable,
     }
+}
+
+/// Le temps laissé à une adresse de cette machine pour accepter une connexion.
+const KNOCK_TIMEOUT: Duration = Duration::from_secs(1);
+
+/// Ce qu'on trouve à une adresse de cette machine.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Presence {
+    /// Quelque chose y accepte les connexions : un serveur tourne là (Ollama, ou un autre).
+    Answers,
+    /// Personne : la connexion est refusée, ou n'aboutit pas.
+    Nobody,
+}
+
+/// Pourquoi [`knock`] ne frappe pas à une adresse.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum KnockRefused {
+    /// Elle n'est pas sur cette machine : on ne frappe jamais ailleurs.
+    NotThisMachine,
+    /// Elle est en `https://`, ce que ne sert pas un serveur qu'elle saurait lancer.
+    Encrypted,
+}
+
+/// Quelque chose répond-il à cette adresse **de cette machine** ? Une connexion TCP, aussitôt
+/// fermée : **rien n'est envoyé**, ni requête, ni conversation, ni clé. Sert à savoir s'il faut
+/// lancer Ollama (`capri_chat::startup`). Une adresse d'une autre machine, ou en `https://`, est
+/// refusée avant toute connexion ; `localhost` n'est pas résolu par le système des noms : ce sont
+/// `127.0.0.1` puis `::1`. Bloque au plus une seconde par adresse : hors du thread principal.
+pub fn knock(endpoint: &Endpoint) -> Result<Presence, KnockRefused> {
+    if endpoint.reach() != Reach::ThisMachine {
+        return Err(KnockRefused::NotThisMachine);
+    }
+    if endpoint.secure {
+        return Err(KnockRefused::Encrypted);
+    }
+    let addresses: Vec<std::net::IpAddr> = match endpoint.host.as_str() {
+        "localhost" => vec![std::net::Ipv4Addr::LOCALHOST.into(), std::net::Ipv6Addr::LOCALHOST.into()],
+        host => host.parse().into_iter().collect(),
+    };
+    for address in addresses {
+        // `reach` l'a déjà vérifié ; on ne se fie pas qu'à lui avant de se connecter
+        let here = match address {
+            std::net::IpAddr::V4(v4) => v4.is_loopback(),
+            std::net::IpAddr::V6(v6) => {
+                v6.is_loopback() || v6.to_ipv4_mapped().is_some_and(|v4| v4.is_loopback())
+            }
+        };
+        if !here {
+            return Err(KnockRefused::NotThisMachine);
+        }
+        let target = std::net::SocketAddr::new(address, endpoint.port);
+        match std::net::TcpStream::connect_timeout(&target, KNOCK_TIMEOUT) {
+            Ok(_) => return Ok(Presence::Answers),
+            Err(err) => log::debug!("personne à {target} : {}", err.kind()),
+        }
+    }
+    Ok(Presence::Nobody)
 }
 
 /// Une erreur survenue pendant la lecture de la réponse.

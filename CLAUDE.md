@@ -14,7 +14,11 @@ que Claude écrit pour elle) en place, essayé dans une vraie session le 11 nove
 l'ensemble, pas cas par cas) ; elle détecte seule la fin de la phrase (un appui bref sur le
 raccourci suffit ; pas essayé avec une vraie voix) ; le mot d'éveil est écarté (il demanderait un
 micro ouvert en permanence). Sur macOS, une fenêtre de réglages
-(« Réglages… » dans son menu) règle son cerveau, sa voix et Claude Code sans terminal.
+(« Réglages… » dans son menu) règle son cerveau, sa voix et Claude Code sans terminal. Sur
+macOS toujours, « Se lancer à l'ouverture de session » (case de son menu, décochée par défaut)
+l'inscrit par un agent de lancement et, cochée, lui fait lancer Ollama à chaque lancement s'il est
+son cerveau sur cette machine et que rien n'y répond (écrit et testé sans ouverture de session ;
+pas encore essayé à une vraie ouverture de session).
 
 ## Architecture : où va quoi
 
@@ -59,6 +63,11 @@ micro ouvert en permanence). Sur macOS, une fenêtre de réglages
   suite ; `look` ne prend et ne quitte la musique qu'au début d'un tour, ce qui suffit contre le
   clignotement) ; et quand vérifier qu'un lecteur cru en lecture tourne encore (`Alive`, toutes
   les `ALIVE_EVERY`, horloge passée en paramètre). Il ne sait pas de quel lecteur il s'agit.
+  Et `login` : le texte de son **inscription à l'ouverture de session** (un agent de lancement
+  `launchd.plist(5)` : `LABEL`, `FILE_NAME`, `/usr/bin/open -g -a <Capri.app>`, `RunAtLoad`, session
+  `Aqua`, `AssociatedBundleIdentifiers`), la reconnaissance du nôtre (`LoginState::of` : le
+  commentaire `MARK` avant `<plist>`), l'app qu'il lance (`registered_app`), sa réparation quand
+  l'app a changé de place (`repair`), et l'app autour d'un programme (`app_bundle`).
 - `capri-claude` : tout ce que Capri sait de Claude Code, lui aussi **sans dépendance système** :
   lecture de l'entrée des hooks, protocole, suivi des sessions, édition de `settings.json` de
   texte à texte, le style de sortie « Capri » (`style` : son texte, la signature qui reconnaît le
@@ -75,13 +84,20 @@ micro ouvert en permanence). Sur macOS, une fenêtre de réglages
   `key::key_header` : son nom et sa valeur sont décidés ici), réglages du cerveau, personnalité,
   nettoyage du Markdown, et les effets de voix (`voice` : les préréglages `VoiceEffect` écrits
   pour Capri, l'intensité, la hauteur, le débit, `voice.json`, et `delivery()` qui en fait la
-  description neutre). Avec des tests. Les phrases que disent à la fois `capri chat` et la fenêtre
+  description neutre), et `startup` : faut-il lancer Ollama au lancement (`plan` : case cochée,
+  fournisseur Ollama, adresse de cette machine, en `http`), où le chercher (`candidates` :
+  emplacements fixes, l'app seulement pour l'adresse par défaut), `OLLAMA_HOST`, le déroulé (`Wake` :
+  un délai de grâce, un seul lancement, l'attente qu'il réponde, horloge passée en paramètre) et ce
+  qu'elle en dit (`say`). Avec des tests. Les phrases que disent à la fois `capri chat` et la fenêtre
   de réglages (où part ce qu'on lui dit, clé rangée ou retirée…) sont dans `phrases`, écrites une
   seule fois. Le modèle de la fenêtre de réglages est dans `settings` (voir plus bas) ; sa
   rubrique « Claude Code » dépend de `capri-claude` (pur lui aussi) pour ses états et ses phrases.
 - `capri-net` : **le seul crate qui parle au réseau** (ureq). Il se connecte et rien d'autre :
   quoi envoyer et comment lire la réponse est décidé par `capri-chat` (`Wire`, `key_header`, qu'il
-  pose tels quels). En `https://`, le TLS du système (fonction `native-tls-no-default` de ureq,
+  pose tels quels). Et `knock` : quelque chose répond-il à une adresse **de cette machine
+  seulement** (une connexion TCP ouverte et refermée, rien d'envoyé ; `localhost` vaut `127.0.0.1`
+  puis `::1`, sans résolution ; toute autre adresse, ou `https`, refusée avant de se connecter).
+  En `https://`, le TLS du système (fonction `native-tls-no-default` de ureq,
   `RootCerts::PlatformVerifier`), sur macOS et Windows seulement ; sous Linux, pas de TLS (il y
   faudrait OpenSSL) et `https://` est refusé. Testé contre un faux serveur local ; aucun test ne
   sort de la machine.
@@ -92,7 +108,8 @@ micro ouvert en permanence). Sur macOS, une fenêtre de réglages
   Couleurs prémultipliées de bout en bout.
 - Les appels système et l'`unsafe` lié à l'OS vivent dans **deux crates, et nulle part
   ailleurs** : `capri-platform` (la fenêtre, la voix, le micro, le trousseau, la liste des
-  fenêtres) et `capri-ipc` (le canal local).
+  fenêtres, l'inscription à l'ouverture de session, le lancement d'Ollama) et `capri-ipc` (le
+  canal local).
 - `capri-ipc` : socket Unix ou tube nommé Windows, réservés à l'utilisateur. À part de
   `capri-platform` parce que `capri-hook` le charge à chaque événement de Claude Code : ni winit
   ni AppKit ici. Sous Windows, un tube n'a pas la file d'attente d'une socket : un thread
@@ -163,6 +180,16 @@ micro ouvert en permanence). Sur macOS, une fenêtre de réglages
   version de débogage seulement : le lecteur d'essai (`Player::Rehearsal`, nom et identifiant
   donnés par l'appelant), l'abonnement ordinaire pour comparer, le poste d'une annonce d'essai,
   la suspension à la main.
+  L'inscription à l'ouverture de session aussi (`login.rs` : `status`, `register`, `unregister`
+  dans un dossier **passé en paramètre**, écriture d'un seul coup en `0644` par un fichier
+  temporaire qui ne finit pas par `.plist`, jamais par-dessus ni à la place d'un fichier qui n'est
+  pas le nôtre, d'un lien ou d'un dossier, aucun appel à `launchctl` ; seul `user_agents_dir` désigne
+  le vrai `~/Library/LaunchAgents`, et ailleurs que sur macOS il refuse : `LoginError::Unavailable`),
+  et le lancement d'Ollama (`launch.rs` : `start_program`, un programme par son chemin absolu,
+  détaché dans son propre groupe de processus, entrée et sorties fermées, sa fin attendue par un
+  thread « capri-lance » ; `open_app`, une app par `/usr/bin/open -g -a` ; `is_program`, `is_app` ;
+  ailleurs : `LaunchError::Unavailable`). Ni l'un ni l'autre ne sait ce qu'est Ollama : c'est
+  `capri_chat::startup` qui décide quoi lancer.
 - `capri-app` : assemble le tout. Pas d'appel système direct ici (sauf menus via `tray-icon`).
   La fenêtre passe toujours par `capri_platform::Overlay`, jamais par `winit::window::Window`.
   Les clés passent par `keys` (le trait `KeyStore` : le trousseau du système, ou un trousseau en
@@ -201,6 +228,13 @@ micro ouvert en permanence). Sur macOS, une fenêtre de réglages
   `capri music announce`, reçue et son état lu) et `CAPRI_MUSIC_REHEARSAL=1` au lancement de la
   vraie app (reçue alors que l'app n'est pas active, et livraison suspendue à la main), lancés
   par le test ignoré `musique_sans_titre`.
+  `login_setup` tient la case « Se lancer à l'ouverture de session » (l'état lu dans le système
+  par `capri_platform::login::status`, aucun fichier de réglages à part ; la réparation au
+  lancement par `capri_core::login::repair` ; la bascule, qui n'inscrit que l'app d'où elle
+  tourne, `this_app`, jamais un binaire nu). `ollama_view` veille sur Ollama au lancement, case
+  cochée, sur un thread « capri-ollama » (le cerveau lu là, `startup::plan`, `capri_net::knock`,
+  `capri_platform::launch`), derrière un trait `Machine` que les essais remplacent par une fausse
+  machine à l'horloge factice ; ce qu'elle en dit est relevé par la boucle (`App::handle_ollama`).
 
 ## La fenêtre de réglages : ajouter une rubrique
 
@@ -368,6 +402,22 @@ précisément quoi vérifier plutôt que de l'affirmer.
   de repli sur un serveur), rien n'est enregistré, et ce qui se dit n'est jamais écrit dans le
   journal. Capri ne demande une permission que si son
   `Info.plist` l'explique (`tools/macos/Info.plist`) : sinon macOS tue le processus.
+- **Se lancer à l'ouverture de session, et Ollama.** Capri ne s'inscrit **que sur un geste de
+  l'utilisateur** (la case de son menu), jamais d'elle-même ; elle ne fait ensuite que réparer
+  **son propre** agent quand l'app a changé de place. Elle n'inscrit que `Capri.app` (par `open`,
+  pour garder les permissions de l'app), jamais un binaire nu. Elle **ne lance qu'Ollama**, et
+  seulement **case cochée, cerveau Ollama, sur cette machine même** (`Reach::ThisMachine`, en
+  `http`) et rien n'y répondant : jamais LM Studio, jamais vers une autre machine, jamais un autre
+  programme, et toujours pas Claude Code. Ollama est cherché à des emplacements fixes
+  (`startup::candidates`), jamais par le `PATH`, et écoute sur l'adresse réglée
+  (`OLLAMA_HOST`, `localhost` devenu `127.0.0.1`). Elle ne l'arrête **jamais**, même en la
+  quittant. Elle ne retire **que son propre fichier** (signé `capri-managed`), et décocher ne
+  retire que lui. Savoir si quelque chose répond passe par `capri_net::knock` (cette machine
+  seulement, rien d'envoyé), hors du thread principal : rien ne retarde son apparition. Les essais
+  n'écrivent jamais dans le vrai `~/Library/LaunchAgents` et ne lancent jamais un vrai Ollama. Ce
+  qu'elle en dit ne renvoie à aucune commande de terminal. Le format de l'agent se vérifie dans
+  `man 5 launchd.plist`, celui d'Ollama dans sa documentation (<https://docs.ollama.com/faq>,
+  <https://docs.ollama.com/macos>) et `ollama serve --help`, pas de mémoire.
 - Raccourcis globaux : une touche y est désignée par sa place, pas par sa lettre. Ne choisir que
   des lettres à la même place en AZERTY et en QWERTY (ni A, Q, W, Z, M, ni la ponctuation).
 - **Les fenêtres des autres apps** : **aucune permission** (ni Accessibilité, ni Enregistrement de

@@ -31,6 +31,8 @@ pub enum Action {
     OriginalSize,
     /// Brancher ou débrancher le hook de Claude Code.
     ToggleClaudeHook,
+    /// L'inscrire à l'ouverture de session (avec Ollama si c'est son cerveau ici), ou l'en retirer.
+    ToggleLogin,
     /// Ouvrir la fenêtre de réglages, ou la ramener devant.
     Settings,
     Quit,
@@ -49,6 +51,8 @@ pub struct Menus {
     perches: Vec<CheckMenuItem>,
     /// La case « Se balancer sur la musique », dans les deux menus.
     musics: Vec<CheckMenuItem>,
+    /// La case « Se lancer à l'ouverture de session », dans les deux menus.
+    logins: Vec<CheckMenuItem>,
     /// Le sous-menu « Taille », dans les deux menus : son titre dit la taille du moment.
     sizes: Vec<Submenu>,
     larger: Vec<MenuItem>,
@@ -61,6 +65,7 @@ struct Built {
     items: Vec<(Action, MenuItem)>,
     perch: CheckMenuItem,
     music: CheckMenuItem,
+    login: CheckMenuItem,
     size: Submenu,
 }
 
@@ -78,6 +83,7 @@ impl Menus {
             builder.build().inspect_err(|err| log::warn!("pas d'icône de barre des menus : {err}")).ok();
         let perches = vec![a.perch, b.perch];
         let musics = vec![a.music, b.music];
+        let logins = vec![a.login, b.login];
         let sizes = vec![a.size, b.size];
         let items: Vec<(Action, MenuItem)> = a.items.into_iter().chain(b.items).collect();
         let items_for = |wanted: Action| -> Vec<MenuItem> {
@@ -91,12 +97,14 @@ impl Menus {
                 .map(|(action, item)| (item.id().clone(), *action))
                 .chain(perches.iter().map(|item| (item.id().clone(), Action::TogglePerch)))
                 .chain(musics.iter().map(|item| (item.id().clone(), Action::ToggleMusic)))
+                .chain(logins.iter().map(|item| (item.id().clone(), Action::ToggleLogin)))
                 .collect(),
             toggles: items_for(Action::ToggleVisible),
             hooks: items_for(Action::ToggleClaudeHook),
             voices: items_for(Action::ToggleVoice),
             perches,
             musics,
+            logins,
             sizes,
             larger: items_for(Action::Larger),
             smaller: items_for(Action::Smaller),
@@ -156,6 +164,16 @@ impl Menus {
         }
     }
 
+    /// Est-elle inscrite à l'ouverture de session ? Coche ou décoche la case des deux menus (c'est
+    /// l'inscription lue dans le système qui décide). Là où elle ne sait pas s'inscrire (ailleurs
+    /// que sur macOS), la case est grisée.
+    pub fn set_login_registered(&self, registered: bool) {
+        for item in &self.logins {
+            item.set_checked(registered);
+            item.set_enabled(capri_platform::login::AVAILABLE);
+        }
+    }
+
     /// `Some(true)` : le hook de Claude Code est branché ; `None` : impossible de le savoir.
     pub fn set_hook_installed(&self, installed: Option<bool>) {
         for item in &self.hooks {
@@ -209,6 +227,12 @@ fn build_menu() -> Built {
         log::warn!("menu « Taille » incomplet : {err}");
     }
     let hook = MenuItem::new("Brancher Claude Code", true, None);
+    let login = CheckMenuItem::new(
+        "Se lancer à l'ouverture de session",
+        capri_platform::login::AVAILABLE,
+        false,
+        None,
+    );
     let settings = MenuItem::new("Réglages…", true, None);
     let quit = MenuItem::new("Quitter", true, None);
     let menu = Menu::new();
@@ -216,7 +240,7 @@ fn build_menu() -> Built {
     let (first, second, third) = (separator(), separator(), separator());
     if let Err(err) = menu.append_items(&[
         &title, &first, &talk, &listen, &hush, &forget, &voice, &second, &toggle, &perch, &music, &size,
-        &hook, &settings, &third, &quit,
+        &hook, &login, &settings, &third, &quit,
     ]) {
         log::warn!("menu incomplet : {err}");
     }
@@ -234,7 +258,7 @@ fn build_menu() -> Built {
         (Action::Settings, settings),
         (Action::Quit, quit),
     ];
-    Built { menu, items, perch, music, size }
+    Built { menu, items, perch, music, login, size }
 }
 
 /// « Taille : 80 % ».

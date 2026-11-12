@@ -15,7 +15,9 @@
 //! d'un fournisseur dans le trousseau du système), et
 //! `capri voice on | off | status | list | use | test` lui donne une voix, sans lancer la fenêtre.
 //! Sur macOS, « Réglages… » dans son menu ouvre une fenêtre qui fait la même chose sans terminal
-//! (`settings_view`).
+//! (`settings_view`), et « Se lancer à l'ouverture de session » l'inscrit auprès du système
+//! (`login_setup`) ; cochée, elle lance aussi Ollama à chaque lancement s'il est son cerveau sur
+//! cette machine et que rien n'y répond (`ollama_view`).
 
 mod assets;
 mod banner_view;
@@ -28,12 +30,14 @@ mod fake_server;
 mod figure;
 mod hook_setup;
 mod keys;
+mod login_setup;
 #[cfg(any(target_os = "macos", windows))]
 mod menu;
 #[cfg(debug_assertions)]
 mod music_rehearsal;
 mod music_setup;
 mod music_view;
+mod ollama_view;
 #[cfg(debug_assertions)]
 mod perch_rehearsal;
 mod perch_setup;
@@ -179,6 +183,9 @@ struct App {
     /// La répétition des annonces de musique (`CAPRI_MUSIC_REHEARSAL`, version de débogage).
     #[cfg(debug_assertions)]
     music_rehearsal: Option<music_rehearsal::InApp>,
+    /// Veiller à ce qu'Ollama tourne, au lancement, case « Se lancer à l'ouverture de session »
+    /// cochée : ce qu'elle en dira, une fois.
+    ollama: Option<ollama_view::OllamaWatch>,
     fatal: Option<anyhow::Error>,
 }
 
@@ -264,6 +271,7 @@ impl ApplicationHandler for App {
         #[cfg(any(target_os = "macos", windows))]
         self.handle_settings(event_loop);
         self.handle_hotkey();
+        self.handle_ollama();
         self.handle_overlay(event_loop);
         if let Some(r) = self.running.as_mut() {
             if self.hidden {
@@ -344,6 +352,12 @@ impl App {
         overlay.request_redraw();
 
         self.hotkeys = register_hotkeys();
+        // l'inscription à l'ouverture de session, lue dans le système (et réparée si l'app a changé
+        // de place) ; cochée, Ollama est veillé sur un thread à part
+        let registered = capri_platform::login::user_agents_dir()
+            .inspect_err(|err| log::debug!("ouverture de session : {err}"))
+            .is_ok_and(|directory| login_setup::at_launch(&directory, login_setup::this_app().as_deref()));
+        self.ollama = ollama_view::OllamaWatch::start(registered);
         #[cfg(any(target_os = "macos", windows))]
         {
             self.menus = Some(menu::Menus::new());
@@ -352,6 +366,7 @@ impl App {
             if let Some(menus) = &self.menus {
                 menus.set_perch_enabled(perch_enabled);
                 menus.set_music_enabled(music_enabled);
+                menus.set_login_registered(registered);
                 menus.set_size(scale);
             }
         }
@@ -525,6 +540,7 @@ impl App {
                     menu::Action::Smaller => self.choose_size(Scale::smaller),
                     menu::Action::OriginalSize => self.choose_size(|_| Scale::ORIGINAL),
                     menu::Action::ToggleClaudeHook => self.toggle_claude_hook(),
+                    menu::Action::ToggleLogin => self.toggle_login(),
                     menu::Action::Settings => self.open_settings(),
                     menu::Action::Quit => event_loop.exit(),
                 }
@@ -833,6 +849,58 @@ impl App {
         r.remember_scale();
         if let Some(menus) = &self.menus {
             menus.set_size(r.scale);
+        }
+    }
+
+    /// L'inscrit à l'ouverture de session, ou l'en retire. Cochée, elle veille aussi à ce
+    /// qu'Ollama tourne, tout de suite, si c'est son cerveau sur cette machine.
+    #[cfg(any(target_os = "macos", windows))]
+    fn toggle_login(&mut self) {
+        use capri_chat::startup::{self, say};
+        let done = capri_platform::login::user_agents_dir()
+            .map_err(login_setup::ToggleError::Login)
+            .and_then(|directory| login_setup::toggle(&directory, login_setup::this_app().as_deref()));
+        let (text, tone) = match &done {
+            Ok(login_setup::Toggled::Registered) => {
+                let brain = brain_setup::config_dir()
+                    .and_then(|directory| brain_setup::load(&directory))
+                    .ok()
+                    .flatten()
+                    .map(|setup| setup.brain);
+                let local = matches!(startup::plan(true, brain.as_ref()), startup::Plan::Watch(_));
+                (say::registered(local), capri_claude::Tone::Done)
+            }
+            Ok(login_setup::Toggled::Unregistered) => (say::UNREGISTERED, capri_claude::Tone::Done),
+            Err(err) => {
+                log::error!("ouverture de session : {err}");
+                (login_setup::refusal(err), capri_claude::Tone::Failed)
+            }
+        };
+        self.with_banner(|banner| banner.notify(text, tone));
+        let registered = matches!(done, Ok(login_setup::Toggled::Registered));
+        if registered && self.ollama.is_none() {
+            self.ollama = ollama_view::OllamaWatch::start(true);
+        }
+        let shown = capri_platform::login::user_agents_dir()
+            .and_then(|directory| capri_platform::login::status(&directory))
+            .is_ok_and(|state| state.is_registered());
+        if let Some(menus) = &self.menus {
+            menus.set_login_registered(shown);
+        }
+    }
+
+    /// Ce qu'elle a à dire d'Ollama, une fois la veille finie.
+    fn handle_ollama(&mut self) {
+        let Some(heard) = self.ollama.as_ref().map(ollama_view::OllamaWatch::heard) else { return };
+        match heard {
+            ollama_view::Heard::Nothing => {}
+            ollama_view::Heard::Over => self.ollama = None,
+            ollama_view::Heard::Said((text, tone)) => {
+                self.ollama = None;
+                if let Some(r) = self.running.as_mut() {
+                    r.banner.notify(text, tone);
+                }
+            }
         }
     }
 
