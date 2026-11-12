@@ -35,6 +35,11 @@ cargo build --release                      # construit capri et capri-hook
 ./target/release/capri hook uninstall      # le débranche
 ```
 
+`capri hook install` rebranche sur le binaire d'où il est lancé, à la place de l'ancien
+branchement. `capri hook install --if-plugged` fait de même, mais seulement si Capri est déjà
+branchée (sinon il n'écrit rien) : c'est ce que lance `tools/install-macos.sh` pour que le hook
+suive l'app installée.
+
 Le menu de Capri propose la même bascule (« Brancher / Débrancher Claude Code »), et sa fenêtre
 de réglages aussi (onglet « Claude Code »). Les sessions déjà ouvertes prennent le changement en
 compte toutes seules ; `/hooks` dans Claude Code liste les entrées `capri-hook`.
@@ -553,10 +558,13 @@ Le menu (« Lui parler au micro ») fait comme l'appui bref : un clic pour comme
 finir tout de suite.
 
 ```bash
-./tools/bundle-macos.sh                   # fabrique target/Capri.app
-open target/Capri.app                     # quitte d'abord une Capri déjà lancée
+./tools/install-macos.sh                  # fabrique Capri.app et l'installe dans /Applications
+open /Applications/Capri.app              # quitte d'abord une Capri déjà lancée
 ./target/release/capri ear status         # si elle peut t'écouter, et sinon pourquoi
 ```
+
+(`./tools/bundle-macos.sh` seul fabrique `target/Capri.app` sans l'installer : voir
+[Installer et lancer](#installer-et-lancer).)
 
 - **le son ne quitte pas ta machine** : la transcription est faite par la reconnaissance vocale
   de macOS, exigée sur l'appareil. Si le système ne sait pas transcrire le français sans passer
@@ -738,7 +746,8 @@ d'ouverture : d'après son en-tête (`SMAppService.h`), l'app doit être signée
 être refaite quand l'exécutable change. Capri est signée « ad hoc » et reconstruite souvent : un
 fichier lié à un chemin survit aux reconstructions, et se vérifie sans écran.
 
-**Seulement depuis `Capri.app`** (`tools/bundle-macos.sh`) : lancée par `cargo run` ou
+**Seulement depuis `Capri.app`** (`tools/install-macos.sh`, ou `tools/bundle-macos.sh` pour celle
+de `target/`) : lancée par `cargo run` ou
 `target/release/capri`, cocher la case refuse (« Pour m'inscrire, lance-moi depuis Capri.app ») :
 le binaire seul n'aurait pas les permissions de l'app. Le lancement d'Ollama, lui, vaut aussi
 pour le binaire, case cochée.
@@ -794,6 +803,58 @@ xcode-select --install        # si ce n'est pas déjà fait
 ./tools/fetch-assets.sh       # télécharge et vérifie les images
 cargo run --release
 ```
+
+**macOS : une app installée, qui ne dépend plus du dépôt**
+
+Pour lui parler au micro et la lancer à l'ouverture de session, il lui faut d'être une app
+(`Capri.app`). Une fois les images téléchargées :
+
+```bash
+./tools/install-macos.sh               # dans /Applications ; ou : ./tools/install-macos.sh ~/Applications
+open /Applications/Capri.app
+```
+
+Le script, dans l'ordre (rien de tout cela ne demande `sudo`) :
+
+1. il **refuse si Capri tourne** depuis `target/Capri.app` de ce dépôt ou depuis la destination :
+   quitte-la par « Quitter » dans son menu, il ne la quitte jamais lui-même ;
+2. il fabrique l'app par `tools/bundle-macos.sh` ;
+3. il la copie dans la destination d'un seul coup (une copie complète sous un nom caché, sa
+   signature vérifiée, puis un renommage) : un échec ne laisse jamais une demi-app, et une
+   installation précédente est remplacée (jamais une autre app qui porterait le même nom) ;
+4. **le hook de Claude Code** : s'il était branché, il suit la nouvelle app
+   (`capri hook install --if-plugged` de l'app installée, avec la sauvegarde habituelle de
+   `settings.json`) ; s'il ne l'était pas, rien n'est branché. `--no-hook` saute cette étape ;
+5. il retire `target/Capri.app`, pour qu'il ne reste qu'une Capri.app sur la machine ;
+6. il ne lance pas l'app, et ne touche pas à l'ouverture de session : si la case « Se lancer à
+   l'ouverture de session » était cochée, l'app répare elle-même son inscription au lancement
+   suivant, depuis sa nouvelle place. **Lance-la donc une fois avant ta prochaine ouverture de
+   session** : d'ici là, l'inscription mène encore à l'ancienne app, qui n'existe plus.
+
+Ce que l'app emporte : les deux programmes (`capri`, `capri-hook`), les images que lit le code
+(`capri-cutout.png`, les planches de `perch/` et de `stand/` ; pas les autres images que
+télécharge `fetch-assets.sh`, qui ne servent pas) dans `Contents/Resources/assets/`, et
+`CREDITS.md`, qui porte les mentions que leurs licences exigent. `bundle-macos.sh` prend les
+images dans `assets/`, ou dans le dossier que désigne `CAPRI_ASSETS` (celui qui contient
+`capri/`), et s'arrête s'il en manque une, en disant de lancer `tools/fetch-assets.sh` : il ne
+télécharge rien.
+
+- **Elle lit d'abord ses propres images** ; celles du dépôt seulement si l'app n'avait pas
+  `capri-cutout.png` (l'ordre est dans `assets.rs`, essayé sans écran). `CAPRI_ASSETS` passe
+  toujours avant : c'est le moyen d'essayer d'autres images, en la lançant depuis un terminal
+  (`CAPRI_ASSETS=/mon/dossier /Applications/Capri.app/Contents/MacOS/capri`), ou par l'option
+  `--env` de `open` (`open --env CAPRI_ASSETS=/mon/dossier /Applications/Capri.app`, d'après
+  `man open` ; pas essayé). Quitte d'abord une Capri déjà lancée.
+- **Ne remplace pas une image dans l'app** : la signature scelle les ressources, et une image
+  changée la casse (`codesign --verify` le dit : « a sealed resource is missing or invalid »).
+- **macOS redemande le micro et la reconnaissance vocale** à la première écoute après chaque
+  installation : l'app est signée « ad hoc », pour cette machine, et cette signature change à
+  chaque fabrication.
+- **Cette app ne se distribue pas** : ni partagée, ni publiée, ni téléversée. Les images ne sont
+  pas à ce projet (voir [CREDITS.md](CREDITS.md)) et chacun les télécharge pour soi. La CI ne
+  fabrique pas cette app et ne téléverse que les deux programmes, qui ne contiennent aucune image.
+- Pas encore de vraie signature, de notarisation ni de mises à jour (la seconde moitié du
+  jalon 5) : pour une nouvelle version, relance `./tools/install-macos.sh`.
 
 **Windows** (avec les outils de compilation C++ de Visual Studio, demandés par rustup)
 
@@ -891,7 +952,8 @@ crates/
                    tests/musique_sans_titre.rs) ; l'ouverture de session (login_setup.rs : la case,
                    l'état lu dans le système, la réparation ; ollama_view.rs : Ollama veillé et
                    lancé sur un thread à part)
-tools/             récupération vérifiée des images, fabrication de Capri.app (macOS)
+tools/             récupération vérifiée des images, fabrication de Capri.app avec ses images
+                   (bundle-macos.sh) et son installation dans /Applications (install-macos.sh)
 ```
 
 Règle : tout ce qui peut être testé sans écran va dans `capri-core`, `capri-claude` ou
@@ -901,7 +963,7 @@ Règle : tout ce qui peut être testé sans écran va dans `capri-core`, `capri-
 
 Vérifié automatiquement :
 
-- formatage, `clippy -D warnings` et 524 tests sur **macOS Apple Silicon** (plus 12 qui ne
+- formatage, `clippy -D warnings` et 529 tests sur **macOS Apple Silicon** (plus 12 qui ne
   tournent qu'à la main : ils écrivent des images ou dessinent sur la vraie carte graphique,
   lisent un vrai `settings.json`, touchent au vrai trousseau, créent de vraies voix et un vrai
   moteur audio, sans bruit, lisent la vraie liste des fenêtres, ou guettent une annonce d'essai
@@ -1553,6 +1615,41 @@ elle et qui répond, toujours là après qu'elle a été quittée par un signal 
 8. **depuis le terminal** (`cargo run --release`) : cocher la case dit « Pour m'inscrire,
    lance-moi depuis Capri.app », et rien n'est écrit.
 
+**L'app installée (`tools/install-macos.sh`)** : essayée le 12 novembre 2026 vers des dossiers
+temporaires seulement (jamais vers `/Applications`), avec des `settings.json` d'essai
+(`CLAUDE_CONFIG_DIR`), sans lancer l'app. Vérifié : l'app assemblée contient les dix images que lit
+le code (identiques à l'octet à celles de `assets/`) et `CREDITS.md`, scellés par sa signature ;
+`codesign --verify --strict` passe avant et après la copie, et échoue sur une copie dont une image
+a été remplacée ; `plutil -lint` passe ; sans images, ou avec une partie seulement, le script
+s'arrête avant de compiler ; installée dans un dossier vide, puis par-dessus trois fois ; refusée
+vers un dossier non inscriptible, absent, ou `target/` lui-même, et par-dessus une autre app du
+même nom ou un lien ; `target/Capri.app` retirée à la fin. Le hook : branché sur l'ancienne app, il
+suit (le fichier est le même à l'octet près, le chemin du hook mis à part, et sauvegardé) ; branché
+nulle part, ou sans `settings.json`, rien n'est écrit ni créé (pas même une sauvegarde) ; avec
+`--no-hook`, rien n'est touché. Le refus « Capri tourne » : la détection a été essayée seule, sur
+la vraie Capri qui tournait depuis `target/Capri.app` (la liste des processus lue, rien d'autre),
+pas le script entier. **Pas essayé** : la remise en place d'une installation précédente quand le
+renommage échoue ou qu'on interrompt le script (lue, pas exécutée).
+
+**L'app installée : à vérifier à la main** (rien de cette liste n'a été fait) :
+
+1. quitte Capri par son menu, puis `./tools/install-macos.sh` : il dit que le hook suit (si
+   Claude Code était branché), que `target/Capri.app` est retirée, et ne lance rien ;
+2. lancée par `open --stderr /tmp/capri.log /Applications/Capri.app` : elle apparaît avec ses
+   planches (debout, puis assise sur une fenêtre), et `/tmp/capri.log` dit
+   `sprite : /Applications/Capri.app/Contents/Resources/assets/capri/capri-cutout.png` ;
+3. le micro (⌃⌥D) : macOS redemande le micro et la reconnaissance vocale, puis elle t'écoute ;
+4. case « Se lancer à l'ouverture de session » cochée avant l'installation : après ce premier
+   lancement, `~/Library/LaunchAgents/local.capri-daemon.capri.login.plist` nomme
+   `/Applications/Capri.app` ; à l'ouverture de session suivante, elle apparaît seule ;
+5. `/Applications/Capri.app/Contents/MacOS/capri hook status` : le binaire est
+   `/Applications/Capri.app/Contents/MacOS/capri-hook (présent)` ; dans une session de Claude Code,
+   `/hooks` le montre, et le bandeau suit ce que fait Claude ;
+6. avec une clé d'API rangée : à la première réponse, macOS peut demander l'accès au trousseau
+   pour la nouvelle app (voir plus haut) ; « Toujours autoriser », puis elle répond ;
+7. `cargo clean` dans le dépôt : elle se relance toujours, avec ses images ;
+8. dans le Finder, `Capri.app` a l'icône générique des apps : elle n'a pas d'icône à elle.
+
 Note : aujourd'hui, Ollama est lancé par `brew services`, mais aucun fichier `sh.brew.ollama.plist`
 n'est dans `~/Library/LaunchAgents` (celui que `brew services` charge est dans le dossier de
 Homebrew) : c'est sans doute pour cela qu'il ne tournait plus après le redémarrage. Ce n'est
@@ -1612,7 +1709,10 @@ Points à surveiller :
    ~~la fin de la phrase détectée seule~~ (écrite et testée sans micro ; reste à l'essayer avec ta
    voix). Le mot d'éveil est écarté : il demanderait un micro ouvert en permanence, et Capri ne
    l'ouvre que sur un geste.
-5. App signée et notarisée (`.app` / installeur), mises à jour.
+5. ~~Une `Capri.app` qui ne dépend plus du dépôt : ses images dedans, installée dans
+   `/Applications` par `tools/install-macos.sh`~~ (écrit, essayé vers un dossier temporaire ; pas
+   encore lancée depuis `/Applications`, voir plus haut). Reste : une app signée et notarisée, un
+   installeur, des mises à jour (il y faut un compte développeur Apple).
 
 ## Licence
 

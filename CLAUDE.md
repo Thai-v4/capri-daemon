@@ -23,7 +23,10 @@ l'inscrit par un agent de lancement et, cochée, lui fait lancer Ollama à chaqu
 son cerveau sur cette machine et que rien n'y répond (écrit et testé sans ouverture de session ;
 le 12 novembre 2026, case cochée dans le vrai menu et agent chargé à la main par `launchctl
 bootstrap` : Capri lancée, et Ollama lancé par elle ; pas encore essayé à une vraie ouverture de
-session).
+session). Jalon 5, sa première moitié : une `Capri.app` qui emporte ses images, installée dans
+`/Applications` par `tools/install-macos.sh` (écrit, essayé vers un dossier temporaire seulement ;
+pas encore lancée depuis `/Applications`). Pas de vraie signature, de notarisation ni de mises à
+jour.
 
 ## Architecture : où va quoi
 
@@ -250,6 +253,15 @@ session).
   que la signature scelle. Il ne télécharge rien : sans les images, il s'arrête et dit quoi lancer.
   L'app cherche ses images dans cet ordre (`assets::candidates`, essayé) : `CAPRI_ASSETS`, à côté de
   l'exécutable, `Contents/Resources/assets` de son app, puis le dépôt.
+  `install-macos.sh [--no-hook] [dossier]` l'installe (par défaut dans `/Applications`) : refus si
+  une Capri tourne depuis `target/Capri.app` ou depuis la destination (regardé avant de fabriquer,
+  puis avant de mettre en place ; `pgrep`, `lsof`, `ps`, rien d'autre), `bundle-macos.sh`, copie
+  complète sous un nom caché à côté et signature vérifiée, puis renommage (une installation
+  précédente, seulement si c'est une Capri, mise de côté puis retirée, ou remise en place en cas
+  d'échec), le hook de Claude Code qui suit s'il était branché (`capri hook install
+  --if-plugged` de l'app installée : `hook_setup::follow`, `capri_claude::settings::follow`), puis
+  `target/Capri.app` retirée, pour que l'agent d'ouverture de session se répare au lancement suivant
+  (`login_setup::at_launch`, `capri_core::login::repair` : l'app inscrite n'existe plus).
 
 ## La fenêtre de réglages : ajouter une rubrique
 
@@ -312,6 +324,11 @@ construction échoue vers Windows depuis un Mac), pas d'OpenSSL. Ne pas en ajout
 les trois.
 Tout comportement visible (transparence, clics, animation) se vérifie à la main : dire
 précisément quoi vérifier plutôt que de l'affirmer.
+Après un changement de `tools/bundle-macos.sh` ou de `tools/install-macos.sh` (bash 3.2, celui de
+macOS : pas de tableau vide sous `set -u`, et `${VAR}` entre accolades devant un caractère non
+ASCII) : `bash -n`, puis l'installation vers un dossier temporaire (vide, puis par-dessus), avec
+`CLAUDE_CONFIG_DIR` et `CAPRI_CONFIG_DIR` d'essai, `codesign --verify --strict` de la copie, et le
+faux `settings.json` regardé avant et après.
 
 ## Règles
 
@@ -375,6 +392,15 @@ précisément quoi vérifier plutôt que de l'affirmer.
   `fetch-assets` ni `bundle-macos.sh`, et ne téléverse que les deux binaires (`capri`, `capri-hook`),
   qui ne contiennent aucune image (elles sont lues au lancement, jamais `include_bytes!`) : ne rien
   y ajouter qui en contienne.
+- **`tools/install-macos.sh`** ne quitte, ne tue ni ne signale **jamais** Capri ni aucun processus :
+  il refuse et dit de la quitter par son menu. Il ne demande jamais `sudo`. Il ne touche au
+  `settings.json` de Claude Code **que par `capri hook install --if-plugged`** de l'app installée,
+  et seulement pour faire suivre une inscription existante (`settings::follow` ne branche jamais
+  un fichier où Capri ne l'est pas) : ni `sed`, ni `jq`, ni lecture du fichier par le script. Il
+  n'écrit rien dans `~/Library/LaunchAgents` (c'est l'app qui répare son agent) et ne lance pas
+  l'app. Ses essais se font vers un dossier temporaire, jamais vers `/Applications` ni
+  `~/Applications`, avec `CLAUDE_CONFIG_DIR` et `CAPRI_CONFIG_DIR` d'essai posés à chaque
+  lancement (sans eux, l'étape du hook toucherait le vrai `~/.claude/settings.json`).
 - Aucune télémétrie, rien n'envoyé sur le réseau sans action explicite de l'utilisateur. La
   fenêtre de réglages ne demande d'elle-même la liste des modèles qu'à un serveur de cette
   machine ; à tout autre, seulement quand on appuie sur « Demander la liste ».
