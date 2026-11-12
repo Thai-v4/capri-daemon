@@ -322,7 +322,7 @@ impl Client {
 
     /// Les modèles que le serveur de `provider` propose (`GET /models`), avec sa clé s'il en
     /// faut une : la même règle que pour [`Client::answer`]. Une liste en plusieurs pages
-    /// (Anthropic) est lue page par page, [`MAX_LISTING_PAGES`] au plus.
+    /// (Anthropic) est lue page par page, `MAX_LISTING_PAGES` au plus.
     pub fn models(
         &self,
         provider: Provider,

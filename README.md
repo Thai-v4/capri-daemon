@@ -523,8 +523,9 @@ Ce que Capri garantit :
 
 Limites :
 
-- **personne n'a encore entendu ces effets** : ils ont été composés et mesurés sans être écoutés
-  (voir plus bas ce qu'il faut vérifier à l'oreille) ;
+- **ces effets n'ont été écoutés que dans l'ensemble** : composés et mesurés sans être écoutés,
+  ils l'ont été le 11 novembre 2026 depuis `Capri.app` (« cela fonctionne bien »), sans retour
+  préréglage par préréglage (voir plus bas ce qu'il reste à vérifier à l'oreille) ;
 - avec un effet, une phrase est d'abord rendue en mémoire, puis jouée : le début peut arriver une
   fraction de seconde plus tard que sans effet. Le passage de la voix mono au moteur stéréo baisse
   chaque canal d'environ 1,4 dB par rapport au son rendu (mesuré hors ligne) ; comparé au chemin
@@ -1560,8 +1561,9 @@ qu'une déduction : `brew services start ollama` l'inscrirait pour de bon, indé
 **Pas encore testé sur un vrai PC Windows** : la CI de GitHub y compile et y lance les tests
 (477 réussis le 12 novembre 2026 au commit `81e348b`, dont ceux du tube nommé et du hook ; au
 commit `807ab78`, quatre essais de l'ouverture de session y ont échoué, écrits pour des chemins
-d'Unix, puis corrigés par `6f8b876`, dont le résultat dans la CI n'est pas encore connu), mais
-personne n'y a encore lancé Capri. Il n'y a pas encore de fenêtre de réglages. Le tube nommé de `capri-ipc` n'y a
+d'Unix, puis corrigés par `6f8b876`, où la CI est verte sur les trois systèmes : 507 réussis sous
+Windows, 512 sous Linux, 524 sous macOS), mais personne n'y a encore lancé Capri. Il n'y a pas
+encore de fenêtre de réglages. Le tube nommé de `capri-ipc` n'y a
 tourné que dans ces tests, le champ de saisie et la voix n'y existent pas encore,
 et le chat n'y a jamais été lancé : ni le https (SChannel), ni le Gestionnaire d'identification,
 ni la saisie d'une clé sans écho n'y ont tourné. « Se lancer à l'ouverture de session » y est

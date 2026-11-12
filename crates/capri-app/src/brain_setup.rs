@@ -719,7 +719,7 @@ pub fn talk(
     Ok(Talked { first_word, total: started.elapsed() })
 }
 
-/// « --url <adresse> » à ajouter à une commande pour viser `endpoint`, sauf si c'est l'adresse
+/// « `--url <adresse>` » à ajouter à une commande pour viser `endpoint`, sauf si c'est l'adresse
 /// habituelle du fournisseur.
 fn url_option(provider: Provider, endpoint: &Endpoint) -> String {
     let usual = provider.default_url().and_then(|url| Endpoint::parse(url).ok());
