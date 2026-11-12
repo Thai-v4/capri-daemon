@@ -48,8 +48,9 @@
 //! - <https://learn.microsoft.com/en-us/windows/win32/ipc/multithreaded-pipe-server> : le modèle
 //!   d'une boucle qui ne fait qu'attendre les clients.
 //!
-//! La version précédente a tourné dans la CI de GitHub (et s'y bloquait) ; celle-ci compile mais
-//! n'a encore jamais tourné sur un vrai Windows.
+//! La version précédente a tourné dans la CI de GitHub et s'y bloquait. Celle-ci y a tourné le
+//! 12 novembre 2026 : ses tests et ceux de `capri-hook` y passent. Elle n'a encore jamais servi
+//! une vraie Capri sur un PC.
 
 use std::fs::{File, OpenOptions};
 use std::hash::{BuildHasher, RandomState};

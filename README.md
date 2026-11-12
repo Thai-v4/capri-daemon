@@ -804,7 +804,7 @@ Règle : tout ce qui peut être testé sans écran va dans `capri-core`, `capri-
 
 Vérifié automatiquement :
 
-- formatage, `clippy -D warnings` et 487 tests sur **macOS Apple Silicon** (plus 12 qui ne
+- formatage, `clippy -D warnings` et 489 tests sur **macOS Apple Silicon** (plus 12 qui ne
   tournent qu'à la main : ils écrivent des images ou dessinent sur la vraie carte graphique,
   lisent un vrai `settings.json`, touchent au vrai trousseau, créent de vraies voix et un vrai
   moteur audio, sans bruit, lisent la vraie liste des fenêtres, ou guettent une annonce d'essai
@@ -1377,8 +1377,10 @@ regardé en mouvement ; les images fixes, elles, l'ont été, voir plus haut) :
 22. **dans `Capri.app`** (et non le binaire seul) : les points 10 et 13 au moins, puisque les
     essais automatiques n'ont lancé que le binaire de débogage.
 
-**Pas encore testé sur un vrai PC Windows** : il n'y a pas encore de fenêtre de réglages. Le tube
-nommé de `capri-ipc` n'y a jamais tourné, le champ de saisie et la voix n'y existent pas encore,
+**Pas encore testé sur un vrai PC Windows** : la CI de GitHub y compile et y lance les tests
+(477 réussis le 12 novembre 2026, dont ceux du tube nommé et du hook), mais personne n'y a encore
+lancé Capri. Il n'y a pas encore de fenêtre de réglages. Le tube nommé de `capri-ipc` n'y a
+tourné que dans ces tests, le champ de saisie et la voix n'y existent pas encore,
 et le chat n'y a jamais été lancé : ni le https (SChannel), ni le Gestionnaire d'identification,
 ni la saisie d'une clé sans écho n'y ont tourné. Le style de sortie (dans
 `%USERPROFILE%\.claude\output-styles`) et le miroir (dans `%LOCALAPPDATA%\Capri`) n'y ont pas

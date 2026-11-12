@@ -95,7 +95,10 @@ micro ouvert en permanence). Sur macOS, une fenêtre de réglages
   fenêtres) et `capri-ipc` (le canal local).
 - `capri-ipc` : socket Unix ou tube nommé Windows, réservés à l'utilisateur. À part de
   `capri-platform` parce que `capri-hook` le charge à chaque événement de Claude Code : ni winit
-  ni AppKit ici.
+  ni AppKit ici. Sous Windows, un tube n'a pas la file d'attente d'une socket : un thread
+  (« capri-tube ») le sert sans arrêt et garde toujours une instance à l'écoute, pour qu'un hook
+  arrivé pendant que Capri fait autre chose ne soit pas perdu (`windows.rs`, qui cite la
+  documentation de Microsoft ; exécuté par la CI seulement, jamais sur un vrai PC).
 - `capri-hook` : le binaire que les hooks appellent. Deux dépendances (`capri-claude`,
   `capri-ipc`), rien d'autre. À chaque appel, il relit le réglage du miroir dans le dossier de
   Capri (`capri_claude::places`, le même que l'app) ; désactivé ou douteux, il ne lit pas la
