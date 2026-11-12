@@ -1,11 +1,16 @@
 //! Chargement des images de Capri.
 //!
 //! Les images ne sont pas compilées dans le binaire : elles se remplacent sans recompiler
-//! (voir CREDITS.md). On les cherche, dans l'ordre :
+//! (voir CREDITS.md). On les cherche, dans l'ordre ([`candidates`]) :
 //! 1. dans le dossier indiqué par la variable d'environnement `CAPRI_ASSETS` ;
-//! 2. à côté de l'exécutable (`assets/`), ou dans `Contents/Resources/assets` d'une app macOS ;
+//! 2. à côté de l'exécutable (`assets/`), ou dans `Contents/Resources/assets` d'une app macOS
+//!    (celle que fabrique `tools/bundle-macos.sh`, qui les y copie) ;
 //! 3. dans le dossier `assets/` du dépôt, pour le développement.
+//!
+//! Le premier dossier qui contient son dessin indispensable (`capri/capri-cutout.png`) l'emporte :
+//! une app installée lit ses propres images, même si le dépôt d'où elle vient existe encore.
 
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
@@ -270,15 +275,30 @@ pub mod stand {
 }
 
 fn assets_dir() -> Option<PathBuf> {
-    let mut candidates = Vec::new();
-    if let Some(dir) = std::env::var_os("CAPRI_ASSETS") {
+    let executable = std::env::current_exe().ok();
+    let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets");
+    first_with_sprite(candidates(std::env::var_os("CAPRI_ASSETS"), executable.as_deref(), &repository))
+}
+
+/// Les dossiers où chercher les images, dans l'ordre : celui de `CAPRI_ASSETS` (`variable` ; vide,
+/// elle ne compte pas), puis `assets/` à côté de l'exécutable (`executable`), puis
+/// `Contents/Resources/assets` de l'app qui le contient (pour `…/Capri.app/Contents/MacOS/capri`),
+/// puis celui du dépôt (`repository`). Ne regarde pas s'ils existent.
+fn candidates(variable: Option<OsString>, executable: Option<&Path>, repository: &Path) -> Vec<PathBuf> {
+    let mut candidates = Vec::with_capacity(4);
+    if let Some(dir) = variable.filter(|dir| !dir.is_empty()) {
         candidates.push(PathBuf::from(dir));
     }
-    if let Some(exe_dir) = std::env::current_exe().ok().and_then(|p| p.parent().map(Path::to_path_buf)) {
-        candidates.push(exe_dir.join("assets"));
-        candidates.push(exe_dir.join("../Resources/assets"));
+    if let Some(beside) = executable.and_then(Path::parent) {
+        candidates.push(beside.join("assets"));
+        candidates.push(beside.join("..").join("Resources").join("assets"));
     }
-    candidates.push(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets"));
+    candidates.push(repository.to_owned());
+    candidates
+}
+
+/// Le premier de ces dossiers qui contient son dessin indispensable ([`SPRITE`]).
+fn first_with_sprite(candidates: Vec<PathBuf>) -> Option<PathBuf> {
     candidates.into_iter().find(|dir| dir.join(SPRITE).is_file())
 }
 
@@ -372,6 +392,86 @@ mod tests {
         assert!(masks.narrow.hit(uv(rest.0 + 10, seat - 2)), "sa main sur le bord");
         assert!(!masks.narrow.hit(uv(2, 10)), "le coin de la case");
         assert!((0.1..0.6).contains(&masks.narrow.coverage()), "{}", masks.narrow.coverage());
+    }
+
+    /// Où elle cherche ses images : l'ordre, puis de vrais dossiers.
+    mod search {
+        use std::ffi::OsString;
+        use std::path::{Path, PathBuf};
+
+        use super::super::{SPRITE, candidates, first_with_sprite};
+
+        #[test]
+        fn the_variable_then_beside_the_program_then_its_app_then_the_repository() {
+            let program = Path::new("/Applications/Capri.app/Contents/MacOS/capri");
+            let beside = Path::new("/Applications/Capri.app/Contents/MacOS");
+            let repository = Path::new("/depot/capri-daemon/assets");
+            assert_eq!(
+                candidates(Some(OsString::from("/mes/images")), Some(program), repository),
+                [
+                    PathBuf::from("/mes/images"),
+                    beside.join("assets"),
+                    beside.join("..").join("Resources").join("assets"),
+                    repository.to_owned()
+                ]
+            );
+            // une variable vide ne compte pas : elle désignerait le dossier courant
+            for variable in [None, Some(OsString::new())] {
+                let found = candidates(variable, Some(program), repository);
+                assert_eq!(found.len(), 3);
+                assert_eq!(found[0], beside.join("assets"));
+            }
+            // sans exécutable connu, le dépôt seul
+            assert_eq!(candidates(None, None, repository), [repository.to_owned()]);
+        }
+
+        /// Son dessin indispensable, dans le dossier d'images `dir`.
+        fn sprite_in(dir: &Path) {
+            let file = dir.join(SPRITE);
+            std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+            std::fs::write(file, b"une image").unwrap();
+        }
+
+        /// Le même fichier, quel que soit le chemin qui y mène (`MacOS/../Resources`).
+        fn same_sprite(found: Option<PathBuf>, expected: &Path) -> bool {
+            found.is_some_and(|dir| {
+                dir.join(SPRITE).canonicalize().unwrap() == expected.join(SPRITE).canonicalize().unwrap()
+            })
+        }
+
+        #[test]
+        fn an_installed_app_reads_its_own_images_before_those_of_the_repository() {
+            let base = std::env::temp_dir().join(format!("capri-test-recherche-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&base);
+            let app = base.join("Applications").join("Capri.app");
+            let macos = app.join("Contents").join("MacOS");
+            // `MacOS/..` ne se suit que si `MacOS` existe
+            std::fs::create_dir_all(&macos).unwrap();
+            let program = macos.join("capri");
+            let bundled = app.join("Contents").join("Resources").join("assets");
+            let repository = base.join("capri-daemon").join("assets");
+            sprite_in(&bundled);
+            sprite_in(&repository);
+
+            let search = |variable: Option<&Path>| {
+                first_with_sprite(candidates(variable.map(Into::into), Some(&program), &repository))
+            };
+            assert!(same_sprite(search(None), &bundled), "les siennes d'abord");
+            // la variable l'emporte toujours, si son dossier a le dessin
+            let mine = base.join("mes-images");
+            sprite_in(&mine);
+            assert_eq!(search(Some(&mine)), Some(mine));
+            let empty = base.join("vide");
+            std::fs::create_dir_all(&empty).unwrap();
+            assert!(same_sprite(search(Some(&empty)), &bundled), "un dossier sans le dessin ne compte pas");
+            // une app sans images : celles du dépôt
+            std::fs::remove_dir_all(&bundled).unwrap();
+            assert_eq!(search(None), Some(repository.clone()));
+            // nulle part
+            std::fs::remove_dir_all(&repository).unwrap();
+            assert_eq!(search(None), None);
+            let _ = std::fs::remove_dir_all(&base);
+        }
     }
 
     mod standing {
