@@ -662,16 +662,19 @@ impl State {
         if !self.paused {
             #[cfg(debug_assertions)]
             let was_running = stage.is_running();
-            if let Err(reason) = stage.start() {
-                return self.fail(&reason);
-            }
+            // pas de `return` ici : en version optimisée, où le bloc de répétition qui suit
+            // n'existe pas, ce serait la dernière instruction et clippy le refuserait
+            let started = stage.start();
             #[cfg(debug_assertions)]
-            if !was_running {
+            if started.is_ok() && !was_running {
                 if self.breakage == Some(Breakage::EngineStops) {
                     // comme quand le système change de sortie audio : le moteur s'arrête seul
                     stage.halt();
                 }
                 self.note(Rehearsed::EngineStarted);
+            }
+            if let Err(reason) = started {
+                self.fail(&reason);
             }
         }
     }

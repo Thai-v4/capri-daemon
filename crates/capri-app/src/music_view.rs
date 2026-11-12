@@ -146,9 +146,9 @@ impl MusicView {
         swaying
     }
 
-    /// En version de débogage, pour la répétition : de la musique joue-t-elle, au dernier pas,
-    /// qu'elle soit assise ou non ?
-    #[cfg(debug_assertions)]
+    /// En version de débogage, pour la répétition, et pour les essais (lancés aussi en version
+    /// optimisée) : de la musique joue-t-elle, au dernier pas, qu'elle soit assise ou non ?
+    #[cfg(any(debug_assertions, test))]
     pub fn playing(&self) -> bool {
         self.playing
     }
