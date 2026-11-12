@@ -240,6 +240,16 @@ session).
   cochée, sur un thread « capri-ollama » (le cerveau lu là, `startup::plan`, `capri_net::knock`,
   `capri_platform::launch`), derrière un trait `Machine` que les essais remplacent par une fausse
   machine à l'horloge factice ; ce qu'elle en dit est relevé par la boucle (`App::handle_ollama`).
+- `tools/` : `fetch-assets.sh` (et `.ps1`), qui télécharge les images et vérifie leurs
+  empreintes ; `bundle-macos.sh`, qui fabrique `target/Capri.app` : les deux binaires, l'`Info.plist`
+  (`tools/macos/Info.plist`), les images que lit le code et seulement elles (sa liste `IMAGES`, prise
+  dans `assets/` ou dans le dossier de `CAPRI_ASSETS` ; l'essai
+  `the_app_bundle_carries_exactly_the_images_the_code_reads` de `assets.rs` vérifie qu'elle suit
+  `assets::SPRITE`, `capri_core::sheets` et `sheets::stand`) dans `Contents/Resources/assets/`, et
+  `CREDITS.md` dans `Contents/Resources/` ; signée « ad hoc » **après** la copie des ressources,
+  que la signature scelle. Il ne télécharge rien : sans les images, il s'arrête et dit quoi lancer.
+  L'app cherche ses images dans cet ordre (`assets::candidates`, essayé) : `CAPRI_ASSETS`, à côté de
+  l'exécutable, `Contents/Resources/assets` de son app, puis le dépôt.
 
 ## La fenêtre de réglages : ajouter une rubrique
 
@@ -357,6 +367,14 @@ précisément quoi vérifier plutôt que de l'affirmer.
   son dessin d'avant (`look::Wardrobe`), et chaque combinaison (debout seule, assise seule, aucune)
   est testée.
   Dans un worktree sans images, utiliser `CAPRI_ASSETS=/chemin/vers/assets`.
+- **Une `Capri.app` qui contient les images ne se distribue jamais** : ni téléversée, ni publiée,
+  ni partagée, ni jointe à une version, ni fabriquée par la CI. Les images ne sont pas à ce projet
+  (PolyForm Noncommercial pour ses poses, captures et fan art pour son dessin d'avant), et chacun
+  les télécharge pour soi : l'app de `tools/bundle-macos.sh` est faite sur une machine, pour cette
+  machine. La CI (`.github/workflows/ci.yml`) ne télécharge aucune image, ne lance ni
+  `fetch-assets` ni `bundle-macos.sh`, et ne téléverse que les deux binaires (`capri`, `capri-hook`),
+  qui ne contiennent aucune image (elles sont lues au lancement, jamais `include_bytes!`) : ne rien
+  y ajouter qui en contienne.
 - Aucune télémétrie, rien n'envoyé sur le réseau sans action explicite de l'utilisateur. La
   fenêtre de réglages ne demande d'elle-même la liste des modèles qu'à un serveur de cette
   machine ; à tout autre, seulement quand on appuie sur « Demander la liste ».

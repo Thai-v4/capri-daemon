@@ -472,6 +472,29 @@ mod tests {
             assert_eq!(search(None), None);
             let _ = std::fs::remove_dir_all(&base);
         }
+
+        /// `tools/bundle-macos.sh` copie dans `Capri.app` les images que lit le code, et
+        /// seulement elles : sa liste `IMAGES` suit le code.
+        #[test]
+        fn the_app_bundle_carries_exactly_the_images_the_code_reads() {
+            use capri_core::sheets::{self, stand};
+
+            let script = include_str!("../../../tools/bundle-macos.sh");
+            let mut listed: Vec<&str> = script
+                .lines()
+                .map(str::trim)
+                .skip_while(|line| *line != "IMAGES=(")
+                .skip(1)
+                .take_while(|line| *line != ")")
+                .filter(|line| !line.is_empty() && !line.starts_with('#'))
+                .collect();
+            let mut read = vec![SPRITE.to_owned()];
+            read.extend(sheets::Strip::ALL.iter().map(|strip| format!("{}/{}", sheets::DIR, strip.file())));
+            read.extend(stand::Strip::ALL.iter().map(|strip| format!("{}/{}", stand::DIR, strip.file())));
+            listed.sort_unstable();
+            read.sort_unstable();
+            assert_eq!(listed, read);
+        }
     }
 
     mod standing {

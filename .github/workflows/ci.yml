@@ -32,6 +32,8 @@ jobs:
       - name: Build release
         if: matrix.os != 'ubuntu-latest'
         run: cargo build --release -p capri-app -p capri-hook
+      # Les deux binaires seulement, qui ne contiennent aucune image. Jamais Capri.app ni assets/ :
+      # les images ne se distribuent pas (voir CREDITS.md et tools/bundle-macos.sh).
       - uses: actions/upload-artifact@v4
         if: matrix.os != 'ubuntu-latest'
         with:
