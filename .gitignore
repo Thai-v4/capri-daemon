@@ -1,3 +1,5 @@
 /target
 /assets/capri/
 .DS_Store
+# les copies de travail des agents de Claude Code
+/.claude/worktrees/
