@@ -392,7 +392,30 @@ mod tests {
 
     const ORIGINAL: &str = "{\n  \"theme\": \"dark\",\n  \"hooks\": {\n    \"Stop\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"/opt/autre/notify.sh\"\n          }\n        ]\n      }\n    ]\n  }\n}\n";
 
-    fn scratch_dir(name: &str) -> PathBuf {
+    /// Un dossier de test, retiré avec tout ce qu'il contient quand l'essai le lâche.
+    struct Scratch(PathBuf);
+
+    impl std::ops::Deref for Scratch {
+        type Target = Path;
+
+        fn deref(&self) -> &Path {
+            &self.0
+        }
+    }
+
+    impl AsRef<Path> for Scratch {
+        fn as_ref(&self) -> &Path {
+            &self.0
+        }
+    }
+
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn scratch_dir(name: &str) -> Scratch {
         static COUNTER: AtomicU32 = AtomicU32::new(0);
         let unique =
             format!("capri-setup-{}-{}-{name}", std::process::id(), COUNTER.fetch_add(1, Ordering::Relaxed));
@@ -400,7 +423,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         // sous macOS, le dossier temporaire est derrière un lien symbolique
-        dir.canonicalize().unwrap()
+        Scratch(dir.canonicalize().unwrap())
     }
 
     fn backups(dir: &Path) -> Vec<PathBuf> {
@@ -564,7 +587,8 @@ mod tests {
 
     #[test]
     fn the_mirror_is_off_until_written_and_read_back_like_the_hook_reads_it() {
-        let dir = scratch_dir("miroir").join("capri");
+        let scratch = scratch_dir("miroir");
+        let dir = scratch.join("capri");
         assert_eq!(load_mirror(&dir).unwrap(), MirrorSettings { enabled: false }, "sans fichier");
         let file = save_mirror(&dir, MirrorSettings { enabled: true }).unwrap();
         assert_eq!(file, dir.join("claude-code.json"));
@@ -580,6 +604,5 @@ mod tests {
             let error = format!("{:#}", load_mirror(&dir).unwrap_err());
             assert!(error.contains("compte pour désactivé") && error.contains("claude-code.json"), "{error}");
         }
-        let _ = std::fs::remove_dir_all(dir.parent().unwrap());
     }
 }

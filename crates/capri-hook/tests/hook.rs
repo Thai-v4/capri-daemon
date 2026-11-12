@@ -20,8 +20,26 @@ const PRE_TOOL_USE: &str = r#"{
   "tool_use_id": "toolu_01ABC123"
 }"#;
 
+/// Le canal d'un essai, dont le dossier est retiré avec tout ce qu'il contient quand l'essai le
+/// lâche.
+struct Scratch(Endpoint);
+
+impl std::ops::Deref for Scratch {
+    type Target = Endpoint;
+
+    fn deref(&self) -> &Endpoint {
+        &self.0
+    }
+}
+
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(capri_dir(&self.0));
+    }
+}
+
 /// Un canal de test dans un dossier neuf, au chemin court.
-fn endpoint(name: &str) -> Endpoint {
+fn endpoint(name: &str) -> Scratch {
     static COUNTER: AtomicU32 = AtomicU32::new(0);
     let unique =
         format!("capri-hook-{}-{}-{name}", std::process::id(), COUNTER.fetch_add(1, Ordering::Relaxed));
@@ -32,7 +50,7 @@ fn endpoint(name: &str) -> Endpoint {
     let dir = base.join(unique);
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
-    Endpoint::at(dir.join(if cfg!(windows) { "hook-pipe.txt" } else { "hook.sock" }))
+    Scratch(Endpoint::at(dir.join(if cfg!(windows) { "hook-pipe.txt" } else { "hook.sock" })))
 }
 
 /// Le hook, avec le canal de ce test et son dossier de Capri à lui (celui du canal) : jamais

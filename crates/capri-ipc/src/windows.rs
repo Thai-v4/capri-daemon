@@ -367,7 +367,8 @@ mod tests {
 
     #[test]
     fn a_stale_pointer_is_replaced_and_a_foreign_one_is_never_followed() {
-        let pointer = scratch_dir("perime").join("hook-pipe.txt");
+        let dir = scratch_dir("perime");
+        let pointer = dir.join("hook-pipe.txt");
         // le nom d'une Capri partie sans retirer son fichier
         let stale = format!("{PIPE_PREFIX}{}", "0".repeat(32));
         std::fs::write(&pointer, &stale).unwrap();
@@ -388,7 +389,8 @@ mod tests {
 
     #[test]
     fn closing_leaves_a_pointer_that_names_another_pipe_alone() {
-        let pointer = scratch_dir("autre").join("hook-pipe.txt");
+        let dir = scratch_dir("autre");
+        let pointer = dir.join("hook-pipe.txt");
         let listener = Listener::bind(&pointer, MAX).unwrap();
         // une autre Capri a publié son propre tube entre-temps
         let other = format!("{PIPE_PREFIX}{}", "f".repeat(32));

@@ -255,7 +255,8 @@ mod tests {
 
     #[test]
     fn a_path_too_long_for_a_socket_is_refused_up_front() {
-        let path = scratch_dir("long").join("x".repeat(120)).join("hook.sock");
+        let dir = scratch_dir("long");
+        let path = dir.join("x".repeat(120)).join("hook.sock");
         assert!(matches!(Listener::bind(&path, MAX), Err(IpcError::PathTooLong(_))));
         assert!(!path.parent().unwrap().exists(), "aucun dossier créé pour rien");
     }

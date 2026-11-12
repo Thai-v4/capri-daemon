@@ -160,11 +160,28 @@ mod tests {
 
 #[cfg(test)]
 mod tests_support {
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
     use std::sync::atomic::{AtomicU32, Ordering};
 
+    /// Un dossier de test, retiré avec tout ce qu'il contient quand l'essai le lâche.
+    pub struct Scratch(PathBuf);
+
+    impl std::ops::Deref for Scratch {
+        type Target = Path;
+
+        fn deref(&self) -> &Path {
+            &self.0
+        }
+    }
+
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
     /// Un dossier neuf, au chemin court (une socket Unix ne supporte pas les chemins longs).
-    pub fn scratch_dir(name: &str) -> PathBuf {
+    pub fn scratch_dir(name: &str) -> Scratch {
         static COUNTER: AtomicU32 = AtomicU32::new(0);
         let unique =
             format!("capri-ipc-{}-{}-{name}", std::process::id(), COUNTER.fetch_add(1, Ordering::Relaxed));
@@ -175,7 +192,7 @@ mod tests_support {
         let dir = base.join(unique);
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("dossier de test");
-        dir
+        Scratch(dir)
     }
 
     /// Le chemin du canal dans un dossier de test : la socket, ou sous Windows le fichier qui
@@ -197,7 +214,8 @@ mod channel_tests {
 
     #[test]
     fn a_line_sent_is_a_line_received() {
-        let endpoint = endpoint_in(&scratch_dir("aller"));
+        let dir = scratch_dir("aller");
+        let endpoint = endpoint_in(&dir);
         let mut listener = Listener::bind(&endpoint, MAX).unwrap();
         send_line(&endpoint, "{\"v\":1,\"kind\":\"turn_end\"}\n", SOON).unwrap();
         send_line(&endpoint, "sans saut de ligne", SOON).unwrap();
@@ -210,7 +228,8 @@ mod channel_tests {
         // Comme les tests de `capri-hook` : un envoi, une lecture, un envoi, une lecture… Sous
         // Windows, servir le tube seulement pendant `next_line` perdait le second envoi, puis
         // attendait pour toujours.
-        let endpoint = endpoint_in(&scratch_dir("entre"));
+        let dir = scratch_dir("entre");
+        let endpoint = endpoint_in(&dir);
         let mut listener = Listener::bind(&endpoint, MAX).unwrap();
         for round in 0..5 {
             send_line(&endpoint, &format!("tour {round}"), SOON).unwrap();
@@ -232,7 +251,8 @@ mod channel_tests {
 
     #[test]
     fn closing_capri_is_quick_and_frees_the_place() {
-        let endpoint = endpoint_in(&scratch_dir("fermeture"));
+        let dir = scratch_dir("fermeture");
+        let endpoint = endpoint_in(&dir);
         for _ in 0..3 {
             let listener = Listener::bind(&endpoint, MAX).unwrap();
             let started = Instant::now();
@@ -244,7 +264,8 @@ mod channel_tests {
 
     #[test]
     fn without_capri_the_hook_gives_up_at_once() {
-        let endpoint = endpoint_in(&scratch_dir("absent"));
+        let dir = scratch_dir("absent");
+        let endpoint = endpoint_in(&dir);
         let started = Instant::now();
         assert!(matches!(send_line(&endpoint, "x", SOON), Err(IpcError::NotRunning)));
         assert!(started.elapsed() < Duration::from_millis(100), "{:?}", started.elapsed());
@@ -256,7 +277,8 @@ mod channel_tests {
 
     #[test]
     fn retiring_the_channel_tells_the_hook_at_once() {
-        let endpoint = endpoint_in(&scratch_dir("retraite"));
+        let dir = scratch_dir("retraite");
+        let endpoint = endpoint_in(&dir);
         let listener = Listener::bind(&endpoint, MAX).unwrap();
         assert!(endpoint.path().exists());
         // Capri s'arrête alors que son thread d'écoute tient encore le canal ouvert
@@ -269,7 +291,8 @@ mod channel_tests {
 
     #[test]
     fn a_second_capri_does_not_steal_the_channel() {
-        let endpoint = endpoint_in(&scratch_dir("double"));
+        let dir = scratch_dir("double");
+        let endpoint = endpoint_in(&dir);
         let mut first = Listener::bind(&endpoint, MAX).unwrap();
         assert!(matches!(Listener::bind(&endpoint, MAX), Err(IpcError::AlreadyRunning)));
         send_line(&endpoint, "toujours pour la première", SOON).unwrap();
@@ -278,7 +301,8 @@ mod channel_tests {
 
     #[test]
     fn oversized_and_unreadable_lines_are_skipped() {
-        let endpoint = endpoint_in(&scratch_dir("trop"));
+        let dir = scratch_dir("trop");
+        let endpoint = endpoint_in(&dir);
         let mut listener = Listener::bind(&endpoint, 64).unwrap();
         let sender = {
             let endpoint = endpoint.clone();
@@ -295,7 +319,8 @@ mod channel_tests {
 
     #[test]
     fn many_hooks_at_once_all_get_through() {
-        let endpoint = endpoint_in(&scratch_dir("foule"));
+        let dir = scratch_dir("foule");
+        let endpoint = endpoint_in(&dir);
         let mut listener = Listener::bind(&endpoint, MAX).unwrap();
         let senders: Vec<_> = (0..24)
             .map(|i| {
