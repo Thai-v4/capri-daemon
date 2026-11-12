@@ -295,9 +295,9 @@ mod tests {
     fn ollama_is_looked_for_in_fixed_places_and_the_app_only_serves_its_own_address() {
         let home = Path::new("/Users/moi");
         let default = Endpoint::parse("http://localhost:11434/v1").expect("valide");
-        let paths = |found: &[Ollama]| {
-            found.iter().map(|o| o.path().to_string_lossy().into_owned()).collect::<Vec<_>>()
-        };
+        // comparés comme des chemins, pas comme du texte : sous Windows, où cet essai tourne aussi
+        // (dans la CI), `join` les assemble avec `\`, et c'est le même chemin
+        let paths = |found: &[Ollama]| found.iter().map(|o| o.path().to_path_buf()).collect::<Vec<_>>();
         let found = candidates(Some(home), &default);
         assert_eq!(
             paths(&found),
@@ -309,10 +309,13 @@ mod tests {
                 "/Applications/Ollama.app/Contents/Resources/ollama",
                 "/Users/moi/Applications/Ollama.app/Contents/Resources/ollama",
             ]
+            .map(PathBuf::from)
         );
         assert!(matches!(found[0], Ollama::App(_)) && matches!(found[2], Ollama::Program(_)));
-        // tous absolus : rien n'est cherché dans le PATH
-        assert!(found.iter().all(|ollama| ollama.path().is_absolute()));
+        // tous partent de la racine : rien n'est cherché dans le PATH (`has_root` et non
+        // `is_absolute`, qui exige en plus une lettre de lecteur sous Windows ; ce sont des
+        // emplacements de macOS, et là les deux disent la même chose)
+        assert!(found.iter().all(|ollama| ollama.path().has_root()));
 
         let elsewhere = Endpoint::parse("http://127.0.0.1:11500/v1").expect("valide");
         let found = candidates(None, &elsewhere);

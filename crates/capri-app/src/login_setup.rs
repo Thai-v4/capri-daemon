@@ -117,12 +117,19 @@ mod tests {
     }
 
     /// Une fausse app, juste ce qu'il faut pour exister.
+    ///
+    /// Sous Unix seulement, comme les trois essais qui s'en servent : un agent de lancement nomme
+    /// l'app par un chemin qui part de `/`, et sous Windows (où ces essais tournent aussi, dans la
+    /// CI) un vrai dossier porte une lettre de lecteur, que `capri_core::login::agent_text` refuse.
+    /// Ce refus-là est essayé dans `capri-core` et `capri-platform`, avec des chemins écrits.
+    #[cfg(unix)]
     fn fake_app(base: &Path, name: &str) -> String {
         let app = base.join(name);
         std::fs::create_dir_all(app.join("Contents/MacOS")).unwrap();
         app.to_str().unwrap().to_owned()
     }
 
+    #[cfg(unix)]
     #[test]
     fn the_box_registers_the_running_app_and_unchecking_removes_only_our_agent() {
         let directory = scratch("bascule");
@@ -155,6 +162,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(directory.parent().unwrap());
     }
 
+    #[cfg(unix)]
     #[test]
     fn a_moved_app_is_repaired_at_the_next_launch() {
         let directory = scratch("deplacee");
@@ -181,6 +189,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&base);
     }
 
+    #[cfg(unix)]
     #[test]
     fn a_file_that_is_not_ours_leaves_the_box_unchecked_and_untouched() {
         let directory = scratch("etranger");
