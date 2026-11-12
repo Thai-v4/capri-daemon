@@ -11,8 +11,9 @@
 //! ligne par ligne, et comparaison des cases entre elles), sauf deux, qu'une image ne dit pas, lus
 //! dans le code du dépôt d'origine sans rien en reprendre : la cadence d'origine (24 images par
 //! seconde pour la boucle et le clignement, 12 pour la bouche) et le rapport d'échelle entre ses
-//! poses debout et assise ([`STAND_OVER_PERCH`]), que nos mesures confirment à peu près. Comme
-//! pour sa pose assise, les dessins sont tenus « en deux » à 24 i/s (voir [`crate::anim`]).
+//! poses debout et assise ([`STAND_OVER_PERCH`] : le rapport du projet d'origine est 1,11 ; c'est
+//! 1,20 qui a été choisi, à l'œil). Comme pour sa pose assise, les dessins sont tenus « en deux » à
+//! 24 i/s (voir [`crate::anim`]).
 //!
 //! **Les planches** sont des bandes horizontales de cases de [`CELL_WIDTH`] × 384 px : la boucle
 //! (60 dessins), le clignement (8) et la bouche (5). Le clignement et la bouche se posent sur la
@@ -75,8 +76,13 @@ pub const MOUTH_BOX: ((u32, u32), (u32, u32)) = ((58, 117), (74, 131));
 /// deux dessins n'ont pas les mêmes proportions (assise, ses cheveux plus hérissés, sa tête plus
 /// grande, environ 1,4 du haut des cheveux au menton, et ses jambes dessinées bien plus longues).
 /// À 1,11, elle paraît un peu plus grande assise, la tête surtout ; à 1,20, les têtes se
-/// rapprochent. Gardé à 1,11 en attendant que l'utilisateur le voie en mouvement.
-pub const STAND_OVER_PERCH: f32 = 1.11;
+/// rapprochent.
+///
+/// Choisi : **1,20**, par l'utilisateur le 12 novembre 2026, après l'avoir vue en mouvement à 1,11
+/// et avoir regardé les deux comparaisons rendues. Assise, elle est dessinée un peu plus petite
+/// qu'avec 1,11, le rapport du projet d'origine. `portraits.rs` de l'app rend encore la
+/// comparaison avec 1,11 (`cote-a-cote-a-1-11.png`).
+pub const STAND_OVER_PERCH: f32 = 1.20;
 
 /// Une planche.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]

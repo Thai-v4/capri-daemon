@@ -317,18 +317,19 @@ fn seated_portraits() {
     }];
     let (sheet, sheet_size) = contact(&heads, head, 2);
     save(&dir, "visages-cote-a-cote.png", &sheet, sheet_size);
-    // pour comparer : assise à 1,20 au lieu de STAND_OVER_PERCH (sa ligne d'assise au même endroit)
-    let other = stand::STAND_OVER_PERCH / 1.20;
+    // pour comparer : assise à 1,11 (le rapport du projet d'origine) au lieu de STAND_OVER_PERCH (sa
+    // ligne d'assise au même endroit)
+    let other = stand::STAND_OVER_PERCH / 1.11;
     let seat = Vec2::new(1000.0, window.min.y);
-    let smaller = Picture {
+    let larger = Picture {
         rect: Rect::new(
             seat + (sitting.rect.min - seat) * other,
             Vec2::new((sitting.rect.size.x * other).round(), (sitting.rect.size.y * other).round()),
         ),
         ..sitting
     };
-    let both = scene.render(Some(window), &[standing, smaller]);
-    save(&dir, "cote-a-cote-a-1-20.png", &both, wide);
+    let both = scene.render(Some(window), &[standing, larger]);
+    save(&dir, "cote-a-cote-a-1-11.png", &both, wide);
     let k = stand::perch_scale(HEIGHT);
     println!(
         "échelle : {:.3} px d'écran par px de planche debout, {:.3} assise ; debout {:.0} px de haut, \

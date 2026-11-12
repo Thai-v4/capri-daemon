@@ -161,8 +161,8 @@ qu'on la tient.
   donne la taille d'origine, avec une ligne dans le journal, et n'est pas réécrit tant qu'on ne
   change pas sa taille ;
 - **agrandie, elle est floue** : sa silhouette debout fait 347 pixels de haut dans ses planches.
-  Sur un écran Retina, elle est déjà agrandie 1,73 fois à la taille d'origine (1,56 fois assise),
-  2,42 fois à 140 % (2,18 fois assise) : ses bords sont un peu doux à 100 %, nettement à 140 %. La
+  Sur un écran Retina, elle est déjà agrandie 1,73 fois à la taille d'origine (1,44 fois assise),
+  2,42 fois à 140 % (2,02 fois assise) : ses bords sont un peu doux à 100 %, nettement à 140 %. La
   borne haute (140 %) avait été choisie pour son dessin d'avant (220 × 420 pixels, agrandi 2 fois
   à 140 %) ; elle n'a pas changé. Réduite, elle reste nette ; très réduite, son trait fin peut
   scintiller (les planches n'ont qu'une seule résolution, sans mipmaps) ;
@@ -172,9 +172,10 @@ qu'on la tient.
 
 Limites connues :
 
-- assise, il lui faut au-dessus du bord la place de sa tête (185 points à la taille d'origine, 74 à
-  la plus petite, 258 à la plus grande), en dessous celle de ses jambes (89 points à la taille
-  d'origine), et un morceau de bord visible d'environ 103 points pour sa main et son genou. Une
+- assise, il lui faut au-dessus du bord la place de sa tête (171 points à la taille d'origine, 68 à
+  la plus petite, 239 à la plus grande), en dessous celle de ses jambes (82 points à la taille
+  d'origine), et un morceau de bord visible d'environ 48 points de part et d'autre de ses pieds
+  pour sa main et son genou. Une
   fenêtre agrandie, ou dont le haut est près de la barre des menus, ne peut pas la porter. Sans ses
   planches assises, debout, il lui faut toute sa hauteur (300 points à la taille d'origine) ;
 - elle vit sur l'écran qui porte la barre des menus : les fenêtres d'un autre écran ne comptent pas,
@@ -215,8 +216,9 @@ hasard : à la même image, le même dessin.
   aux mêmes tours que debout. Le bord passe sur sa ligne d'assise (sous ses cuisses) : ses jambes
   pendent devant la fenêtre, sa main tient le bord. Elle s'efface jusqu'à un trait (1 s) quand elle
   repart d'elle-même ; attrapée, elle est debout tout de suite. Les deux poses sont à la même
-  échelle : un pixel de ses planches debout vaut 1,11 pixel de ses planches assises
-  (`STAND_OVER_PERCH`, le rapport du projet Capri, voir plus bas ce qu'en montrent les images).
+  échelle : un pixel de ses planches debout vaut 1,20 pixel de ses planches assises
+  (`STAND_OVER_PERCH`, choisi le 12 novembre 2026 ; le rapport du projet Capri est 1,11, voir plus
+  bas ce qu'en montrent les images).
 - **Sur ta musique**, assise : quand Spotify ou Musique annonce une lecture, elle se balance, les
   yeux fermés, une main dans les cheveux ; elle s'arrête dès qu'il annonce une pause ou un arrêt.
   Elle entre dans la musique et en sort au début d'un tour de sa boucle (jusqu'à 2,5 s plus tard), là où les deux
@@ -271,8 +273,11 @@ proportions, et leurs mesures ne s'accordent pas : du cou à l'entrejambe, il fa
 que sa tête (du haut des cheveux au menton : 107 pixels debout, environ 153 assise) ait la même
 taille, environ 1,4, mais assise ses cheveux sont plus hérissés et sa tête penchée, son visage vu
 de trois quarts ; ses jambes, assise, sont dessinées bien plus longues. 1,11 est le rapport du
-projet Capri, gardé ici. À l'œil, à 1,11, elle paraît un peu plus grande assise que debout, la tête
-surtout ; à 1,20, les têtes se rapprochent. À regarder (liste plus bas).
+projet Capri. À l'œil, à 1,11, elle paraît un peu plus grande assise que debout, la tête surtout ;
+à 1,20, les têtes se rapprochent. **1,20 a été choisi le 12 novembre 2026**, après l'avoir vue en
+mouvement à 1,11 et regardé les deux comparaisons rendues : assise, elle est dessinée un peu plus
+petite. L'image `cote-a-cote-a-1-11.png`, rendue par les essais de `portraits.rs`, garde la
+comparaison avec 1,11.
 
 ## Jalon 4 : lui parler
 
@@ -940,7 +945,7 @@ Vérifié automatiquement :
   couvrent celle de sa boucle, rien ne dépasse), tenue et lancée (étirée), assise sur le bord d'un
   rectangle clair (le bord passe sous ses cuisses, ses jambes devant), clignant, parlant, en
   musique, l'arrivée et le départ dessin par dessin (nés d'un trait sur le bord, au même endroit
-  que sa pose assise), les deux poses côte à côte (à 1,11 et à 1,20) ; et le repli : planches
+  que sa pose assise), les deux poses côte à côte (à 1,20, la valeur retenue, et à 1,11, celle du projet d'origine) ; et le repli : planches
   refusées par la carte graphique, ou absentes, son dessin d'avant debout comme posée ;
 - les annonces (`CAPRI_ASSETS=… cargo test -p capri-app --test musique_sans_titre -- --ignored
   --test-threads=1`, le 11 novembre 2026) : `capri music rehearse` reçoit chaque annonce d'essai,
@@ -1324,7 +1329,7 @@ regardé en mouvement ; les images fixes, elles, l'ont été, voir plus haut) :
    sa main tient le bord à gauche, ses jambes pendent devant la fenêtre (pas derrière, pas dans le
    vide au-dessus). Pas de saut entre la fin de l'arrivée et sa boucle assise ;
 6. **assise** : elle respire, cligne aux mêmes moments que debout ; sa fenêtre déplacée, elle suit
-   (comme au jalon 3) ; une fenêtre dont le haut est à environ 200 points du haut de l'écran la porte
+   (comme au jalon 3) ; une fenêtre dont le haut est à environ 175 points du haut de l'écran la porte
    maintenant (il en fallait plus de 300) ; une fenêtre devant sa main ou son genou la fait partir ;
 7. **elle repart** : ferme sa fenêtre (⌘W) : elle s'efface jusqu'à un trait, là où elle était,
    puis flotte debout, avec un petit étirement ; attrape-la pendant qu'elle s'efface : debout tout de
@@ -1332,9 +1337,10 @@ regardé en mouvement ; les images fixes, elles, l'ont été, voir plus haut) :
    tenue à peu près par le même endroit, sans saut ;
 8. **elle parle assise** : écris-lui : sa bouche bouge, sans que son corps saute ;
 9. **la même échelle** : passe d'une pose à l'autre plusieurs fois (pose-la, attrape-la) : a-t-elle
-   l'air de la même taille ? Les images rendues `cote-a-cote.png` (à 1,11) et
-   `cote-a-cote-a-1-20.png` (à 1,20) montrent les deux ; si 1,20 te paraît plus juste, c'est
-   `STAND_OVER_PERCH` dans `capri_core::sheets::stand` ;
+   l'air de la même taille ? Le rapport est tranché (1,20, le 12 novembre 2026, d'après ce qu'on
+   avait vu à 1,11 en mouvement) ; ce qui reste à voir, c'est 1,20 lui-même en mouvement. Les
+   images rendues `cote-a-cote.png` (à 1,20) et `cote-a-cote-a-1-11.png` (à 1,11, celui du projet
+   d'origine) montrent les deux ;
 10. **Spotify, lecture puis pause** : Capri lancée, assise, mets un morceau dans Spotify : au début
     du tour suivant de sa boucle (jusqu'à 2,5 s), elle se balance, les yeux fermés ; mets en pause :
     elle reprend sa boucle au tour suivant ; relance la lecture : elle se balance de nouveau. Si

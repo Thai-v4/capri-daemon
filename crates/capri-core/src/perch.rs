@@ -624,12 +624,12 @@ mod tests {
 
     #[test]
     fn sitting_she_needs_less_room_above_but_a_longer_piece_of_edge_and_room_below() {
-        // assise, à la taille d'origine sur cet écran : 369 pixels au-dessus du bord, 178 en
-        // dessous (ses jambes pendent), et 103 de part et d'autre sur le bord (sa main, son genou)
+        // assise, à la taille d'origine sur cet écran : 341 pixels au-dessus du bord, 164 en
+        // dessous (ses jambes pendent), et 95 de part et d'autre sur le bord (sa main, son genou)
         let sitting = Stature {
             height: 600.0,
-            reach: Reach { left: 107.0, up: 369.0, right: 182.0, down: 178.0 },
-            rest: (103.0, 103.0),
+            reach: Reach { left: 99.0, up: 341.0, right: 169.0, down: 164.0 },
+            rest: (95.0, 95.0),
         };
         // un bord à 400 pixels du haut : debout, sa tête sortirait ; assise, elle s'y pose
         let high = seen(1, rect(200.0, 400.0, 1600.0, 800.0));
@@ -644,7 +644,7 @@ mod tests {
         assert_eq!(landing(&piece, screen(), sitting, Vec2::new(275.0, 400.0)), None);
         // près du bout du bord, le point posé rentre de ce qui repose dessus
         let perch = landing(&[high], screen(), sitting, Vec2::new(210.0, 400.0)).expect("posée");
-        assert_eq!(perch.feet.x, 303.0);
+        assert_eq!(perch.feet.x, 295.0);
         // un bord trop bas : ses jambes sortiraient de l'écran
         let low = seen(3, rect(200.0, 1900.0, 1600.0, 64.0));
         assert_eq!(landing(&[low], screen(), sitting, Vec2::new(700.0, 1900.0)), None);

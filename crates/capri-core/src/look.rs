@@ -692,9 +692,9 @@ mod tests {
         let k = stand::perch_scale(HEIGHT);
         assert_eq!(stature.height, HEIGHT);
         assert!((stature.reach.up - 237.0 * k).abs() < 1e-3 && (stature.reach.down - 114.0 * k).abs() < 1e-3);
-        // à la taille d'origine sur un écran Retina : 369 pixels (185 points) au-dessus du bord,
+        // à la taille d'origine sur un écran Retina : 341 pixels (171 points) au-dessus du bord,
         // contre 300 points (et plus, avec la marge de sa case) debout
-        assert!((369.0..370.0).contains(&stature.reach.up), "{stature:?}");
+        assert!((341.0..342.0).contains(&stature.reach.up), "{stature:?}");
         let standing = Stature::standing(look.standing_size(), look.standing_feet(), HEIGHT);
         assert!(standing.reach.up > HEIGHT && stature.reach.up < HEIGHT * 0.62, "{standing:?}");
         // de sa main à son genou, sur le bord : 66 pixels de planche de chaque côté
