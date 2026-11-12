@@ -768,11 +768,15 @@ mod tests {
             })
         };
         let bearer = Ok(Some("Authorization: Bearer sk-test-0123456789".to_owned()));
+        // sans TLS sur ce système (Linux), toute adresse en https est refusée avant même de
+        // regarder la clé : c'est ce refus-là qu'on y attend
+        let over_tls =
+            |expected: Result<Option<String>, Problem>| if TLS { expected } else { Err(Problem::NoTls) };
 
         let openrouter = bound(Provider::OpenRouter, "https://openrouter.ai/api/v1");
         assert_eq!(
             authorize(Provider::OpenRouter, "https://openrouter.ai/api/v1", Some(&openrouter)),
-            bearer
+            over_tls(bearer.clone())
         );
         let lmstudio = bound(Provider::LmStudio, "http://localhost:1234/v1");
         assert_eq!(
@@ -788,7 +792,7 @@ mod tests {
         // une clé donnée pour une autre adresse compte pour absente : rien n'est envoyé
         assert_eq!(
             authorize(Provider::OpenRouter, "https://proxy.example/api/v1", Some(&openrouter)),
-            Err(Problem::NoKey)
+            over_tls(Err(Problem::NoKey))
         );
         assert_eq!(authorize(Provider::LmStudio, "http://localhost:1235/v1", Some(&lmstudio)), Ok(None));
         assert_eq!(authorize(Provider::Custom, "http://localhost:1234/v1", Some(&lmstudio)), Ok(None));
@@ -799,21 +803,25 @@ mod tests {
         assert_eq!(authorize(Provider::Ollama, "http://192.168.1.20:11434/v1", Some(&ollama)), Ok(None));
         // sans clé : rien à envoyer, sauf si le fournisseur l'exige
         assert_eq!(authorize(Provider::Custom, "http://192.168.1.20:1234/v1", None), Ok(None));
-        assert_eq!(authorize(Provider::DeepSeek, "https://api.deepseek.com", None), Err(Problem::NoKey));
-        assert_eq!(authorize(Provider::Anthropic, "https://api.anthropic.com/v1", None), Err(Problem::NoKey));
+        for (provider, url) in [
+            (Provider::DeepSeek, "https://api.deepseek.com"),
+            (Provider::Anthropic, "https://api.anthropic.com/v1"),
+        ] {
+            assert_eq!(authorize(provider, url, None), over_tls(Err(Problem::NoKey)), "{url}");
+        }
         // Anthropic : la clé seule, dans son propre en-tête, et seulement chez lui
         let anthropic = bound(Provider::Anthropic, "https://api.anthropic.com/v1");
         assert_eq!(
             authorize(Provider::Anthropic, "https://api.anthropic.com/v1", Some(&anthropic)),
-            Ok(Some("x-api-key: sk-test-0123456789".to_owned()))
+            over_tls(Ok(Some("x-api-key: sk-test-0123456789".to_owned())))
         );
         assert_eq!(
             authorize(Provider::Anthropic, "https://proxy.example/v1", Some(&anthropic)),
-            Err(Problem::NoKey)
+            over_tls(Err(Problem::NoKey))
         );
         assert_eq!(
             authorize(Provider::Custom, "https://api.anthropic.com/v1", Some(&anthropic)),
-            Ok(None),
+            over_tls(Ok(None)),
             "ni à un autre fournisseur à la même adresse"
         );
     }
