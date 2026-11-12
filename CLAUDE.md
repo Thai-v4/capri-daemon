@@ -270,8 +270,24 @@ cargo fmt --all
 cargo clippy --workspace --all-targets -- -D warnings
 cargo clippy --workspace --all-targets --target x86_64-pc-windows-msvc -- -D warnings
 cargo clippy --workspace --all-targets --target x86_64-unknown-linux-gnu -- -D warnings
+cargo clippy --release --workspace --all-targets -- -D warnings
 cargo test --workspace
+cargo test --release --workspace
 ```
+
+Les deux en version optimisée parce que du code n'existe qu'en version de débogage
+(`debug_assertions`) : le 12 novembre 2026, deux défauts n'apparaissaient qu'ainsi (`1272f8a` :
+un essai qui appelait une fonction de débogage seulement, et un `return` que clippy refuse
+quand le bloc de débogage qui le suit disparaît).
+
+Les essais tournent aussi sous Windows, dans la CI : un essai ne suppose pas des chemins à la
+façon d'Unix. Les deux cas rencontrés (`6f8b876`) :
+- un chemin assemblé par `join` et comparé comme du texte (sous Windows, `join` met `\`) :
+  comparer des chemins, pas du texte ; et `is_absolute`, qui y exige une lettre de lecteur, sur
+  un chemin écrit à la façon d'Unix : `has_root` ;
+- un vrai dossier temporaire, dont le chemin porte une lettre de lecteur sous Windows, donné à du
+  code qui exige à raison un chemin d'Unix (le texte de l'agent de lancement) : l'essai est
+  réservé à Unix (`#[cfg(unix)]`), et le refus est essayé à part, avec des chemins écrits.
 
 Le code Windows ne se teste pas depuis un Mac : la CI GitHub Actions le compile et le teste.
 Les deux clippy croisés tiennent parce qu'aucune dépendance ne compile de C (sous Linux,
