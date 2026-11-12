@@ -294,7 +294,13 @@ fn nobody_listening_is_said_plainly() {
     // le port vient d'être libéré : personne n'y écoute
     let (events, elapsed) = ask(&Client::new(), &brain_at(address));
     assert_eq!(events, [failed(&format!("Je n'arrive pas à joindre Ollama ({address}). Il est lancé ?"))]);
-    assert!(elapsed < Duration::from_secs(2), "{elapsed:?}");
+    // Windows ne croit pas le premier refus d'un port fermé : il renvoie sa demande de connexion
+    // jusqu'à `TcpMaxConnectRetransmissions` fois, au même délai, avant d'abandonner (article
+    // 175523 de Microsoft, « Winsock TCP Connection Performance to Unused Ports », lu dans une
+    // archive : <https://mskb.pkisolutions.com/kb/175523>) ; environ deux secondes en local. Sous
+    // Unix, le refus est immédiat.
+    let promptly = if cfg!(windows) { Duration::from_secs(5) } else { Duration::from_secs(2) };
+    assert!(elapsed < promptly, "{elapsed:?}");
     assert_eq!(
         Client::new().models(Provider::Ollama, brain_at(address).endpoint(), None),
         Err(Problem::Unreachable)
