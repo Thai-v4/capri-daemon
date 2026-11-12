@@ -59,6 +59,10 @@ if [ -n "$missing" ]; then
   echo "ou indique leur dossier (celui qui contient capri/) avec CAPRI_ASSETS=…" >&2
   exit 1
 fi
+if ! command -v cargo > /dev/null; then
+  echo "cargo est introuvable : installe Rust (https://rustup.rs), ou ajoute son dossier au PATH." >&2
+  exit 1
+fi
 
 cargo build --release -p capri-app -p capri-hook
 
