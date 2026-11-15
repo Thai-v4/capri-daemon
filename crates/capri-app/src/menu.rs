@@ -35,6 +35,8 @@ pub enum Action {
     ToggleLogin,
     /// Ouvrir la fenêtre de réglages, ou la ramener devant.
     Settings,
+    /// Montrer le fichier de son journal dans le Finder.
+    ShowJournal,
     Quit,
 }
 
@@ -234,13 +236,15 @@ fn build_menu() -> Built {
         None,
     );
     let settings = MenuItem::new("Réglages…", true, None);
+    // grisée là où elle ne sait pas montrer un fichier (ailleurs que sur macOS)
+    let journal = MenuItem::new("Montrer le journal", capri_platform::launch::AVAILABLE, None);
     let quit = MenuItem::new("Quitter", true, None);
     let menu = Menu::new();
     let separator = PredefinedMenuItem::separator;
     let (first, second, third) = (separator(), separator(), separator());
     if let Err(err) = menu.append_items(&[
         &title, &first, &talk, &listen, &hush, &forget, &voice, &second, &toggle, &perch, &music, &size,
-        &hook, &login, &settings, &third, &quit,
+        &hook, &login, &settings, &journal, &third, &quit,
     ]) {
         log::warn!("menu incomplet : {err}");
     }
@@ -256,6 +260,7 @@ fn build_menu() -> Built {
         (Action::OriginalSize, original),
         (Action::ToggleClaudeHook, hook),
         (Action::Settings, settings),
+        (Action::ShowJournal, journal),
         (Action::Quit, quit),
     ];
     Built { menu, items, perch, music, login, size }

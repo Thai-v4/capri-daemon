@@ -1,6 +1,7 @@
 //! Son journal : sur la sortie d'erreur, comme toujours, et, quand elle tourne comme app à
-//! fenêtre, dans un fichier aussi (sa place : `capri_claude::places::log_file`). Ses commandes de
-//! terminal (`capri hook …`, `capri chat …`…) n'y écrivent pas : elles n'appellent pas [`start`].
+//! fenêtre, dans un fichier aussi (sa place : `capri_claude::places::log_file`), que « Montrer le
+//! journal » de son menu montre dans le Finder ([`show`]). Ses commandes de terminal
+//! (`capri hook …`, `capri chat …`…) n'y écrivent pas : elles n'appellent pas [`start`].
 //!
 //! Le même filtre pour les deux (`RUST_LOG`, par défaut `info`), le même format (celui
 //! d'`env_logger` : la date et l'heure en temps universel, le niveau, l'origine, le message ; sans
@@ -40,7 +41,8 @@ use capri_core::journal::{self, MAX_BYTES};
 pub const PREVIOUS_NAME: &str = "capri.old.log";
 
 /// Lance le journal de l'app à fenêtre : la sortie d'erreur, et le fichier. Rend la place du
-/// fichier, qu'il ait pu s'ouvrir ou non, ou `None` si elle est inconnue.
+/// fichier, qu'il ait pu s'ouvrir ou non ([`show`] regarde s'il est là), ou `None` si elle est
+/// inconnue.
 pub fn start() -> Option<PathBuf> {
     let place = places::log_file(|name| std::env::var_os(name), System::CURRENT);
     let opened = place
@@ -60,6 +62,39 @@ pub fn start() -> Option<PathBuf> {
         }
     }
     place.ok()
+}
+
+/// Ce qu'elle dit quand elle n'a aucun fichier à montrer : sa place est inconnue, ou il n'a pas pu
+/// s'écrire (il n'est pas là, ou ce n'est pas un fichier ordinaire).
+#[cfg(any(target_os = "macos", windows, test))]
+pub const NOTHING_TO_SHOW: &str = "Je n'ai pas de journal à te montrer : il n'a pas pu s'écrire";
+/// … quand ce système ne sait pas montrer un fichier (la ligne de son menu est alors grisée).
+#[cfg(any(target_os = "macos", windows, test))]
+pub const CANNOT_SHOW_HERE: &str = "Je ne sais pas encore te montrer mon journal sur ce système";
+/// … quand le montrer a échoué.
+#[cfg(any(target_os = "macos", windows, test))]
+pub const NOT_SHOWN: &str = "Je n'ai pas pu te montrer mon journal";
+
+/// « Montrer le journal » : montre `file` (sa place, si elle est connue) par `reveal`, s'il est là
+/// et ordinaire (jamais un lien). Rend ce qu'elle doit dire dans son bandeau, ou `None` si le
+/// fichier est montré.
+#[cfg(any(target_os = "macos", windows, test))]
+pub fn show(
+    file: Option<&Path>,
+    reveal: impl FnOnce(&Path) -> Result<(), capri_platform::launch::LaunchError>,
+) -> Option<&'static str> {
+    use capri_platform::launch::LaunchError;
+    let there =
+        file.filter(|file| std::fs::symlink_metadata(file).is_ok_and(|meta| meta.file_type().is_file()));
+    match there.map(reveal) {
+        None => Some(NOTHING_TO_SHOW),
+        Some(Ok(())) => None,
+        Some(Err(LaunchError::Unavailable)) => Some(CANNOT_SHOW_HERE),
+        Some(Err(err)) => {
+            log::warn!("journal : {err}");
+            Some(NOT_SHOWN)
+        }
+    }
 }
 
 /// Installe le journal : la sortie d'erreur, réglée par `RUST_LOG` (par défaut : `info`), et
@@ -782,5 +817,42 @@ mod tests {
         let _log = open(&path, 100, &complaints);
         assert_eq!((mode(&path), size(&path)), (0o600, 0));
         assert!(complaints.text().is_empty());
+    }
+
+    #[test]
+    fn only_a_regular_file_is_shown_and_otherwise_she_says_why() {
+        use capri_platform::launch::LaunchError;
+        let scratch = Scratch::new("montre");
+        let (complaints, path) = (Written::default(), scratch.journal());
+        let never = |_: &Path| -> Result<(), LaunchError> { panic!("rien à montrer : jamais appelé") };
+        // pas de place connue, ou pas encore de fichier (journal en panne) : elle le dit
+        assert_eq!(show(None, never), Some(NOTHING_TO_SHOW));
+        assert_eq!(show(Some(&path), never), Some(NOTHING_TO_SHOW));
+        let _log = open(&path, MAX_BYTES, &complaints);
+        assert_eq!(show(Some(path.parent().unwrap()), never), Some(NOTHING_TO_SHOW), "pas un dossier");
+        #[cfg(unix)]
+        {
+            let link = scratch.0.join("lien.log");
+            std::os::unix::fs::symlink(&path, &link).unwrap();
+            assert_eq!(show(Some(&link), never), Some(NOTHING_TO_SHOW), "pas un lien");
+        }
+        // le fichier est là : il est montré, lui
+        let mut shown = None;
+        let reveal = |file: &Path| {
+            shown = Some(file.to_owned());
+            Ok(())
+        };
+        assert_eq!(show(Some(&path), reveal), None, "montré : rien à dire");
+        assert_eq!(shown.as_deref(), Some(path.as_path()));
+        // et si le montrer échoue, elle le dit
+        assert_eq!(show(Some(&path), |_| Err(LaunchError::Unavailable)), Some(CANNOT_SHOW_HERE));
+        let failed = |file: &Path| {
+            Err(LaunchError::Io { path: file.to_owned(), source: std::io::ErrorKind::NotFound.into() })
+        };
+        assert_eq!(show(Some(&path), failed), Some(NOT_SHOWN));
+        // aucune de ses phrases ne renvoie à une commande de terminal
+        for said in [NOTHING_TO_SHOW, CANNOT_SHOW_HERE, NOT_SHOWN] {
+            assert!(!said.contains("capri ") && !said.contains('`'), "{said}");
+        }
     }
 }

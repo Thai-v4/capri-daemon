@@ -21,6 +21,8 @@
 //! (`settings_view`), et « Se lancer à l'ouverture de session » l'inscrit auprès du système
 //! (`login_setup`) ; cochée, elle lance aussi Ollama à chaque lancement s'il est son cerveau sur
 //! cette machine et que rien n'y répond (`ollama_view`).
+//! Lancée comme app à fenêtre (pas pour ses commandes), elle écrit son journal dans un fichier
+//! aussi, borné (`journal`), que « Montrer le journal » de son menu montre dans le Finder.
 
 mod assets;
 mod banner_view;
@@ -103,7 +105,7 @@ fn main() -> Result<()> {
     }
 
     // l'app à fenêtre seulement : ses commandes de terminal, plus haut, n'écrivent aucun fichier
-    journal::start();
+    let journal_file = journal::start();
     let loaded = Instant::now();
     let sprite = assets::load_sprite()?;
     // ses planches debout et assise ; sans elles, son dessin d'avant
@@ -115,6 +117,12 @@ fn main() -> Result<()> {
     let event_loop = builder.build().context("création de la boucle d'événements")?;
 
     let mut app = App { images: Some(Images { sprite, stand, perch }), ..App::default() };
+    #[cfg(any(target_os = "macos", windows))]
+    {
+        app.journal_file = journal_file;
+    }
+    #[cfg(not(any(target_os = "macos", windows)))]
+    let _ = journal_file; // pas de menu ici pour le montrer
     event_loop.run_app(&mut app)?;
     app.fatal.map_or(Ok(()), Err)
 }
@@ -137,6 +145,9 @@ struct App {
     /// La fenêtre de réglages, tant qu'elle est ouverte.
     #[cfg(any(target_os = "macos", windows))]
     settings: Option<settings_view::SettingsView>,
+    /// La place du fichier de son journal, que « Montrer le journal » montre s'il est là.
+    #[cfg(any(target_os = "macos", windows))]
+    journal_file: Option<std::path::PathBuf>,
     /// Une répétition de la fenêtre de réglages, pour les essais (version de débogage).
     #[cfg(all(debug_assertions, any(target_os = "macos", windows)))]
     rehearsal: Option<Rehearsal>,
@@ -505,6 +516,7 @@ impl App {
                     menu::Action::ToggleClaudeHook => self.toggle_claude_hook(),
                     menu::Action::ToggleLogin => self.toggle_login(),
                     menu::Action::Settings => self.open_settings(),
+                    menu::Action::ShowJournal => self.show_journal(),
                     menu::Action::Quit => event_loop.exit(),
                 }
             }
@@ -530,6 +542,16 @@ impl App {
                     )
                 });
             }
+        }
+    }
+
+    /// Montre le fichier de son journal dans le Finder ; s'il n'est pas là (journal en panne), ou
+    /// si le montrer échoue, elle le dit dans son bandeau au lieu de ne rien faire.
+    #[cfg(any(target_os = "macos", windows))]
+    fn show_journal(&mut self) {
+        let said = journal::show(self.journal_file.as_deref(), capri_platform::launch::reveal);
+        if let Some(text) = said {
+            self.with_banner(|banner| banner.notify(text, capri_claude::Tone::Failed));
         }
     }
 
