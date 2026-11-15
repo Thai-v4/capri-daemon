@@ -170,10 +170,11 @@ if [ -d "$INSTALLED" ]; then mv "$INSTALLED" "$ASIDE"; fi
 [ ! -e "$INSTALLED" ] || die "$INSTALLED est réapparu pendant l'installation : rien n'est installé."
 mv "$STAGED" "$INSTALLED"
 if [ -e "$ASIDE" ]; then rm -rf "$ASIDE"; fi
-# Le Finder garde les icônes en mémoire et ne relit celle d'une app que si la date de son dossier
-# change : ditto lui avait gardé celle de target/Capri.app, il pouvait donc montrer l'ancienne.
-# touch ne change que cette date (le dossier de l'app n'est pas scellé par la signature, vérifiée
-# juste après) ; aucun processus n'est touché.
+# Le Finder garde les icônes en mémoire : changer la date du dossier de l'app est le moyen simple
+# et sans risque de l'inciter à relire la sienne (ditto lui avait gardé celle de target/Capri.app).
+# Que cela suffise n'a pas été vérifié à l'œil (voir le README). touch ne change que cette date
+# (le dossier de l'app n'est pas scellé par la signature, vérifiée juste après) ; aucun processus
+# n'est touché.
 touch "$INSTALLED"
 codesign --verify --strict "$INSTALLED"
 echo "Capri est installée : $INSTALLED (signature vérifiée)"
