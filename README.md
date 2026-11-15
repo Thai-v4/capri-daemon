@@ -816,8 +816,12 @@ pour qui la lance d'un terminal).
   ou `RUST_LOG=debug /Applications/Capri.app/Contents/MacOS/capri`, ou
   `open --env RUST_LOG=debug /Applications/Capri.app` (option `--env` d'après `man open` ; pas
   essayé). Quitte d'abord une Capri déjà lancée. Au niveau `debug`, l'activité de Claude Code y
-  entre aussi, avec le résumé de chaque outil (un texte écrit par Claude : la description d'une
-  commande, un nom de fichier, parfois la commande elle-même), qui reste dans le fichier.
+  entre aussi, mais sous une forme faite pour le journal : la sorte d'événement, le nom de
+  l'outil, les catégories de Claude Code (`permission_prompt`, `rate_limit`), les durées, la
+  longueur des textes, et une étiquette par session pour les distinguer (`#38b29a05`). Jamais ce
+  qu'écrit Claude ou ce qui vient d'une commande (le résumé d'un outil, son erreur, le message
+  d'une notification, la ligne du miroir), ni le dossier de travail, le modèle ou l'identifiant
+  de session. Un nom d'outil y figure tel quel : celui d'un outil MCP nomme son serveur.
 - **Borné** : deux fichiers au plus, `capri.log` et le précédent, `capri.old.log`, d'au plus 1 Mio
   chacun ; quand le courant est plein, il devient le précédent, au lancement comme en cours de
   route, même si une ligne se répète en boucle.
@@ -1176,6 +1180,9 @@ Vérifié automatiquement :
   et resserré s'il était plus ouvert ; ses commandes de terminal, lancées pour de vrai, n'écrivent
   aucun fichier ; « Montrer le journal » ne montre qu'un fichier ordinaire, et sinon dit pourquoi
   (sans Finder : aucun ne s'ouvre pendant les essais, seuls les refus de `open -R` sont exercés) ;
+  l'activité de Claude Code n'y entre que sous sa forme pour le journal : un événement de chaque
+  sorte, un faux secret dans chacun de ses champs, n'en laisse sortir aucun, et les noms, les
+  catégories, les durées, les longueurs et les étiquettes des identifiants y sont tels qu'attendus ;
 - `clippy -D warnings` en compilation croisée pour **Windows x64** et **Linux x64** (le code
   compile, il n'est pas exécuté).
 

@@ -6,7 +6,8 @@
 //! Avec le miroir, une fin de tour peut porter la ligne que Claude a écrite pour Capri : elle
 //! attend ici (`capri_claude::mirror::Waiting` : la plus récente seulement, pas trop longtemps)
 //! que Capri soit libre de la dire. Elle n'est jamais écrite dans le journal, sa longueur
-//! seulement.
+//! seulement. Des événements, le journal n'écrit que leur forme pour lui
+//! (`capri_claude::protocol::Message::for_log`), jamais un texte écrit par Claude.
 
 use std::sync::mpsc::{Receiver, channel};
 use std::time::Instant;
@@ -101,8 +102,9 @@ impl Feed {
         let now_ms = self.now_ms();
         let mut any = false;
         while let Ok(mut message) = self.messages.try_recv() {
-            // le `Debug` d'une phrase pour Capri ne montre que sa longueur
-            log::debug!("Claude Code : {:?} (session {})", message.event, message.session);
+            // sa forme pour le journal : ni résumé, ni message, ni erreur, ni chemin, ni modèle, ni
+            // identifiant de session, seulement des noms, des catégories, des durées et des longueurs
+            log::debug!("Claude Code : {}", message.for_log());
             match &mut message.event {
                 Event::TurnEnd { said } => {
                     if let Some(said) = said.take() {

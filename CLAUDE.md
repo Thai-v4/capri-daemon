@@ -86,7 +86,8 @@ lancée depuis `/Applications` a écrit le fichier, dossier et fichier réservé
   la ligne qui ferait dépasser `MAX_BYTES`, et au lancement s'il la dépasse déjà) et la ligne trop
   longue rognée sans couper un caractère (`clip`). L'écriture est dans `capri-app` (`journal.rs`).
 - `capri-claude` : tout ce que Capri sait de Claude Code, lui aussi **sans dépendance système** :
-  lecture de l'entrée des hooks, protocole, suivi des sessions, édition de `settings.json` de
+  lecture de l'entrée des hooks, protocole (et la forme pour le journal d'un message,
+  `Message::for_log`), suivi des sessions, édition de `settings.json` de
   texte à texte, le style de sortie « Capri » (`style` : son texte, la signature qui reconnaît le
   nôtre), le miroir (`mirror` : son réglage, l'extraction de la ligne `[Capri]`, l'attente d'une
   ligne arrivée pendant qu'elle parle), et où vivent les réglages (`places` : le dossier de Capri
@@ -578,11 +579,20 @@ faux `settings.json` regardé avant et après.
   téléversement. **Les interdits du journal valent d'autant plus qu'il reste sur le disque** :
   jamais ce qui se dit (au micro, dans la conversation, la ligne du miroir : seulement sa
   longueur), jamais une clé, jamais le titre d'une fenêtre ni le nom d'une app, rien d'une
-  annonce de musique, jamais les traces de ureq. Tout nouvel appel au journal de niveau `info`,
-  `warn` ou `error` (ceux qui s'écrivent par défaut) se relit contre cette liste. Limite connue :
-  avec `RUST_LOG=debug`, le résumé des outils de Claude Code (un texte écrit par Claude : la
-  description d'une commande, un nom de fichier, parfois la commande elle-même) y entre aussi,
-  comme sur la sortie d'erreur.
+  annonce de musique, jamais les traces de ureq. Tout nouvel appel au journal se relit contre
+  cette liste, **à tout niveau** : `info`, `warn` et `error` s'écrivent par défaut, et
+  `RUST_LOG=debug` (ou `trace`) fait entrer les autres dans le fichier aussi (tous relus le 15
+  novembre 2026). Des événements de Claude Code, le journal n'écrit que leur forme pour lui
+  (`capri_claude::protocol::Message::for_log`, essayée avec un événement de chaque sorte plein de
+  faux secrets) : la sorte d'événement, le nom de l'outil et le type de sous-agent s'ils ont la
+  forme d'un nom, les catégories de Claude Code (`permission_prompt`, `rate_limit`) si elles en
+  ont la forme, les durées, des longueurs, et une étiquette (`#` et huit chiffres hexadécimaux)
+  pour chaque identifiant ; jamais le résumé d'un outil, le message d'une notification, l'erreur
+  d'un outil, la ligne du miroir, le dossier de travail, le modèle ni un identifiant lui-même.
+  Un nouvel événement, ou un nouveau champ d'événement, oblige à décider ce qui en est écrit (ni
+  `_` ni `..` dans son `match`). Limite connue : un nom d'outil ou de sous-agent est écrit tel
+  quel s'il a la forme d'un nom (Claude Code les tire de sa configuration : un nom d'outil MCP
+  nomme son serveur).
 - Trousseau et tests : un test qui touche au vrai trousseau est `#[ignore]`, n'utilise qu'un
   service réservé aux tests et nettoie derrière lui. Pour des essais en ligne de commande :
   `CAPRI_CONFIG_DIR=<dossier temporaire>` et `CAPRI_KEYCHAIN_SERVICE=<service d'essai>`, et ne
