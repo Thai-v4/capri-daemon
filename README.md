@@ -792,6 +792,48 @@ Ses limites :
 - macOS peut afficher une notification « Éléments d'arrière-plan ajoutés » quand la case est
   cochée : pas encore vu.
 
+## Son journal
+
+Quand ça ne va pas, elle le dit dans son bandeau, avec souvent « détails dans le journal ».
+Lancée comme app (double-clic, ouverture de session), elle n'a pas de terminal où les écrire :
+**son journal s'écrit aussi dans un fichier**, en plus de la sortie d'erreur (qui ne change pas
+pour qui la lance d'un terminal).
+
+- **Où** : sur macOS, `~/Library/Logs/Capri/capri.log` (le dossier des journaux de ton
+  utilisateur) ; sous Windows, `%LOCALAPPDATA%\Capri\logs\capri.log` ; ailleurs,
+  `~/.config/capri/logs/capri.log`. Avec `CAPRI_CONFIG_DIR`, toujours
+  `<CAPRI_CONFIG_DIR>/logs/capri.log`, sur tous les systèmes.
+- **Le montrer** : « Montrer le journal » dans son menu (icône de la barre des menus, ou clic droit
+  sur elle) montre le fichier dans le Finder. S'il n'existe pas (le journal n'a pas pu s'écrire),
+  elle le dit dans son bandeau. Sous Windows et ailleurs, la ligne est grisée.
+- **Ce qu'il contient** : les mêmes lignes que la sortie d'erreur, sans couleurs : la date et
+  l'heure en temps universel (le `Z` final : une heure de moins que l'heure de Paris en hiver),
+  le niveau, l'origine et le message. Une ligne à chaque lancement dit la version et où est le
+  fichier.
+- **Son niveau** : celui de `RUST_LOG`, `info` par défaut (quelques dizaines de lignes par
+  lancement). Pour plus de détails, lance-la d'un terminal : `RUST_LOG=debug cargo run --release`,
+  ou `RUST_LOG=debug /Applications/Capri.app/Contents/MacOS/capri`, ou
+  `open --env RUST_LOG=debug /Applications/Capri.app` (option `--env` d'après `man open` ; pas
+  essayé). Quitte d'abord une Capri déjà lancée. Au niveau `debug`, l'activité de Claude Code y
+  entre aussi, avec le résumé de chaque outil (un texte écrit par Claude : la description d'une
+  commande, un nom de fichier, parfois la commande elle-même), qui reste dans le fichier.
+- **Borné** : deux fichiers au plus, `capri.log` et le précédent, `capri.old.log`, d'au plus 1 Mio
+  chacun ; quand le courant est plein, il devient le précédent, au lancement comme en cours de
+  route, même si une ligne se répète en boucle.
+- **À toi seul** : sur macOS (et sous Linux), le dossier est créé lisible par toi seul, le fichier
+  aussi (`0700`, `0600` ; un fichier déjà là est resserré) ; sous Windows, ce sont les droits de
+  ton dossier `AppData` qui le protègent. Elle n'écrit jamais à travers un lien symbolique ni
+  par-dessus autre chose qu'un fichier ordinaire.
+- **Jamais une panne** : dossier impossible à créer, disque plein, fichier retiré ou remplacé
+  pendant qu'elle tourne : elle cesse d'écrire le fichier, le dit une fois sur la sortie
+  d'erreur, et continue comme avant.
+- **Rien n'en part** : elle ne le relit jamais, ne l'envoie nulle part, et n'y écrit pas ce qui ne
+  doit jamais être écrit (ce que tu lui dis au micro ou par écrit, ses réponses, la ligne du
+  miroir, une clé, le titre d'une fenêtre ou le nom d'une app, quoi que ce soit d'une annonce de
+  musique, ce qui passe sur le réseau). Ses commandes de terminal (`capri hook …`,
+  `capri chat …`, `capri voice …`) n'écrivent pas de fichier, et le hook de Claude Code n'écrit
+  rien nulle part.
+
 ## Installer et lancer
 
 Il faut [Rust](https://rustup.rs) 1.90 ou plus récent (`rustup update`).
@@ -863,8 +905,9 @@ powershell -ExecutionPolicy Bypass -File tools\fetch-assets.ps1
 cargo run --release
 ```
 
-Aucune permission système n'est nécessaire. Pour plus de détails dans le terminal :
-`RUST_LOG=debug cargo run --release` ; pour comprendre ce que fait le hook :
+Aucune permission système n'est nécessaire. Pour plus de détails dans le terminal (et dans son
+journal, voir « Son journal ») : `RUST_LOG=debug cargo run --release` ; pour comprendre ce que
+fait le hook :
 `CAPRI_HOOK_DEBUG=1` (il écrit alors une ligne sur sa sortie d'erreur).
 
 ## Organisation
@@ -883,9 +926,11 @@ crates/
                    quelle case montrer, où, ce qui l'attrape, ce qu'il lui faut sur un bord),
                    et si de la musique joue (music.rs : l'état annoncé par les lecteurs), et le
                    texte de son inscription à l'ouverture de session (login.rs : l'agent de
-                   lancement, la reconnaissance du nôtre, sa réparation) (testée)
+                   lancement, la reconnaissance du nôtre, sa réparation), et quand son journal
+                   passe au fichier suivant (journal.rs : la borne, la ligne trop longue) (testée)
   capri-claude/    logique pure : hooks de Claude Code, protocole, sessions, settings.json, style
-                   de sortie « Capri », miroir, dossiers de Capri et de Claude Code (testée)
+                   de sortie « Capri », miroir, dossiers de Capri et de Claude Code, place du
+                   fichier du journal (testée)
   capri-chat/      logique pure : conversation, fournisseurs et format « chat completions », flux
                    de réponse, règles d'adresse et de clé, réglages du cerveau, personnalité,
                    phrases à dire, dictée, les effets de voix (voice.rs : préréglages,
@@ -921,7 +966,8 @@ crates/
     login.rs         son agent de lancement : écrit, lu, retiré, dans un dossier passé en
                      paramètre (refus ailleurs que sur macOS)
     launch.rs        lancer Ollama : un programme détaché, par son chemin absolu, ou une app par
-                     open (refus ailleurs que sur macOS)
+                     open ; montrer un fichier dans le Finder par open -R (refus ailleurs que
+                     sur macOS)
     terminal.rs      taper une clé sans qu'elle s'affiche
     winit_overlay.rs fenêtre winit, pour Windows et les autres systèmes
     windows.rs       Win32 via windows-sys
@@ -951,7 +997,9 @@ crates/
                    `CAPRI_MUSIC_REHEARSAL`, music_rehearsal.rs, lancés par
                    tests/musique_sans_titre.rs) ; l'ouverture de session (login_setup.rs : la case,
                    l'état lu dans le système, la réparation ; ollama_view.rs : Ollama veillé et
-                   lancé sur un thread à part)
+                   lancé sur un thread à part) ; son journal (journal.rs : la sortie d'erreur et
+                   le fichier, borné, réservé, sans les traces de ureq, et « Montrer le
+                   journal » ; tests/journal_des_commandes.rs : ses commandes n'en écrivent pas)
 tools/             récupération vérifiée des images, fabrication de Capri.app avec ses images
                    (bundle-macos.sh) et son installation dans /Applications (install-macos.sh)
 ```
@@ -963,7 +1011,8 @@ Règle : tout ce qui peut être testé sans écran va dans `capri-core`, `capri-
 
 Vérifié automatiquement :
 
-- formatage, `clippy -D warnings` et 529 tests sur **macOS Apple Silicon** (plus 12 qui ne
+- formatage, `clippy -D warnings` et 554 tests sur **macOS Apple Silicon** (le 15 novembre 2026,
+  en version normale comme optimisée ; plus 12 qui ne
   tournent qu'à la main : ils écrivent des images ou dessinent sur la vraie carte graphique,
   lisent un vrai `settings.json`, touchent au vrai trousseau, créent de vraies voix et un vrai
   moteur audio, sans bruit, lisent la vraie liste des fenêtres, ou guettent une annonce d'essai
@@ -1102,6 +1151,20 @@ Vérifié automatiquement :
   façon de frapper contre de faux serveurs locaux (rien d'envoyé, `localhost` sans résolution,
   refusée avant toute connexion ailleurs que sur cette machine ou en `https`) ; un programme
   inoffensif (`/bin/sh`) lancé détaché avec ses arguments et son environnement ;
+- son journal en fichier, sans toucher au vrai `~/Library/Logs` (des dossiers d'essai) : sa place
+  sur chaque système, et sous `CAPRI_CONFIG_DIR` sur tous (jamais le vrai dossier) ; une ligne
+  écrite s'y retrouve avec sa date, son niveau et son origine, sans couleurs même demandées, comme
+  sur la sortie d'erreur ; le même filtre aux deux endroits, et jamais les traces de ureq, même au
+  niveau `trace` ; la rotation au lancement et en cours de route, les deux fichiers toujours sous
+  leur borne (une ligne trop longue rognée sans couper un caractère, la même ligne en boucle
+  jusqu'à quatre fois ce que tiennent les deux fichiers à la vraie borne) ; un dossier impossible
+  à créer ou fermé, un lien à la place du fichier, de son dossier ou du précédent, un dossier à la
+  place du fichier, le fichier retiré ou remplacé en cours de route, une rotation qui échoue :
+  rien n'est écrit au bout d'un lien, rien ne plante, la panne est dite une fois, la sortie
+  d'erreur continue ; le dossier en `0700` et le fichier en `0600`, avant et après une rotation,
+  et resserré s'il était plus ouvert ; ses commandes de terminal, lancées pour de vrai, n'écrivent
+  aucun fichier ; « Montrer le journal » ne montre qu'un fichier ordinaire, et sinon dit pourquoi
+  (sans Finder : aucun ne s'ouvre pendant les essais, seuls les refus de `open -R` sont exercés) ;
 - `clippy -D warnings` en compilation croisée pour **Windows x64** et **Linux x64** (le code
   compile, il n'est pas exécuté).
 
@@ -1663,6 +1726,31 @@ l'inscrit pas pour les ouvertures de session suivantes : c'est sans doute pour c
 tournait plus après un redémarrage (une déduction). Depuis l'essai de ce jour-là, `brew services`
 est arrêté pour Ollama, et c'est Capri qui l'a lancé ; case cochée, c'est elle qui le relancera.
 `brew services start ollama` l'inscrirait pour de bon, indépendamment de Capri.
+
+**Son journal : à vérifier à la main** (écrit et testé sans écran le 15 novembre 2026 ; rien de
+cette liste n'a été fait : ni la vraie app, ni le menu, ni le Finder ; dans `Capri.app` refaite
+par `tools/install-macos.sh`, ou par `cargo run --release` pour les points 1 à 4) :
+
+1. **le fichier** : lancée (double-clic sur l'app), `~/Library/Logs/Capri/capri.log` apparaît ; la
+   ligne de ce lancement dit `Capri 0.1.0 lancée ; journal : …`, suivie des lignes habituelles
+   (images, taille, dessins, écran) ; `ls -ld ~/Library/Logs/Capri ~/Library/Logs/Capri/capri.log`
+   dit `drwx------` et `-rw-------` ;
+2. **« Montrer le journal »**, dans le menu de l'icône puis au clic droit sur elle : le Finder
+   s'ouvre sur le dossier, `capri.log` sélectionné ; Capri continue de flotter sans à-coup, et ne
+   prend pas le clavier ;
+3. **un vrai « détails dans le journal »** : le premier que tu verras dans son bandeau, la ligne
+   `ERROR` ou `WARN` qui l'explique est à la fin du fichier ;
+4. **le fichier retiré pendant qu'elle tourne** (`rm ~/Library/Logs/Capri/capri.log`) : elle
+   continue comme avant ; « Montrer le journal » dit « Je n'ai pas de journal à te montrer : il
+   n'a pas pu s'écrire » ; relancée, le fichier revient ;
+5. **d'un terminal** (`RUST_LOG=debug /Applications/Capri.app/Contents/MacOS/capri`, Capri quittée
+   d'abord) : les mêmes lignes sur le terminal, en couleurs, et dans le fichier, sans couleurs ;
+6. **l'app Console** : `capri.log` y figure-t-il, sous « Rapports de journal » (ou « Log
+   Reports ») ? Pas vérifié ;
+7. **sur la durée** : après des jours, le fichier ne dépasse jamais 1 Mio (1 048 576 octets) ;
+   `capri.old.log` apparaît quand il est plein ; le processeur au repos ne change pas ;
+8. **sous Windows** : la ligne « Montrer le journal » est grisée ; `%LOCALAPPDATA%\Capri\logs\capri.log`
+   est écrit (ses essais tournent dans la CI, pas encore vu).
 
 **Pas encore testé sur un vrai PC Windows** : la CI de GitHub y compile et y lance les tests
 (477 réussis le 12 novembre 2026 au commit `81e348b`, dont ceux du tube nommé et du hook ; au

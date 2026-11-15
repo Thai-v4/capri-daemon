@@ -28,6 +28,10 @@ session). Jalon 5, sa première moitié : une `Capri.app` qui emporte ses images
 installée pour de bon le 12 novembre 2026 : images lues dans l'app, inscription à l'ouverture de
 session réparée, hook de Claude Code qui suit ; ni ce qui se voit, ni le micro, ni une vraie
 ouverture de session vérifiés depuis). Pas de vraie signature, de notarisation ni de mises à jour.
+Son journal, lancée comme app à fenêtre, s'écrit aussi dans un fichier borné
+(`~/Library/Logs/Capri/capri.log` sur macOS), que « Montrer le journal » de son menu montre dans
+le Finder (écrit et testé sans écran le 15 novembre 2026 ; ni la vraie app, ni le menu, ni le
+Finder essayés).
 
 ## Architecture : où va quoi
 
@@ -77,13 +81,18 @@ ouverture de session vérifiés depuis). Pas de vraie signature, de notarisation
   `Aqua`, `AssociatedBundleIdentifiers`), la reconnaissance du nôtre (`LoginState::of` : le
   commentaire `MARK` avant `<plist>`), l'app qu'il lance (`registered_app`), sa réparation quand
   l'app a changé de place (`repair`), et l'app autour d'un programme (`app_bundle`).
+  Et `journal` : quand son **journal en fichier** passe au fichier suivant (`must_rotate` : avant
+  la ligne qui ferait dépasser `MAX_BYTES`, et au lancement s'il la dépasse déjà) et la ligne trop
+  longue rognée sans couper un caractère (`clip`). L'écriture est dans `capri-app` (`journal.rs`).
 - `capri-claude` : tout ce que Capri sait de Claude Code, lui aussi **sans dépendance système** :
   lecture de l'entrée des hooks, protocole, suivi des sessions, édition de `settings.json` de
   texte à texte, le style de sortie « Capri » (`style` : son texte, la signature qui reconnaît le
   nôtre), le miroir (`mirror` : son réglage, l'extraction de la ligne `[Capri]`, l'attente d'une
   ligne arrivée pendant qu'elle parle), et où vivent les réglages (`places` : le dossier de Capri
   et celui de Claude Code, calculés une seule fois pour le hook et pour l'app, l'environnement
-  passé par l'appelant). Les phrases que disent à la fois `capri hook` et la fenêtre de réglages
+  passé par l'appelant ; et le fichier du journal de l'app, `log_file`, à côté de `capri_dir`
+  parce qu'il suit la même règle de `CAPRI_CONFIG_DIR` : le hook ne s'en sert pas). Les phrases
+  que disent à la fois `capri hook` et la fenêtre de réglages
   sur Claude Code y sont écrites une fois. Avec des tests.
 - `capri-chat` : la conversation, **sans dépendance système ni réseau** : historique borné, format
   des fournisseurs (ce qu'on envoie, comment lire le flux : `wire::Wire` dit lequel parle chaque
@@ -117,8 +126,8 @@ ouverture de session vérifiés depuis). Pas de vraie signature, de notarisation
   Couleurs prémultipliées de bout en bout.
 - Les appels système et l'`unsafe` lié à l'OS vivent dans **deux crates, et nulle part
   ailleurs** : `capri-platform` (la fenêtre, la voix, le micro, le trousseau, la liste des
-  fenêtres, l'inscription à l'ouverture de session, le lancement d'Ollama) et `capri-ipc` (le
-  canal local).
+  fenêtres, l'inscription à l'ouverture de session, le lancement d'Ollama, un fichier montré dans
+  le Finder) et `capri-ipc` (le canal local).
 - `capri-ipc` : socket Unix ou tube nommé Windows, réservés à l'utilisateur. À part de
   `capri-platform` parce que `capri-hook` le charge à chaque événement de Claude Code : ni winit
   ni AppKit ici. Sous Windows, un tube n'a pas la file d'attente d'une socket : un thread
@@ -198,7 +207,9 @@ ouverture de session vérifiés depuis). Pas de vraie signature, de notarisation
   détaché dans son propre groupe de processus, entrée et sorties fermées, sa fin attendue par un
   thread « capri-lance » ; `open_app`, une app par `/usr/bin/open -g -a` ; `is_program`, `is_app` ;
   ailleurs : `LaunchError::Unavailable`). Ni l'un ni l'autre ne sait ce qu'est Ollama : c'est
-  `capri_chat::startup` qui décide quoi lancer.
+  `capri_chat::startup` qui décide quoi lancer. Et `reveal` : un fichier montré dans le Finder
+  par `/usr/bin/open -R`, chemin absolu seulement, `open` attendu par un thread « capri-montre »
+  et jamais par la boucle (ailleurs : `LaunchError::Unavailable`).
 - `capri-app` : assemble le tout. Pas d'appel système direct ici (sauf menus via `tray-icon`).
   La fenêtre passe toujours par `capri_platform::Overlay`, jamais par `winit::window::Window`.
   Les clés passent par `keys` (le trait `KeyStore` : le trousseau du système, ou un trousseau en
@@ -244,6 +255,13 @@ ouverture de session vérifiés depuis). Pas de vraie signature, de notarisation
   cochée, sur un thread « capri-ollama » (le cerveau lu là, `startup::plan`, `capri_net::knock`,
   `capri_platform::launch`), derrière un trait `Machine` que les essais remplacent par une fausse
   machine à l'horloge factice ; ce qu'elle en dit est relevé par la boucle (`App::handle_ollama`).
+  `journal` installe son journal : `start`, appelé par `main` pour l'app à fenêtre seulement (ses
+  commandes de terminal sont servies avant et n'écrivent aucun fichier ; l'essai
+  `journal_des_commandes` les lance pour de vrai) ; `NoWireLog`, qui enveloppe deux journaux
+  d'`env_logger` réglés par le même `RUST_LOG`, la sortie d'erreur (inchangée) et le fichier
+  (`LogFile`, sans couleurs) ; et `show`, ce que fait « Montrer le journal » de ses menus (le
+  fichier montré par `capri_platform::launch::reveal` s'il est là, sinon une phrase pour le
+  bandeau).
 - `tools/` : `fetch-assets.sh` (et `.ps1`), qui télécharge les images et vérifie leurs
   empreintes ; `bundle-macos.sh`, qui fabrique `target/Capri.app` : les deux binaires, l'`Info.plist`
   (`tools/macos/Info.plist`), les images que lit le code et seulement elles (sa liste `IMAGES`, prise
@@ -454,7 +472,8 @@ faux `settings.json` regardé avant et après.
   processus qui guette. À revérifier après tout changement du guetteur :
   `CAPRI_ASSETS=… cargo test -p capri-app --test musique_sans_titre -- --ignored --test-threads=1`
   (la répétition et la vraie app : reçue, état lu, jamais un faux titre, artiste ni album dans la
-  sortie ou le journal au niveau `trace`).
+  sortie ou le journal au niveau `trace`, fichier du journal compris depuis le 15 novembre 2026 ;
+  pas encore relancé depuis).
 - Son oreille : le micro ne s'ouvre que sur un **geste de l'utilisateur** (le raccourci, ou le
   menu), jamais autrement : pas d'écoute permanente, pas de mot d'éveil, pas de réouverture
   automatique après une réponse. Il se ferme toujours tout seul : au relâchement (touche maintenue),
@@ -528,7 +547,32 @@ faux `settings.json` regardé avant et après.
   (clé inconnue, mal formée, révoquée), mais masqué jusqu'au moindre morceau
   (`redact_any_trace`) : des fournisseurs y rappellent le début ou la fin de la clé. Le journal
   de l'app ne contient jamais les traces
-  `trace` de ureq (`NoWireLog` dans `main.rs`), qui écrivent les octets échangés sans masque.
+  `trace` de ureq (`NoWireLog` dans `journal.rs`), qui écrivent les octets échangés sans masque :
+  ni sur la sortie d'erreur, ni dans le fichier du journal.
+- **Le journal en fichier.** Seulement l'app à fenêtre (`journal::start`), jamais ses commandes de
+  terminal, jamais `capri-hook`. Où : `~/Library/Logs/Capri/capri.log` sur macOS,
+  `<dossier de Capri>/logs/capri.log` ailleurs, et `<CAPRI_CONFIG_DIR>/logs/capri.log` dès que
+  `CAPRI_CONFIG_DIR` est posée, sur tous les systèmes (`capri_claude::places::log_file`) : les
+  essais et les répétitions posent `CAPRI_CONFIG_DIR` et n'écrivent **jamais** dans le vrai
+  `~/Library/Logs`. **Borné** : deux fichiers au plus (`capri.log`, `capri.old.log`), chacun d'au
+  plus `capri_core::journal::MAX_BYTES` (1 Mio), la rotation au lancement et avant la ligne qui
+  ferait dépasser la borne, même si une ligne se répète en boucle. **Réservé à l'utilisateur** :
+  dossier créé en `0700`, fichier en `0600` (resserré s'il existait) sous Unix ; jamais écrit à
+  travers un lien ni par-dessus autre chose qu'un fichier ordinaire (alors, pas de fichier, et
+  elle continue). **Jamais une panne d'elle** : quoi qu'il arrive au fichier, il cesse d'écrire,
+  le dit une fois sur la sortie d'erreur, ne panique jamais (le verrou d'`env_logger` serait
+  empoisonné : jamais d'`unwrap`, jamais de `log::…` depuis son écriture), et la sortie d'erreur
+  continue. Chaque ligne est écrite tout de suite, sans tampon. Le même filtre (`RUST_LOG`) et le
+  même format (celui d'`env_logger`, en temps universel) que la sortie d'erreur, qui ne change pas.
+  Elle ne le relit jamais, et **rien n'en part nulle part** : ni réseau, ni cerveau, ni
+  téléversement. **Les interdits du journal valent d'autant plus qu'il reste sur le disque** :
+  jamais ce qui se dit (au micro, dans la conversation, la ligne du miroir : seulement sa
+  longueur), jamais une clé, jamais le titre d'une fenêtre ni le nom d'une app, rien d'une
+  annonce de musique, jamais les traces de ureq. Tout nouvel appel au journal de niveau `info`,
+  `warn` ou `error` (ceux qui s'écrivent par défaut) se relit contre cette liste. Limite connue :
+  avec `RUST_LOG=debug`, le résumé des outils de Claude Code (un texte écrit par Claude : la
+  description d'une commande, un nom de fichier, parfois la commande elle-même) y entre aussi,
+  comme sur la sortie d'erreur.
 - Trousseau et tests : un test qui touche au vrai trousseau est `#[ignore]`, n'utilise qu'un
   service réservé aux tests et nettoie derrière lui. Pour des essais en ligne de commande :
   `CAPRI_CONFIG_DIR=<dossier temporaire>` et `CAPRI_KEYCHAIN_SERVICE=<service d'essai>`, et ne
