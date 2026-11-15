@@ -3,20 +3,24 @@
 //! Capri ne s'en sert que pour **Ollama**, et seulement quand c'est son cerveau sur cette machine
 //! et que la case « Se lancer à l'ouverture de session » est cochée : c'est `capri_chat::startup`
 //! qui décide, et qui donne les emplacements, fixes, où le chercher. Ici, on lance ce qu'on nous
-//! donne, par son chemin absolu (jamais par le `PATH`), et rien d'autre.
+//! donne, par son chemin absolu (jamais par le `PATH`), et rien d'autre. Et pour **montrer son
+//! journal** dans le Finder, sur un geste de l'utilisateur (« Montrer le journal » de son menu).
 //!
 //! - un programme ([`start_program`]) : détaché de Capri (son propre groupe de processus, entrée
 //!   et sorties fermées), il continue de tourner quand on la quitte, et un Ctrl+C dans le terminal
 //!   qui l'a lancée ne l'atteint pas. Un thread à part attend sa fin, pour que le système n'en
 //!   garde pas la trace (`waitpid`) ;
 //! - une app ([`open_app`]) : par `/usr/bin/open -g -a`, comme un double-clic, sans la mettre au
-//!   premier plan (`open(1)`) ; si elle tourne déjà, `open` ne fait que la retrouver.
+//!   premier plan (`open(1)`) ; si elle tourne déjà, `open` ne fait que la retrouver ;
+//! - un fichier montré dans le Finder ([`reveal`]) : par `/usr/bin/open -R` (« Reveals the file(s)
+//!   in the Finder instead of opening them », `open(1)`), sans attendre `open` : un thread à part
+//!   attend sa fin.
 //!
 //! Ailleurs que sur macOS : [`LaunchError::Unavailable`].
 
 use std::path::{Path, PathBuf};
 
-/// Ce système sait-il lancer Ollama ?
+/// Ce système sait-il lancer Ollama, et montrer un fichier ?
 pub const AVAILABLE: bool = cfg!(target_os = "macos");
 
 #[derive(Debug, thiserror::Error)]
@@ -116,6 +120,42 @@ pub fn open_app(app: &Path) -> Result<(), LaunchError> {
     Err(LaunchError::Unavailable)
 }
 
+/// Montre le fichier `file` dans le Finder (`/usr/bin/open -R`), sans l'ouvrir. N'attend pas
+/// qu'`open` ait rendu la main : on l'appelle depuis la boucle d'affichage. Un échec d'`open`
+/// lui-même n'est connu qu'après : il est écrit dans le journal.
+pub fn reveal(file: &Path) -> Result<(), LaunchError> {
+    if !AVAILABLE {
+        return Err(LaunchError::Unavailable);
+    }
+    if !file.is_absolute() {
+        return Err(LaunchError::NotAbsolute(file.to_owned()));
+    }
+    #[cfg(target_os = "macos")]
+    {
+        use std::process::{Command, Stdio};
+        let mut child = Command::new("/usr/bin/open")
+            .arg("-R")
+            .arg(file)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .map_err(|source| LaunchError::Io { path: file.to_owned(), source })?;
+        let waiting =
+            std::thread::Builder::new().name("capri-montre".to_owned()).spawn(move || match child.wait() {
+                Ok(status) if status.success() => {}
+                Ok(status) => log::warn!("open n'a pas pu montrer le fichier ({status})"),
+                Err(err) => log::warn!("open : fin inconnue ({err})"),
+            });
+        if let Err(err) = waiting {
+            log::warn!("open lancé, mais sa fin ne sera pas attendue : {err}");
+        }
+        Ok(())
+    }
+    #[cfg(not(target_os = "macos"))]
+    Err(LaunchError::Unavailable)
+}
+
 #[cfg(test)]
 mod tests {
     #[cfg(target_os = "macos")]
@@ -138,6 +178,8 @@ mod tests {
             Err(LaunchError::NotAbsolute(_))
         ));
         assert!(matches!(open_app(Path::new("Ollama.app")), Err(LaunchError::NotAbsolute(_))));
+        // refusé avant de lancer quoi que ce soit : aucun Finder ne s'ouvre pendant les essais
+        assert!(matches!(reveal(Path::new("logs/capri.log")), Err(LaunchError::NotAbsolute(_))));
     }
 
     #[test]
@@ -192,5 +234,6 @@ mod tests {
     fn elsewhere_nothing_is_launched() {
         assert!(matches!(start_program(Path::new("/bin/true"), &[], &[]), Err(LaunchError::Unavailable)));
         assert!(matches!(open_app(Path::new("/Applications/Ollama.app")), Err(LaunchError::Unavailable)));
+        assert!(matches!(reveal(Path::new("/tmp/capri.log")), Err(LaunchError::Unavailable)));
     }
 }
