@@ -800,8 +800,9 @@ Lancée comme app (double-clic, ouverture de session), elle n'a pas de terminal 
 pour qui la lance d'un terminal).
 
 - **Où** : sur macOS, `~/Library/Logs/Capri/capri.log` (le dossier des journaux de ton
-  utilisateur) ; sous Windows, `%LOCALAPPDATA%\Capri\logs\capri.log` ; ailleurs,
-  `~/.config/capri/logs/capri.log`. Avec `CAPRI_CONFIG_DIR`, toujours
+  utilisateur) ; ailleurs, un sous-dossier `logs` du dossier de ses réglages :
+  `%LOCALAPPDATA%\Capri\logs\capri.log` sous Windows, `~/.config/capri/logs/capri.log` (ou
+  `$XDG_CONFIG_HOME/capri/logs/capri.log`) sous Linux. Avec `CAPRI_CONFIG_DIR`, toujours
   `<CAPRI_CONFIG_DIR>/logs/capri.log`, sur tous les systèmes.
 - **Le montrer** : « Montrer le journal » dans son menu (icône de la barre des menus, ou clic droit
   sur elle) montre le fichier dans le Finder. S'il n'existe pas (le journal n'a pas pu s'écrire),
