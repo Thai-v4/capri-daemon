@@ -10,15 +10,36 @@
 //! - la vraie app (`CAPRI_MUSIC_REHEARSAL`, journal au niveau `trace`) : l'annonce est reçue alors
 //!   que l'app n'est pas active, et le journal ne contient ni les faux champs ni le nom d'un vrai
 //!   lecteur, ni sur sa sortie d'erreur ni dans son fichier (`<CAPRI_CONFIG_DIR>/logs/capri.log`).
-//!   Elle a besoin de
-//!   ses images : `CAPRI_ASSETS=/chemin/vers/assets` dans un worktree qui n'en a pas. Capri
-//!   apparaît à l'écran une quinzaine de secondes, puis quitte.
+//!   Tous ses lieux sont d'essai : ses réglages, son journal et son dossier d'ouverture de session
+//!   (`CAPRI_CONFIG_DIR` : elle ne lit ni n'écrit rien dans le vrai `~/Library/LaunchAgents`, et,
+//!   ce dossier vide, ne veille pas sur Ollama), le trousseau (`CAPRI_KEYCHAIN_SERVICE`), le canal
+//!   (`CAPRI_SOCKET`) et Claude Code (`CLAUDE_CONFIG_DIR`). Elle a besoin de ses images :
+//!   `CAPRI_ASSETS=/chemin/vers/assets` dans un worktree qui n'en a pas. Capri apparaît à l'écran
+//!   une quinzaine de secondes, puis quitte.
 //!
 //! Ne joue aucun son, ne demande aucune permission, ne pilote aucun lecteur.
 
 use std::collections::HashSet;
+use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
+
+/// Un dossier d'essai, retiré quand l'essai le lâche, même en cas d'échec.
+struct Scratch(PathBuf);
+
+impl Scratch {
+    fn new(name: &str) -> Self {
+        let directory = std::env::temp_dir().join(format!("{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&directory);
+        Self(directory)
+    }
+}
+
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
 
 /// De faux champs propres à ce lancement : des lettres tirées du numéro du processus et de
 /// l'heure, collées à un préfixe qu'aucun code de Capri ne contient.
@@ -67,6 +88,7 @@ fn the_rehearsal_reads_the_state_and_never_the_title() {
         .env("CAPRI_CONFIG_DIR", &directory)
         .env("CAPRI_KEYCHAIN_SERVICE", "capri-test-musique")
         .env("CAPRI_SOCKET", directory.join("capri.sock"))
+        .env("CLAUDE_CONFIG_DIR", directory.join("claude"))
         .output()
         .expect("capri se lance");
     let (stdout, stderr) = (String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
@@ -108,14 +130,18 @@ fn the_real_app_hears_an_announcement_while_inactive_and_never_logs_the_title() 
     if !cfg!(target_os = "macos") {
         return;
     }
-    let directory = std::env::temp_dir().join(format!("capri-test-musique-app-{}", std::process::id()));
-    let sockets = std::env::temp_dir().join(format!("capri-test-musique-app-socket-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&directory);
+    // retirés à la fin, même en cas d'échec ; le canal à part, pour garder son chemin court
+    let directory = Scratch::new("capri-test-musique-app");
+    let sockets = Scratch::new("capri-test-musique-app-socket");
+    let claude = Scratch::new("capri-test-musique-app-claude");
     let fakes = fakes();
     let mut child = Command::new(env!("CARGO_BIN_EXE_capri"))
-        .env("CAPRI_CONFIG_DIR", &directory)
+        // tous ses lieux d'essai : réglages, journal et ouverture de session ; trousseau ; canal ;
+        // Claude Code
+        .env("CAPRI_CONFIG_DIR", &directory.0)
         .env("CAPRI_KEYCHAIN_SERVICE", "capri-test-musique")
-        .env("CAPRI_SOCKET", sockets.join("capri.sock"))
+        .env("CAPRI_SOCKET", sockets.0.join("capri.sock"))
+        .env("CLAUDE_CONFIG_DIR", &claude.0)
         .env("CAPRI_MUSIC_REHEARSAL", fakes.join(";"))
         .env("RUST_LOG", "trace")
         .stdin(Stdio::null())
@@ -146,8 +172,10 @@ fn the_real_app_hears_an_announcement_while_inactive_and_never_logs_the_title() 
         std::thread::sleep(Duration::from_millis(100));
     };
     let log = format!("{}{}", stdout.join().unwrap_or_default(), stderr.join().unwrap_or_default());
-    let _ = std::fs::remove_dir_all(&sockets);
-    let lines: Vec<&str> = log.lines().filter(|line| line.contains("musique")).collect();
+    let lines: Vec<&str> = log
+        .lines()
+        .filter(|line| line.contains("musique") || line.contains("ouverture de session"))
+        .collect();
     println!("{}", lines.join("\n"));
     assert!(status.is_some_and(|s| s.success()), "elle a quitté d'elle-même, sans erreur");
     assert!(log.contains("répétition de la musique : tout est conforme"), "{}", lines.join("\n"));
@@ -160,16 +188,26 @@ fn the_real_app_hears_an_announcement_while_inactive_and_never_logs_the_title() 
     assert!(log.contains("les lecteurs connus, ensemble, ont fait"), "{}", lines.join("\n"));
     assert_no_fakes(&log, &fakes);
     assert_no_player(&log);
+    // son dossier d'ouverture de session : celui d'essai, jamais le vrai ; vide, la case est
+    // décochée, et elle ne cherche pas à lancer Ollama
+    let agents = directory.0.join("LaunchAgents");
+    assert!(
+        log.contains(&format!("ouverture de session : dossier d'essai {}", agents.display())),
+        "{}",
+        lines.join("\n")
+    );
+    assert!(!log.contains("Ollama"), "elle ne veille pas sur Ollama");
     // le seul fichier écrit : son journal, dans le dossier d'essai, sans les faux champs non plus
-    let journal = std::fs::read_to_string(directory.join("logs").join("capri.log")).unwrap_or_default();
-    let written: Vec<String> = std::fs::read_dir(&directory)
+    let journal = std::fs::read_to_string(directory.0.join("logs").join("capri.log")).unwrap_or_default();
+    let written: Vec<String> = std::fs::read_dir(&directory.0)
         .map(|entries| {
             entries.flatten().map(|entry| entry.file_name().to_string_lossy().into_owned()).collect()
         })
         .unwrap_or_default();
-    let _ = std::fs::remove_dir_all(&directory);
-    assert_eq!(written, ["logs"], "aucun réglage n'a été écrit, seulement son journal");
+    assert_eq!(written, ["logs"], "ni réglage ni dossier d'ouverture de session : seulement son journal");
+    assert!(!claude.0.exists(), "rien d'écrit pour Claude Code");
     assert!(journal.contains("répétition de la musique : tout est conforme"), "le journal en fichier aussi");
+    assert!(journal.contains("ouverture de session : dossier d'essai"), "le journal en fichier aussi");
     assert_no_fakes(&journal, &fakes);
     assert_no_player(&journal);
 }

@@ -1,4 +1,5 @@
-//! Où vivent les réglages (ceux de Capri, et ceux de Claude Code) et le journal de l'app.
+//! Où vivent les réglages (ceux de Capri, et ceux de Claude Code), le journal de l'app et son
+//! inscription à l'ouverture de session.
 //!
 //! `capri-hook` et l'app doivent trouver **le même** dossier de Capri (le hook y lit si le miroir
 //! est activé, l'app l'y écrit) : le calcul est fait ici, une seule fois. Il est pur : l'appelant
@@ -6,7 +7,8 @@
 //! le système visé. Une variable vide compte pour absente.
 //!
 //! Le fichier du journal ([`log_file`]) n'est que celui de l'app à fenêtre : le hook n'écrit rien,
-//! nulle part.
+//! nulle part. De même le dossier où elle s'inscrit à l'ouverture de session ([`login_agents`]),
+//! qui suit la même règle de `CAPRI_CONFIG_DIR`.
 
 use std::ffi::OsString;
 use std::path::PathBuf;
@@ -88,6 +90,42 @@ pub fn log_file(env: impl Fn(&str) -> Option<OsString>, system: System) -> Resul
         return Ok(home.join("Library").join("Logs").join("Capri").join(LOG_FILE_NAME));
     }
     Ok(capri_dir(&env, system)?.join(LOG_SUBDIR).join(LOG_FILE_NAME))
+}
+
+/// Le sous-dossier du dossier de Capri qui tient lieu de `~/Library/LaunchAgents` quand
+/// `CAPRI_CONFIG_DIR` est définie.
+pub const LOGIN_AGENTS_SUBDIR: &str = "LaunchAgents";
+
+/// Le dossier où elle s'inscrit à l'ouverture de session (voir [`login_agents`]).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum LoginAgents {
+    /// Le dossier des agents de lancement de l'utilisateur, `~/Library/LaunchAgents`, que
+    /// `launchd` lit à l'ouverture de session : seul `capri_platform::login::user_agents_dir` le
+    /// désigne.
+    User,
+    /// `<CAPRI_CONFIG_DIR>/LaunchAgents` : un dossier d'essai, que `launchd` ne lit jamais.
+    Rehearsal(PathBuf),
+}
+
+/// Le dossier où elle s'inscrit à l'ouverture de session, sur macOS seulement (`None` ailleurs :
+/// elle ne sait pas encore s'y inscrire) :
+///
+/// - `CAPRI_CONFIG_DIR` définie : `<CAPRI_CONFIG_DIR>/LaunchAgents`, et **rien** n'est lu ni écrit
+///   dans le vrai. Comme son journal ([`log_file`]) : les essais et les répétitions de la vraie
+///   app posent cette variable. Une Capri qui tourne avec d'autres réglages que ceux de
+///   l'utilisateur n'a rien à faire dans son vrai dossier : son agent (un seul nom de fichier,
+///   `capri_core::login::FILE_NAME`) lance l'app sans aucune variable, donc avec les vrais
+///   réglages, et prendrait la place du sien ;
+/// - sinon, le vrai ([`LoginAgents::User`]), comme avant.
+pub fn login_agents(env: impl Fn(&str) -> Option<OsString>, system: System) -> Option<LoginAgents> {
+    if system != System::MacOs {
+        return None;
+    }
+    let var = |name: &str| env(name).filter(|value| !value.is_empty()).map(PathBuf::from);
+    Some(match var(CAPRI_DIR_ENV) {
+        Some(directory) => LoginAgents::Rehearsal(directory.join(LOGIN_AGENTS_SUBDIR)),
+        None => LoginAgents::User,
+    })
 }
 
 /// Le dossier de Claude Code : `CLAUDE_CONFIG_DIR` si elle est définie, sinon `~/.claude`
@@ -212,6 +250,36 @@ mod tests {
         assert_eq!(log_file(env(&[("HOME", "")]), System::MacOs), Err(MissingVar("HOME")));
         assert_eq!(log_file(env(&[]), System::Other), Err(MissingVar("HOME")));
         assert_eq!(log_file(env(&[("HOME", "/h")]), System::Windows), Err(MissingVar("LOCALAPPDATA")));
+    }
+
+    #[test]
+    fn the_login_folder_is_the_real_one_unless_capri_config_dir_is_set() {
+        // sans la variable (ou vide) : le vrai, comme avant
+        let home = env(&[("HOME", "/Users/moi")]);
+        assert_eq!(login_agents(&home, System::MacOs), Some(LoginAgents::User));
+        let empty = env(&[("HOME", "/Users/moi"), (CAPRI_DIR_ENV, "")]);
+        assert_eq!(login_agents(&empty, System::MacOs), Some(LoginAgents::User));
+        // avec : le dossier d'essai, dans celui de Capri, jamais sous le dossier personnel
+        let chosen = env(&[("HOME", "/Users/moi"), (CAPRI_DIR_ENV, "/tmp/essai-capri")]);
+        let Some(LoginAgents::Rehearsal(directory)) = login_agents(&chosen, System::MacOs) else {
+            panic!("pas le dossier d'essai");
+        };
+        assert_eq!(directory, Path::new("/tmp/essai-capri").join(LOGIN_AGENTS_SUBDIR));
+        assert!(directory.starts_with(capri_dir(&chosen, System::MacOs).unwrap()));
+        assert!(!directory.starts_with("/Users/moi"));
+        // à côté de son journal, qui suit la même règle
+        assert_eq!(directory.parent(), log_file(&chosen, System::MacOs).unwrap().parent().unwrap().parent());
+        // sans dossier personnel, le dossier d'essai suffit
+        let alone = env(&[(CAPRI_DIR_ENV, "/e")]);
+        assert_eq!(
+            login_agents(alone, System::MacOs),
+            Some(LoginAgents::Rehearsal(Path::new("/e").join("LaunchAgents")))
+        );
+        // ailleurs que sur macOS : rien, avec ou sans la variable
+        for system in [System::Windows, System::Other] {
+            assert_eq!(login_agents(&home, system), None);
+            assert_eq!(login_agents(&chosen, system), None);
+        }
     }
 
     #[test]

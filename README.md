@@ -746,6 +746,20 @@ d'ouverture : d'après son en-tête (`SMAppService.h`), l'app doit être signée
 être refaite quand l'exécutable change. Capri est signée « ad hoc » et reconstruite souvent : un
 fichier lié à un chemin survit aux reconstructions, et se vérifie sans écran.
 
+**Pour les essais : `CAPRI_CONFIG_DIR`.** Lancée avec cette variable (qui remplace le dossier de
+ses réglages, et y met aussi son journal), Capri ne lit ni n'écrit rien dans le vrai
+`~/Library/LaunchAgents` : son dossier d'agents est `<CAPRI_CONFIG_DIR>/LaunchAgents`, que
+`launchd` ne lit jamais. La case dit ce qu'il contient : vide (le cas d'un dossier d'essai neuf),
+elle est décochée, et Capri ne cherche pas à lancer Ollama. Les règles ne changent pas (le fichier
+écrit d'un seul coup, jamais par-dessus un fichier qui n'est pas le sien, un lien ou un dossier).
+Une Capri lancée avec d'autres réglages que les tiens n'a rien à faire dans ton vrai dossier : son
+agent lancerait l'app sans la variable, donc avec tes vrais réglages, et prendrait la place du
+tien. Sans `CAPRI_CONFIG_DIR`, rien ne change. Les répétitions de la vraie app (version de
+débogage : `CAPRI_SETTINGS_REHEARSAL`, `CAPRI_PERCH_REHEARSAL`, `CAPRI_MUSIC_REHEARSAL`, et l'essai
+ignoré `musique_sans_titre` qui la lance) posent cette variable, avec un trousseau
+(`CAPRI_KEYCHAIN_SERVICE`), un canal (`CAPRI_SOCKET`) et un dossier de Claude Code
+(`CLAUDE_CONFIG_DIR`) d'essai.
+
 **Seulement depuis `Capri.app`** (`tools/install-macos.sh`, ou `tools/bundle-macos.sh` pour celle
 de `target/`) : lancée par `cargo run` ou
 `target/release/capri`, cocher la case refuse (« Pour m'inscrire, lance-moi depuis Capri.app ») :
@@ -1157,7 +1171,10 @@ Vérifié automatiquement :
   et rien d'autre (sans elle, ailleurs qu'en tête, en binaire, trop gros, un dossier, un lien) ;
   inscrit, relu, mis à jour, retiré sans rien laisser ni toucher à ses voisins, lisible par tous et
   modifiable par l'utilisateur seul ; l'app déplacée réparée au lancement suivant, une seconde copie
-  qui ne prend pas l'inscription, rien de réécrit hors d'une app ; Ollama veillé seulement case
+  qui ne prend pas l'inscription, rien de réécrit hors d'une app ; sans `CAPRI_CONFIG_DIR`, le
+  même dossier qu'avant, et avec, `<CAPRI_CONFIG_DIR>/LaunchAgents` à sa place (jamais ailleurs
+  que sur macOS) : vide, la case décochée, rien de créé, Ollama pas veillé ; notre agent inscrit
+  là, la case cochée, puis décochée ; Ollama veillé seulement case
   cochée, cerveau Ollama, sur cette machine et en `http` (ni LM Studio, ni le réseau privé, ni
   Internet) ; `OLLAMA_HOST` (`localhost` devenu `127.0.0.1`, IPv6 entre crochets) ; les emplacements,
   tous absolus, l'app seulement pour l'adresse par défaut ; un Ollama déjà là laissé tranquille et

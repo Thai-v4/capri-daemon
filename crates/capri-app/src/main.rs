@@ -327,10 +327,9 @@ impl App {
 
         self.hotkeys = register_hotkeys();
         // l'inscription à l'ouverture de session, lue dans le système (et réparée si l'app a changé
-        // de place) ; cochée, Ollama est veillé sur un thread à part
-        let registered = capri_platform::login::user_agents_dir()
-            .inspect_err(|err| log::debug!("ouverture de session : {err}"))
-            .is_ok_and(|directory| login_setup::at_launch(&directory, login_setup::this_app().as_deref()));
+        // de place), ou dans le dossier d'essai que donne `CAPRI_CONFIG_DIR` ; cochée, Ollama est
+        // veillé sur un thread à part
+        let registered = login_setup::checked_at_launch(login_setup::this_app().as_deref());
         self.ollama = ollama_view::OllamaWatch::start(registered);
         #[cfg(any(target_os = "macos", windows))]
         {
@@ -837,12 +836,13 @@ impl App {
         }
     }
 
-    /// L'inscrit à l'ouverture de session, ou l'en retire. Cochée, elle veille aussi à ce
-    /// qu'Ollama tourne, tout de suite, si c'est son cerveau sur cette machine.
+    /// L'inscrit à l'ouverture de session, ou l'en retire (dans le dossier d'essai si
+    /// `CAPRI_CONFIG_DIR` est posée). Cochée, elle veille aussi à ce qu'Ollama tourne, tout de
+    /// suite, si c'est son cerveau sur cette machine.
     #[cfg(any(target_os = "macos", windows))]
     fn toggle_login(&mut self) {
         use capri_chat::startup::{self, say};
-        let done = capri_platform::login::user_agents_dir()
+        let done = login_setup::agents_dir()
             .map_err(login_setup::ToggleError::Login)
             .and_then(|directory| login_setup::toggle(&directory, login_setup::this_app().as_deref()));
         let (text, tone) = match &done {
@@ -866,7 +866,7 @@ impl App {
         if registered && self.ollama.is_none() {
             self.ollama = ollama_view::OllamaWatch::start(true);
         }
-        let shown = capri_platform::login::user_agents_dir()
+        let shown = login_setup::agents_dir()
             .and_then(|directory| capri_platform::login::status(&directory))
             .is_ok_and(|state| state.is_registered());
         if let Some(menus) = &self.menus {

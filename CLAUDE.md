@@ -93,7 +93,9 @@ lancée depuis `/Applications` a écrit le fichier, dossier et fichier réservé
   ligne arrivée pendant qu'elle parle), et où vivent les réglages (`places` : le dossier de Capri
   et celui de Claude Code, calculés une seule fois pour le hook et pour l'app, l'environnement
   passé par l'appelant ; et le fichier du journal de l'app, `log_file`, à côté de `capri_dir`
-  parce qu'il suit la même règle de `CAPRI_CONFIG_DIR` : le hook ne s'en sert pas). Les phrases
+  parce qu'il suit la même règle de `CAPRI_CONFIG_DIR` : le hook ne s'en sert pas ; de même le
+  dossier où elle s'inscrit à l'ouverture de session, `login_agents` : le vrai, ou
+  `<CAPRI_CONFIG_DIR>/LaunchAgents` dès que la variable est posée). Les phrases
   que disent à la fois `capri hook` et la fenêtre de réglages
   sur Claude Code y sont écrites une fois. Avec des tests.
 - `capri-chat` : la conversation, **sans dépendance système ni réseau** : historique borné, format
@@ -253,7 +255,9 @@ lancée depuis `/Applications` a écrit le fichier, dossier et fichier réservé
   `login_setup` tient la case « Se lancer à l'ouverture de session » (l'état lu dans le système
   par `capri_platform::login::status`, aucun fichier de réglages à part ; la réparation au
   lancement par `capri_core::login::repair` ; la bascule, qui n'inscrit que l'app d'où elle
-  tourne, `this_app`, jamais un binaire nu). `ollama_view` veille sur Ollama au lancement, case
+  tourne, `this_app`, jamais un binaire nu ; le dossier, `agents_dir` et `checked_at_launch`,
+  d'après `capri_claude::places::login_agents` : le vrai, ou le dossier d'essai que donne
+  `CAPRI_CONFIG_DIR`, que la case reflète alors). `ollama_view` veille sur Ollama au lancement, case
   cochée, sur un thread « capri-ollama » (le cerveau lu là, `startup::plan`, `capri_net::knock`,
   `capri_platform::launch`), derrière un trait `Machine` que les essais remplacent par une fausse
   machine à l'horloge factice ; ce qu'elle en dit est relevé par la boucle (`App::handle_ollama`).
@@ -317,6 +321,16 @@ d'essai) l'ouvre au lancement, y choisit chaque fournisseur, range et retire une
 le vrai champ secret, et quitte ; le journal dit ce qu'elle affiche, jamais la clé. Avec aussi
 `CLAUDE_CONFIG_DIR` d'essai (et seulement alors), elle installe et retire le style, branche et
 débranche Claude Code par les boutons de la vraie fenêtre, puis coche et décoche le miroir.
+
+Toute répétition de la vraie app (celle-ci, `CAPRI_PERCH_REHEARSAL`, `CAPRI_MUSIC_REHEARSAL`)
+pose les quatre lieux d'essai : `CAPRI_CONFIG_DIR` (ses réglages, son journal, et son dossier
+d'ouverture de session, `<CAPRI_CONFIG_DIR>/LaunchAgents` : rien n'est lu ni écrit dans le vrai
+`~/Library/LaunchAgents` ; vide, la case est décochée et Ollama n'est pas veillé),
+`CAPRI_KEYCHAIN_SERVICE`, `CAPRI_SOCKET` et `CLAUDE_CONFIG_DIR` (sans elle, elle lit le vrai
+`~/.claude/settings.json`). Ce qu'elle touche encore hors de ces lieux : le système (la liste des
+fenêtres, les annonces des vrais lecteurs si la musique est permise, ses raccourcis globaux, son
+icône dans la barre des menus), ses images (`CAPRI_ASSETS`), et, dans la fenêtre de réglages,
+la liste des modèles qu'elle demande d'elle-même à un serveur de cette machine.
 
 ## Vérifier avant de dire « c'est fait »
 
@@ -512,7 +526,11 @@ faux `settings.json` regardé avant et après.
   quittant. Elle ne retire **que son propre fichier** (signé `capri-managed`), et décocher ne
   retire que lui. Savoir si quelque chose répond passe par `capri_net::knock` (cette machine
   seulement, rien d'envoyé), hors du thread principal : rien ne retarde son apparition. Les essais
-  n'écrivent jamais dans le vrai `~/Library/LaunchAgents` et ne lancent jamais un vrai Ollama. Ce
+  n'écrivent jamais dans le vrai `~/Library/LaunchAgents` et ne lancent jamais un vrai Ollama.
+  `CAPRI_CONFIG_DIR` posée, la vraie app n'y lit ni n'y écrit rien non plus : son dossier est
+  `<CAPRI_CONFIG_DIR>/LaunchAgents` (`capri_claude::places::login_agents`), que `launchd` ne lit
+  jamais, et la case dit ce qu'il contient (vide : décochée, et Ollama n'est pas veillé) ; les
+  règles d'écriture ne changent pas. Sans elle, rien ne change. Ce
   qu'elle en dit ne renvoie à aucune commande de terminal. Le format de l'agent se vérifie dans
   `man 5 launchd.plist`, celui d'Ollama dans sa documentation (<https://docs.ollama.com/faq>,
   <https://docs.ollama.com/macos>) et `ollama serve --help`, pas de mémoire.

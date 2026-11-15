@@ -6,18 +6,68 @@
 //! tourne, si elle tourne depuis une app (`Capri.app`). Lancée hors d'une app (le binaire de
 //! `cargo run`), Capri n'inscrit rien : ses permissions (le micro) ne seraient pas celles de l'app.
 //! Aucun fichier de réglages à part : c'est l'agent lui-même qui dit si la case est cochée.
+//!
+//! Le dossier est décidé par `capri_claude::places::login_agents` : le vrai `~/Library/LaunchAgents`
+//! (`capri_platform::login::user_agents_dir`), ou, `CAPRI_CONFIG_DIR` posée (essais,
+//! répétitions de la vraie app), `<CAPRI_CONFIG_DIR>/LaunchAgents`, que `launchd` ne lit jamais :
+//! rien n'est alors lu ni écrit dans le vrai, et la case dit ce qu'il y a dans le dossier d'essai.
 
-use std::path::Path;
+use std::ffi::OsString;
+use std::path::{Path, PathBuf};
 
-#[cfg(any(target_os = "macos", windows, test))]
-use capri_platform::login::LoginError;
-use capri_platform::login::{self, LoginState};
+use capri_claude::places::{self, LoginAgents, System};
+use capri_platform::login::{self, LoginError, LoginState};
 
 /// L'app d'où tourne Capri (`/…/Capri.app`), si elle tourne depuis une app.
 pub fn this_app() -> Option<String> {
     let executable = std::env::current_exe().ok()?;
     let executable = executable.canonicalize().unwrap_or(executable);
     capri_core::login::app_bundle(&executable)?.to_str().map(str::to_owned)
+}
+
+/// Le dossier où elle s'inscrit, d'après son environnement : le vrai, ou le dossier d'essai que
+/// donne `CAPRI_CONFIG_DIR`. Ailleurs que sur macOS, [`LoginError::Unavailable`].
+#[cfg(any(target_os = "macos", windows))]
+pub fn agents_dir() -> Result<PathBuf, LoginError> {
+    folder(places::login_agents(|name| std::env::var_os(name), System::CURRENT))
+}
+
+/// Le dossier décidé par `capri_claude::places::login_agents`.
+fn folder(chosen: Option<LoginAgents>) -> Result<PathBuf, LoginError> {
+    match chosen {
+        None => Err(LoginError::Unavailable),
+        Some(LoginAgents::User) => login::user_agents_dir(),
+        Some(LoginAgents::Rehearsal(directory)) => Ok(directory),
+    }
+}
+
+/// Au lancement, dans le dossier que désigne son environnement : la case est-elle cochée ? Voir
+/// [`at_launch`].
+pub fn checked_at_launch(this_app: Option<&str>) -> bool {
+    checked_at_launch_in(|name| std::env::var_os(name), System::CURRENT, this_app)
+}
+
+/// Comme [`checked_at_launch`], avec cet environnement et ce système.
+fn checked_at_launch_in(
+    env: impl Fn(&str) -> Option<OsString>,
+    system: System,
+    this_app: Option<&str>,
+) -> bool {
+    let chosen = places::login_agents(env, system);
+    if let Some(LoginAgents::Rehearsal(directory)) = &chosen {
+        log::info!(
+            "ouverture de session : dossier d'essai {} ({}), que launchd ne lit jamais",
+            directory.display(),
+            places::CAPRI_DIR_ENV
+        );
+    }
+    match folder(chosen) {
+        Ok(directory) => at_launch(&directory, this_app),
+        Err(err) => {
+            log::debug!("ouverture de session : {err}");
+            false
+        }
+    }
 }
 
 /// Au lancement : Capri est-elle inscrite ? Si c'est le cas et que notre agent ne mène plus à une
@@ -104,8 +154,6 @@ impl std::fmt::Display for ToggleError {
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
-
     use super::*;
 
     /// Un dossier d'agents propre à ce test : jamais le vrai `~/Library/LaunchAgents`.
@@ -203,6 +251,86 @@ mod tests {
         assert_eq!(refusal(&refused), capri_chat::startup::say::NOT_OURS);
         assert_eq!(std::fs::read_to_string(&file).unwrap(), "<plist>le mien</plist>");
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// Un dossier d'essai, retiré quand l'essai le lâche, même en cas d'échec.
+    struct Scratch(PathBuf);
+
+    impl Scratch {
+        fn new(name: &str) -> Self {
+            let base = std::env::temp_dir()
+                .join(format!("capri-test-inscription-essai-{name}-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&base);
+            std::fs::create_dir_all(&base).unwrap();
+            Self(base)
+        }
+    }
+
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    /// Un environnement où seule `CAPRI_CONFIG_DIR` est posée, sur ce dossier.
+    fn with_capri_config_dir(directory: &Path) -> impl Fn(&str) -> Option<OsString> + '_ {
+        move |name| (name == places::CAPRI_DIR_ENV).then(|| directory.as_os_str().to_owned())
+    }
+
+    #[test]
+    fn without_capri_config_dir_the_folder_is_the_real_one_as_before() {
+        // rien n'est lu ni écrit : seulement les chemins, comparés
+        let chosen = folder(places::login_agents(|_| None, System::CURRENT));
+        match (chosen, login::user_agents_dir()) {
+            (Ok(chosen), Ok(real)) => assert_eq!(chosen, real),
+            (Err(LoginError::Unavailable), Err(LoginError::Unavailable)) => {}
+            (chosen, real) => panic!("{chosen:?} au lieu de {real:?}"),
+        }
+        // ailleurs que sur macOS, même avec la variable : rien, comme avant
+        let scratch = Scratch::new("ailleurs");
+        for system in [System::Windows, System::Other] {
+            let env = with_capri_config_dir(&scratch.0);
+            assert!(matches!(folder(places::login_agents(&env, system)), Err(LoginError::Unavailable)));
+            assert!(!checked_at_launch_in(&env, system, Some("/Applications/Capri.app")));
+        }
+        assert_eq!(std::fs::read_dir(&scratch.0).unwrap().count(), 0, "rien n'est créé");
+    }
+
+    #[test]
+    fn with_capri_config_dir_an_empty_rehearsal_folder_leaves_the_box_unchecked_and_ollama_alone() {
+        let scratch = Scratch::new("vide");
+        let config = scratch.0.join("capri");
+        let env = with_capri_config_dir(&config);
+        let directory = folder(places::login_agents(&env, System::MacOs)).unwrap();
+        assert_eq!(directory, config.join("LaunchAgents"));
+        // le dossier d'essai n'existe même pas : case décochée, et rien n'est créé
+        let checked = checked_at_launch_in(&env, System::MacOs, Some("/Applications/Capri.app"));
+        assert!(!checked, "décochée");
+        assert!(!config.exists(), "rien n'est créé");
+        // décochée : elle ne cherche pas à lancer Ollama
+        assert!(crate::ollama_view::OllamaWatch::start(checked).is_none());
+        // là mais vide : de même
+        std::fs::create_dir_all(&directory).unwrap();
+        assert!(!checked_at_launch_in(&env, System::MacOs, Some("/Applications/Capri.app")));
+        assert_eq!(std::fs::read_dir(&directory).unwrap().count(), 0, "rien n'est écrit");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn with_capri_config_dir_the_box_reflects_the_rehearsal_folder() {
+        let scratch = Scratch::new("reflet");
+        let config = scratch.0.join("capri");
+        let env = with_capri_config_dir(&config);
+        let directory = folder(places::login_agents(&env, System::MacOs)).unwrap();
+        if let Ok(real) = login::user_agents_dir() {
+            assert_ne!(directory, real, "jamais le vrai");
+        }
+        let app = fake_app(&scratch.0, "Capri.app");
+        assert!(matches!(toggle(&directory, Some(&app)), Ok(Toggled::Registered)));
+        assert!(login::agent_file(&directory).starts_with(&config));
+        assert!(checked_at_launch_in(&env, System::MacOs, Some(&app)), "cochée : notre agent est là");
+        assert!(matches!(toggle(&directory, Some(&app)), Ok(Toggled::Unregistered)));
+        assert!(!checked_at_launch_in(&env, System::MacOs, Some(&app)), "décochée : il n'y est plus");
     }
 
     #[test]
