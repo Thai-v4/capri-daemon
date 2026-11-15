@@ -500,7 +500,8 @@ faux `settings.json` regardé avant et après.
   `CAPRI_ASSETS=… cargo test -p capri-app --test musique_sans_titre -- --ignored --test-threads=1`
   (la répétition et la vraie app : reçue, état lu, jamais un faux titre, artiste ni album, ni le
   nom d'un vrai lecteur, dans la sortie ou le journal au niveau `trace`, fichier du journal
-  compris depuis le 15 novembre 2026 ; pas encore relancé depuis).
+  compris ; la vraie app s'en tient au dossier d'essai de son ouverture de session, ne veille pas
+  sur Ollama et n'écrit que son journal ; relancé et passé le 15 novembre 2026).
 - Son oreille : le micro ne s'ouvre que sur un **geste de l'utilisateur** (le raccourci, ou le
   menu), jamais autrement : pas d'écoute permanente, pas de mot d'éveil, pas de réouverture
   automatique après une réponse. Il se ferme toujours tout seul : au relâchement (touche maintenue),

@@ -1228,7 +1228,15 @@ Vérifié automatiquement :
   immédiate la protège pour le jour où il le ferait. Ni la sortie ni le journal (au niveau
   `trace`) ne contiennent les faux titre, artiste et album de l'annonce. Pas vérifié ce jour-là :
   une vraie annonce de Spotify ou de Musique (celles de Spotify l'ont été le 12 novembre 2026 :
-  « Vérifié à la main sur un vrai Mac », point 22, plus bas ; celles de Musique jamais) ;
+  « Vérifié à la main sur un vrai Mac », point 22, plus bas ; celles de Musique jamais). Relancé
+  le 15 novembre 2026, avec les quatre lieux d'essai (`CLAUDE_CONFIG_DIR` compris) : les deux
+  essais passent ; la répétition ne dit plus des vrais lecteurs que des nombres, pour eux tous
+  ensemble (« les 2 lecteurs connus, ensemble : 0 annonce(s) […] ; tournent en ce moment : 1 »),
+  et ni sa sortie, ni la sortie d'erreur de la vraie app, ni son fichier du journal ne nomment
+  un lecteur ; la vraie app dit « ouverture de session : dossier d'essai
+  <CAPRI_CONFIG_DIR>/LaunchAgents », ne crée rien d'autre que son journal, ne dit pas un mot
+  d'Ollama, et le vrai `~/Library/LaunchAgents` n'a pas bougé (date de modification du dossier
+  et de l'agent de Capri relevées avant et après : les mêmes) ;
 - la vraie app lancée quelques secondes avec des lieux d'essai : planches lues en 44 ms, 47 Mo de
   textures, 2,3 % d'un cœur flottante au repos ; puis avec son seul dessin d'avant
   (`CAPRI_ASSETS`) : elle démarre, le journal dit qu'elle garde son dessin d'avant, 0,4 Mo de
