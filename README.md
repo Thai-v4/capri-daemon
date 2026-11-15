@@ -1040,8 +1040,9 @@ Règle : tout ce qui peut être testé sans écran va dans `capri-core`, `capri-
 
 Vérifié automatiquement :
 
-- formatage, `clippy -D warnings` et 554 tests sur **macOS Apple Silicon** (le 15 novembre 2026,
-  en version normale comme optimisée ; plus 12 qui ne
+- formatage, `clippy -D warnings` et 563 tests sur **macOS Apple Silicon** (le 15 novembre 2026 ;
+  562 en version optimisée, un essai de la répétition de la musique n'existant qu'en version de
+  débogage ; plus 12 qui ne
   tournent qu'à la main : ils écrivent des images ou dessinent sur la vraie carte graphique,
   lisent un vrai `settings.json`, touchent au vrai trousseau, créent de vraies voix et un vrai
   moteur audio, sans bruit, lisent la vraie liste des fenêtres, ou guettent une annonce d'essai
