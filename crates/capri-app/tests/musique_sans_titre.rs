@@ -8,7 +8,8 @@
 //!   sortie ni sa sortie d'erreur ne contiennent les faux champs ; chaque mot de sa sortie figure
 //!   dans le code source de la répétition ou du guetteur ;
 //! - la vraie app (`CAPRI_MUSIC_REHEARSAL`, journal au niveau `trace`) : l'annonce est reçue alors
-//!   que l'app n'est pas active, et le journal ne contient pas les faux champs. Elle a besoin de
+//!   que l'app n'est pas active, et le journal ne contient pas les faux champs, ni sur sa sortie
+//!   d'erreur ni dans son fichier (`<CAPRI_CONFIG_DIR>/logs/capri.log`). Elle a besoin de
 //!   ses images : `CAPRI_ASSETS=/chemin/vers/assets` dans un worktree qui n'en a pas. Capri
 //!   apparaît à l'écran une quinzaine de secondes, puis quitte.
 //!
@@ -145,5 +146,15 @@ fn the_real_app_hears_an_announcement_while_inactive_and_never_logs_the_title() 
     );
     assert!(log.contains("oublié au bout de"), "le lecteur d'essai introuvable oublié");
     assert_no_fakes(&log, &fakes);
-    assert!(!directory.exists(), "aucun réglage n'a été écrit");
+    // le seul fichier écrit : son journal, dans le dossier d'essai, sans les faux champs non plus
+    let journal = std::fs::read_to_string(directory.join("logs").join("capri.log")).unwrap_or_default();
+    let written: Vec<String> = std::fs::read_dir(&directory)
+        .map(|entries| {
+            entries.flatten().map(|entry| entry.file_name().to_string_lossy().into_owned()).collect()
+        })
+        .unwrap_or_default();
+    let _ = std::fs::remove_dir_all(&directory);
+    assert_eq!(written, ["logs"], "aucun réglage n'a été écrit, seulement son journal");
+    assert!(journal.contains("répétition de la musique : tout est conforme"), "le journal en fichier aussi");
+    assert_no_fakes(&journal, &fakes);
 }
