@@ -474,17 +474,19 @@ faux `settings.json` regardé avant et après.
   à son cerveau ; Capri **ne pilote jamais** un lecteur (ni lecture, ni pause, ni touche
   multimédia) et ne poste jamais l'annonce d'un vrai lecteur, même en essai. Le journal ne dit des
   annonces que ce qu'elle en conclut (« se balance », « ne se balance plus ») et qu'elle s'abonne
-  ou se désabonne : jamais le lecteur, ni rien de l'annonce. L'abonnement existe tant que la
-  case de son menu est cochée (`music.json`), dès le lancement, assise ou non ; décochée,
-  désabonnée et l'état oublié. Elle ne se balance qu'assise (avec ses planches) et visible ;
-  debout, la musique ne change rien. Limite connue : une musique déjà en cours quand elle s'abonne
+  ou se désabonne : jamais le lecteur, ni rien de l'annonce. Ses répétitions non plus (`capri
+  music rehearse` et `CAPRI_MUSIC_REHEARSAL`) : des vrais lecteurs, elles ne disent que des
+  nombres pour eux tous ensemble (annonces reçues, combien tournent), jamais lequel.
+  L'abonnement existe tant que la case de son menu est cochée (`music.json`), dès le lancement,
+  assise ou non ; décochée, désabonnée et l'état oublié. Elle ne se balance qu'assise (avec ses
+  planches) et visible ; debout, la musique ne change rien. Limite connue : une musique déjà en cours quand elle s'abonne
   ne compte qu'à la prochaine annonce du lecteur. Le lecteur d'essai, ses noms et le poste
   d'annonces n'existent qu'en version de débogage ; un nom d'annonce d'essai est propre au
   processus qui guette. À revérifier après tout changement du guetteur :
   `CAPRI_ASSETS=… cargo test -p capri-app --test musique_sans_titre -- --ignored --test-threads=1`
-  (la répétition et la vraie app : reçue, état lu, jamais un faux titre, artiste ni album dans la
-  sortie ou le journal au niveau `trace`, fichier du journal compris depuis le 15 novembre 2026 ;
-  pas encore relancé depuis).
+  (la répétition et la vraie app : reçue, état lu, jamais un faux titre, artiste ni album, ni le
+  nom d'un vrai lecteur, dans la sortie ou le journal au niveau `trace`, fichier du journal
+  compris depuis le 15 novembre 2026 ; pas encore relancé depuis).
 - Son oreille : le micro ne s'ouvre que sur un **geste de l'utilisateur** (le raccourci, ou le
   menu), jamais autrement : pas d'écoute permanente, pas de mot d'éveil, pas de réouverture
   automatique après une réponse. Il se ferme toujours tout seul : au relâchement (touche maintenue),

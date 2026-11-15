@@ -5,11 +5,12 @@
 //! trouver dans le code de Capri), et les fait porter par une annonce d'essai, postée par un autre
 //! processus sous un nom d'essai (jamais celui d'un vrai lecteur). Puis il vérifie :
 //! - `capri music rehearse` (version de débogage) : l'annonce est reçue, son état est lu, et ni sa
-//!   sortie ni sa sortie d'erreur ne contiennent les faux champs ; chaque mot de sa sortie figure
-//!   dans le code source de la répétition ou du guetteur ;
+//!   sortie ni sa sortie d'erreur ne contiennent les faux champs ni le nom d'un vrai lecteur ;
+//!   chaque mot de sa sortie figure dans le code source de la répétition ou du guetteur ;
 //! - la vraie app (`CAPRI_MUSIC_REHEARSAL`, journal au niveau `trace`) : l'annonce est reçue alors
-//!   que l'app n'est pas active, et le journal ne contient pas les faux champs, ni sur sa sortie
-//!   d'erreur ni dans son fichier (`<CAPRI_CONFIG_DIR>/logs/capri.log`). Elle a besoin de
+//!   que l'app n'est pas active, et le journal ne contient ni les faux champs ni le nom d'un vrai
+//!   lecteur, ni sur sa sortie d'erreur ni dans son fichier (`<CAPRI_CONFIG_DIR>/logs/capri.log`).
+//!   Elle a besoin de
 //!   ses images : `CAPRI_ASSETS=/chemin/vers/assets` dans un worktree qui n'en a pas. Capri
 //!   apparaît à l'écran une quinzaine de secondes, puis quitte.
 //!
@@ -47,6 +48,13 @@ fn assert_no_fakes(text: &str, fakes: &[String; 3]) {
     assert!(!lower.contains("zqtitre") && !lower.contains("zqartiste") && !lower.contains("zqalbum"));
 }
 
+/// Ni la répétition ni le journal ne disent jamais quel vrai lecteur a annoncé ou tourne.
+fn assert_no_player(text: &str) {
+    for player in ["Spotify", "Musique", "com.spotify", "com.apple.Music"] {
+        assert!(!text.contains(player), "un lecteur est nommé : {player}");
+    }
+}
+
 #[test]
 #[ignore = "guette une annonce d'essai sur cette session (macOS) ; à lancer à la main"]
 fn the_rehearsal_reads_the_state_and_never_the_title() {
@@ -75,6 +83,10 @@ fn the_rehearsal_reads_the_state_and_never_the_title() {
     assert!(!directory.exists(), "aucun réglage n'a été écrit");
     assert_no_fakes(&stdout, &fakes);
     assert_no_fakes(&stderr, &fakes);
+    assert_no_player(&stdout);
+    if cfg!(target_os = "macos") {
+        assert!(stdout.contains("les 2 lecteurs connus, ensemble : "), "{stdout}");
+    }
 
     let words = |text: &str| -> Vec<String> {
         text.split(|c: char| !c.is_alphabetic()).filter(|w| !w.is_empty()).map(str::to_lowercase).collect()
@@ -145,7 +157,9 @@ fn the_real_app_hears_an_announcement_while_inactive_and_never_logs_the_title() 
         "livraison suspendue, reçue quand même"
     );
     assert!(log.contains("oublié au bout de"), "le lecteur d'essai introuvable oublié");
+    assert!(log.contains("les lecteurs connus, ensemble, ont fait"), "{}", lines.join("\n"));
     assert_no_fakes(&log, &fakes);
+    assert_no_player(&log);
     // le seul fichier écrit : son journal, dans le dossier d'essai, sans les faux champs non plus
     let journal = std::fs::read_to_string(directory.join("logs").join("capri.log")).unwrap_or_default();
     let written: Vec<String> = std::fs::read_dir(&directory)
@@ -157,4 +171,5 @@ fn the_real_app_hears_an_announcement_while_inactive_and_never_logs_the_title() 
     assert_eq!(written, ["logs"], "aucun réglage n'a été écrit, seulement son journal");
     assert!(journal.contains("répétition de la musique : tout est conforme"), "le journal en fichier aussi");
     assert_no_fakes(&journal, &fakes);
+    assert_no_player(&journal);
 }

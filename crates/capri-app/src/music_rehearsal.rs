@@ -4,11 +4,12 @@
 //! artiste et album (`capri music rehearse <titre> <artiste> <album>` pour les choisir), qui ne
 //! sont jamais imprimés : rien ne les lit.
 //!
-//! N'imprime que des phrases écrites ici, l'état lu, des oui, des non et des nombres ; elle dit
-//! aussi combien d'annonces chacun des lecteurs connus a faites pendant ce temps, et s'il tourne.
-//! Ne joue aucun son, ne lit et n'écrit aucun réglage, ne demande aucune permission, ne pilote
-//! aucun lecteur. Rend 0 si tout est conforme (ou si ce système ne sait pas guetter, ce qu'elle
-//! dit), 1 sinon.
+//! N'imprime que des phrases écrites ici, l'état lu, des oui, des non et des nombres ; des vrais
+//! lecteurs, elle ne dit que des nombres pour eux tous ensemble (combien d'annonces ils ont faites
+//! pendant ce temps, combien tournent), **jamais lequel** : comme son journal, elle ne nomme
+//! jamais un lecteur. Ne joue aucun son, ne lit et n'écrit aucun réglage, ne demande aucune
+//! permission, ne pilote aucun lecteur. Rend 0 si tout est conforme (ou si ce système ne sait pas
+//! guetter, ce qu'elle dit), 1 sinon.
 //!
 //! `capri music announce …` est le poste d'essai qu'elle lance, dans un autre processus : il
 //! poste une annonce, comme un lecteur, sous le nom d'essai. Pas à lancer à la main.
@@ -80,16 +81,36 @@ fn state_label(state: PlayerState) -> &'static str {
     }
 }
 
-fn player_label(player: Player) -> &'static str {
-    match player {
-        Player::Spotify => "Spotify",
-        Player::Music => "Musique",
-        Player::Rehearsal => "le lecteur d'essai",
-    }
-}
-
 fn yes(value: bool) -> &'static str {
     if value { "oui" } else { "non" }
+}
+
+/// Ce qu'elle sait des vrais lecteurs, pour eux tous ensemble : jamais lequel.
+#[derive(Debug, Default, PartialEq, Eq)]
+struct Known {
+    /// Combien d'annonces ils ont faites.
+    announced: u32,
+    /// Combien sont en lecture d'après leur dernière annonce.
+    playing: usize,
+    /// Combien tournent, d'après la question posée au système avec notre constante.
+    running: usize,
+    /// Combien ne tournent pas.
+    stopped: usize,
+    /// Pour combien on ne sait pas.
+    unknown: usize,
+}
+
+impl Known {
+    /// Compte un lecteur de plus : son dernier état annoncé, ses annonces, et s'il tourne.
+    fn add(&mut self, state: PlayerState, announced: u32, running: Option<bool>) {
+        self.announced = self.announced.saturating_add(announced);
+        self.playing += usize::from(state == PlayerState::Playing);
+        match running {
+            Some(true) => self.running += 1,
+            Some(false) => self.stopped += 1,
+            None => self.unknown += 1,
+        }
+    }
 }
 
 fn of(watch: &Announcements, player: Player) -> (PlayerState, u32) {
@@ -111,7 +132,7 @@ fn run(fakes: [&str; 3]) -> i32 {
             return 1;
         }
     };
-    println!("abonnée aux annonces de Spotify, de Musique et du lecteur d'essai (un autre processus)");
+    println!("abonnée aux annonces des lecteurs connus et du lecteur d'essai (un autre processus)");
     let mut failed = 0;
     let mut check = |ok: bool, what: String| {
         println!("{} : {what}", if ok { "ok" } else { "ÉCHEC" });
@@ -179,16 +200,23 @@ fn run(fakes: [&str; 3]) -> i32 {
         ),
     );
 
-    // les vrais lecteurs : seulement ce qu'elle en sait, et s'ils tournent (par notre constante)
-    for known in music::KNOWN {
-        let (state, received) = of(&watch, known.player);
-        let running = music::is_running(known.bundle).map_or("on ne sait pas", yes);
-        println!(
-            "{} : {received} annonce(s) pendant la répétition, état connu : {} ; tourne en ce moment : {running}",
-            player_label(known.player),
-            state_label(state)
-        );
+    // les vrais lecteurs : seulement ce qu'elle en sait, et s'ils tournent (par notre constante),
+    // pour eux tous ensemble, sans jamais dire lequel
+    let mut known = Known::default();
+    for watched in music::KNOWN {
+        let (state, received) = of(&watch, watched.player);
+        known.add(state, received, music::is_running(watched.bundle));
     }
+    println!(
+        "les {} lecteurs connus, ensemble : {} annonce(s) pendant la répétition, {} en lecture d'après la \
+         dernière ; tournent en ce moment : {}, ne tournent pas : {}, on ne sait pas : {}",
+        music::KNOWN.len(),
+        known.announced,
+        known.playing,
+        known.running,
+        known.stopped,
+        known.unknown
+    );
     let asked = Instant::now();
     for known in music::KNOWN {
         let _ = music::is_running(known.bundle);
@@ -302,13 +330,13 @@ impl InApp {
     fn finish(&mut self) -> bool {
         music::set_suspended(false);
         self.stage = Stage::Done;
+        // les vrais lecteurs, ensemble : le journal ne dit jamais lequel
         if let Some(known) = &self.known {
-            for (player, received) in known.received() {
-                log::info!(
-                    "répétition de la musique : {} a fait {received} annonce(s) pendant ce temps",
-                    player_label(player)
-                );
-            }
+            let announced = known.received().fold(0_u32, |sum, (_, received)| sum.saturating_add(received));
+            log::info!(
+                "répétition de la musique : les lecteurs connus, ensemble, ont fait {announced} annonce(s) \
+                 pendant ce temps"
+            );
         }
         if self.failed == 0 {
             log::info!("répétition de la musique : tout est conforme");
@@ -418,5 +446,20 @@ impl InApp {
     /// Combien d'annonces l'abonnement ordinaire a reçues (un nombre, rien de leur contenu).
     fn ordinary_received(&self) -> Option<u32> {
         self.ordinary.as_ref().map(|ordinary| ordinary.received().map(|(_, n)| n).sum())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_known_players_are_counted_together_never_one_by_one() {
+        let mut known = Known::default();
+        known.add(PlayerState::Playing, 3, Some(true));
+        known.add(PlayerState::Unknown, 0, Some(false));
+        assert_eq!(known, Known { announced: 3, playing: 1, running: 1, stopped: 1, unknown: 0 });
+        known.add(PlayerState::Paused, u32::MAX, None);
+        assert_eq!(known, Known { announced: u32::MAX, playing: 1, running: 1, stopped: 1, unknown: 1 });
     }
 }
