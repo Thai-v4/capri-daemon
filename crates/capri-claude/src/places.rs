@@ -64,40 +64,30 @@ pub fn capri_dir(env: impl Fn(&str) -> Option<OsString>, system: System) -> Resu
 
 /// Le nom du fichier du journal de l'app.
 pub const LOG_FILE_NAME: &str = "capri.log";
-/// Le sous-dossier du journal dans `CAPRI_CONFIG_DIR`, quand elle est définie.
+/// Le sous-dossier du journal dans le dossier de Capri, ailleurs que dans `~/Library/Logs`.
 pub const LOG_SUBDIR: &str = "logs";
 
 /// Le fichier du journal de l'app à fenêtre :
 ///
-/// - `CAPRI_CONFIG_DIR` définie : `<CAPRI_CONFIG_DIR>/logs/capri.log`. Les essais et les
-///   répétitions la posent : ils n'écrivent jamais dans le vrai dossier de l'utilisateur ;
-/// - macOS : `~/Library/Logs/Capri/capri.log`, le dossier des journaux de l'utilisateur, que l'app
-///   Console sait lire ;
-/// - Windows : `%LOCALAPPDATA%\Capri\Logs\capri.log`, un sous-dossier du dossier de Capri, dans
-///   les données locales de l'utilisateur (`FOLDERID_LocalAppData`), qui ne le suivent pas d'une
-///   machine à l'autre ;
-/// - ailleurs : `$XDG_STATE_HOME/capri/capri.log`, sinon `~/.local/state/capri/capri.log` : le
-///   dossier d'« état » de la spécification XDG, ce qui doit rester d'une session à l'autre sans
-///   valoir d'être synchronisé (au contraire des réglages de `~/.config`).
-///
-/// Ces emplacements ont été vérifiés dans la documentation qu'en donnent, sur cette machine, le
-/// crate `dirs` (qui cite la spécification XDG Base Directory) et `platformdirs` (embarqué par
-/// pip), pas dans les documentations d'Apple, de Microsoft ou de freedesktop.org elles-mêmes.
+/// - macOS : `~/Library/Logs/Capri/capri.log`, dans le dossier des journaux de l'utilisateur
+///   (c'est là que le système range les rapports de plantage de ses apps :
+///   `~/Library/Logs/DiagnosticReports/`, d'après `man 8 ReportCrash`) ;
+/// - ailleurs : `<dossier de Capri>/logs/capri.log` ([`capri_dir`] : `%LOCALAPPDATA%\Capri` sous
+///   Windows, `$XDG_CONFIG_HOME/capri` ou `~/.config/capri` sous Linux). Ce que proposent pour les
+///   journaux des bibliothèques comme `platformdirs` (un dossier `Logs` dans les données locales
+///   sous Windows, `$XDG_STATE_HOME/<app>/log` sous Linux) n'a été vérifié ni dans la
+///   documentation de Microsoft ni dans la spécification de freedesktop.org : à défaut, le
+///   dossier de Capri lui-même ;
+/// - partout, `CAPRI_CONFIG_DIR` définie : `<CAPRI_CONFIG_DIR>/logs/capri.log`, même sur macOS.
+///   Les essais et les répétitions la posent : ils n'écrivent jamais dans le vrai dossier de
+///   l'utilisateur.
 pub fn log_file(env: impl Fn(&str) -> Option<OsString>, system: System) -> Result<PathBuf, MissingVar> {
     let var = |name: &str| env(name).filter(|value| !value.is_empty()).map(PathBuf::from);
-    if let Some(directory) = var(CAPRI_DIR_ENV) {
-        return Ok(directory.join(LOG_SUBDIR).join(LOG_FILE_NAME));
+    if system == System::MacOs && var(CAPRI_DIR_ENV).is_none() {
+        let home = var("HOME").ok_or(MissingVar("HOME"))?;
+        return Ok(home.join("Library").join("Logs").join("Capri").join(LOG_FILE_NAME));
     }
-    let home = || var("HOME").ok_or(MissingVar("HOME"));
-    let directory = match system {
-        System::MacOs => home()?.join("Library").join("Logs").join("Capri"),
-        System::Windows => var("LOCALAPPDATA").ok_or(MissingVar("LOCALAPPDATA"))?.join("Capri").join("Logs"),
-        System::Other => match var("XDG_STATE_HOME") {
-            Some(state) => state.join("capri"),
-            None => home()?.join(".local").join("state").join("capri"),
-        },
-    };
-    Ok(directory.join(LOG_FILE_NAME))
+    Ok(capri_dir(&env, system)?.join(LOG_SUBDIR).join(LOG_FILE_NAME))
 }
 
 /// Le dossier de Claude Code : `CLAUDE_CONFIG_DIR` si elle est définie, sinon `~/.claude`
@@ -173,34 +163,31 @@ mod tests {
     }
 
     #[test]
-    fn the_journal_lives_where_each_system_keeps_its_logs() {
-        let home = env(&[("HOME", "/Users/moi"), ("LOCALAPPDATA", "C:\\Users\\moi\\AppData\\Local")]);
+    fn the_journal_lives_in_library_logs_on_macos_and_in_capri_s_folder_elsewhere() {
+        let home = env(&[
+            ("HOME", "/Users/moi"),
+            ("LOCALAPPDATA", "C:\\Users\\moi\\AppData\\Local"),
+            ("XDG_STATE_HOME", "/Users/moi/etat"),
+        ]);
         assert_eq!(
             log_file(&home, System::MacOs).unwrap(),
             Path::new("/Users/moi/Library/Logs/Capri/capri.log")
         );
         assert_eq!(
             log_file(&home, System::Windows).unwrap(),
-            Path::new("C:\\Users\\moi\\AppData\\Local").join("Capri").join("Logs").join("capri.log")
+            Path::new("C:\\Users\\moi\\AppData\\Local").join("Capri").join("logs").join("capri.log")
         );
-        assert_eq!(
-            log_file(&home, System::Windows).unwrap().parent().unwrap().parent().unwrap(),
-            capri_dir(&home, System::Windows).unwrap(),
-            "sous Windows, dans le dossier de Capri"
-        );
+        // ailleurs, le dossier de Capri, pas celui d'« état » de XDG (pas vérifié dans sa spécification)
         assert_eq!(
             log_file(&home, System::Other).unwrap(),
-            Path::new("/Users/moi/.local/state/capri/capri.log")
+            Path::new("/Users/moi/.config/capri/logs/capri.log")
         );
-        let xdg =
-            env(&[("HOME", "/home/moi"), ("XDG_STATE_HOME", "/home/moi/etat"), ("XDG_CONFIG_HOME", "/c")]);
-        assert_eq!(log_file(&xdg, System::Other).unwrap(), Path::new("/home/moi/etat/capri/capri.log"));
-        // une variable vide compte pour absente
-        let empty = env(&[("HOME", "/home/moi"), ("XDG_STATE_HOME", "")]);
-        assert_eq!(
-            log_file(&empty, System::Other).unwrap(),
-            Path::new("/home/moi/.local/state/capri/capri.log")
-        );
+        let xdg = env(&[("HOME", "/home/moi"), ("XDG_CONFIG_HOME", "/home/moi/conf")]);
+        assert_eq!(log_file(&xdg, System::Other).unwrap(), Path::new("/home/moi/conf/capri/logs/capri.log"));
+        for system in [System::Windows, System::Other] {
+            let file = log_file(&home, system).unwrap();
+            assert_eq!(file.parent().unwrap().parent().unwrap(), capri_dir(&home, system).unwrap());
+        }
     }
 
     #[test]
@@ -209,20 +196,22 @@ mod tests {
             let chosen = env(&[
                 ("HOME", "/Users/moi"),
                 ("LOCALAPPDATA", "C:\\L"),
-                ("XDG_STATE_HOME", "/s"),
+                ("XDG_CONFIG_HOME", "/c"),
                 (CAPRI_DIR_ENV, "/tmp/essai-capri"),
             ]);
             let file = log_file(&chosen, system).unwrap();
             assert_eq!(file, Path::new("/tmp/essai-capri").join(LOG_SUBDIR).join(LOG_FILE_NAME));
             assert!(file.starts_with(capri_dir(&chosen, system).unwrap()), "{}", file.display());
+            // une variable vide compte pour absente
             let empty = env(&[("HOME", "/Users/moi"), ("LOCALAPPDATA", "C:\\L"), (CAPRI_DIR_ENV, "")]);
             assert!(!log_file(&empty, system).unwrap().starts_with("/tmp/essai-capri"));
+            assert!(log_file(env(&[(CAPRI_DIR_ENV, "/e")]), system).is_ok(), "sans dossier personnel");
         }
         // sans dossier personnel ni variable du système : rien, et la variable manquante est dite
         assert_eq!(log_file(env(&[]), System::MacOs), Err(MissingVar("HOME")));
+        assert_eq!(log_file(env(&[("HOME", "")]), System::MacOs), Err(MissingVar("HOME")));
         assert_eq!(log_file(env(&[]), System::Other), Err(MissingVar("HOME")));
         assert_eq!(log_file(env(&[("HOME", "/h")]), System::Windows), Err(MissingVar("LOCALAPPDATA")));
-        assert!(log_file(env(&[(CAPRI_DIR_ENV, "/e")]), System::Windows).is_ok());
     }
 
     #[test]
