@@ -1728,9 +1728,12 @@ tournait plus après un redémarrage (une déduction). Depuis l'essai de ce jour
 est arrêté pour Ollama, et c'est Capri qui l'a lancé ; case cochée, c'est elle qui le relancera.
 `brew services start ollama` l'inscrirait pour de bon, indépendamment de Capri.
 
-**Son journal : à vérifier à la main** (écrit et testé sans écran le 15 novembre 2026 ; rien de
-cette liste n'a été fait : ni la vraie app, ni le menu, ni le Finder ; dans `Capri.app` refaite
-par `tools/install-macos.sh`, ou par `cargo run --release` pour les points 1 à 4) :
+**Son journal : à vérifier à la main** (écrit et testé sans écran le 15 novembre 2026 ; le même
+jour, `Capri.app` refaite par `tools/install-macos.sh` et lancée depuis `/Applications` sur le Mac
+de l'utilisateur : **le point 1 est fait**, le fichier est apparu, dossier en `drwx------`, fichier
+en `-rw-------`, avec la ligne de lancement puis les lignes habituelles ; le reste de la liste n'a
+pas été fait : ni le menu, ni le Finder ; dans `Capri.app` installée, ou par `cargo run --release`
+pour les points 1 à 4) :
 
 1. **le fichier** : lancée (double-clic sur l'app), `~/Library/Logs/Capri/capri.log` apparaît ; la
    ligne de ce lancement dit `Capri 0.1.0 lancée ; journal : …`, suivie des lignes habituelles

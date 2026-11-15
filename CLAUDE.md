@@ -30,8 +30,9 @@ session réparée, hook de Claude Code qui suit ; ni ce qui se voit, ni le micro
 ouverture de session vérifiés depuis). Pas de vraie signature, de notarisation ni de mises à jour.
 Son journal, lancée comme app à fenêtre, s'écrit aussi dans un fichier borné
 (`~/Library/Logs/Capri/capri.log` sur macOS), que « Montrer le journal » de son menu montre dans
-le Finder (écrit et testé sans écran le 15 novembre 2026 ; ni la vraie app, ni le menu, ni le
-Finder essayés).
+le Finder (écrit et testé sans écran le 15 novembre 2026 ; le même jour, l'app réinstallée et
+lancée depuis `/Applications` a écrit le fichier, dossier et fichier réservés à l'utilisateur ; ni
+le menu ni le Finder essayés).
 
 ## Architecture : où va quoi
 
