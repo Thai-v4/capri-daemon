@@ -15,7 +15,8 @@
 # 3. il la copie dans la destination d'un seul coup : une copie complète sous un nom temporaire,
 #    à côté, dont la signature est vérifiée, puis un renommage. Une installation précédente (une
 #    Capri, jamais une autre app du même nom) est mise de côté le temps du renommage, puis retirée,
-#    ou remise en place si le renommage échoue : un échec ne laisse jamais une demi-app ;
+#    ou remise en place si le renommage échoue : un échec ne laisse jamais une demi-app. La date
+#    de l'app installée est ensuite mise à jour (touch), pour que le Finder relise son icône ;
 # 4. le hook de Claude Code : si, et seulement si, un hook de Capri est déjà inscrit, il suit
 #    l'app installée, par sa commande `capri hook install --if-plugged` (sauvegarde du fichier,
 #    écriture d'un seul coup). Sans hook de Capri, rien n'est inscrit. Ce script ne lit ni ne
@@ -169,6 +170,11 @@ if [ -d "$INSTALLED" ]; then mv "$INSTALLED" "$ASIDE"; fi
 [ ! -e "$INSTALLED" ] || die "$INSTALLED est réapparu pendant l'installation : rien n'est installé."
 mv "$STAGED" "$INSTALLED"
 if [ -e "$ASIDE" ]; then rm -rf "$ASIDE"; fi
+# Le Finder garde les icônes en mémoire et ne relit celle d'une app que si la date de son dossier
+# change : ditto lui avait gardé celle de target/Capri.app, il pouvait donc montrer l'ancienne.
+# touch ne change que cette date (le dossier de l'app n'est pas scellé par la signature, vérifiée
+# juste après) ; aucun processus n'est touché.
+touch "$INSTALLED"
 codesign --verify --strict "$INSTALLED"
 echo "Capri est installée : $INSTALLED (signature vérifiée)"
 
