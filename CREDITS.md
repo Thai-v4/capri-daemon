@@ -56,6 +56,14 @@ place du bord de la fenêtre, sa hauteur et ses pieds ont été mesurés sur les
 (`crates/capri-core/src/sheets.rs` et `sheets/stand.rs`) ; seuls leur cadence d'origine, remplacée
 ensuite par la nôtre, et le rapport d'échelle entre ses deux poses ont été lus dans son code.
 
+### L'icône de l'app
+
+L'icône de `Capri.app` (`Capri.icns`) est tirée de `capri-face.png`, l'une des images de
+mochiiwuff/capri-desktop ci-dessus : `tools/bundle-macos.sh` la fabrique sur ta machine, par des
+réductions de l'image que tu as téléchargée, et la range dans l'app (elle n'est pas dans ce dépôt).
+Elle suit donc les mêmes conditions que ces images : aucune licence de ce projet, retrait
+immédiat sur demande, et une app qui la contient ne se distribue pas.
+
 ## Le code
 
 Écrit de zéro en Rust. L'idée (une compagne de bureau qui commente un assistant de code) vient de

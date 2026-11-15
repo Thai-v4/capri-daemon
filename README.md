@@ -882,6 +882,15 @@ images dans `assets/`, ou dans le dossier que désigne `CAPRI_ASSETS` (celui qui
 `capri/`), et s'arrête s'il en manque une, en disant de lancer `tools/fetch-assets.sh` : il ne
 télécharge rien.
 
+**Son icône** (`Contents/Resources/Capri.icns`, nommée par `CFBundleIconFile` dans l'`Info.plist`)
+est fabriquée au même moment, sur ta machine, à partir de `capri-face.png` du même dossier
+d'images : des réductions de 16 à 256 pixels par `sips`, assemblées par `iconutil`, deux outils du
+système. L'image ne mesure que 256 pixels, elle n'est jamais agrandie : l'icône n'a pas de tailles
+512 et 1024. Sans `capri-face.png`, l'app est fabriquée quand même, avec une ligne qui le dit, et
+garde l'icône générique. Après une réinstallation, le Finder peut montrer l'ancienne icône :
+`install-macos.sh` change la date de l'app installée pour qu'il la relise (pas vérifié sur ton
+Finder : à regarder).
+
 - **Elle lit d'abord ses propres images** ; celles du dépôt seulement si l'app n'avait pas
   `capri-cutout.png` (l'ordre est dans `assets.rs`, essayé sans écran). `CAPRI_ASSETS` passe
   toujours avant : c'est le moyen d'essayer d'autres images, en la lançant depuis un terminal
@@ -894,8 +903,9 @@ télécharge rien.
   installation : l'app est signée « ad hoc », pour cette machine, et cette signature change à
   chaque fabrication.
 - **Cette app ne se distribue pas** : ni partagée, ni publiée, ni téléversée. Les images ne sont
-  pas à ce projet (voir [CREDITS.md](CREDITS.md)) et chacun les télécharge pour soi. La CI ne
-  fabrique pas cette app et ne téléverse que les deux programmes, qui ne contiennent aucune image.
+  pas à ce projet (voir [CREDITS.md](CREDITS.md)) et chacun les télécharge pour soi ; son icône,
+  tirée de l'une d'elles, en fait partie. La CI ne fabrique pas cette app et ne téléverse que les
+  deux programmes, qui ne contiennent aucune image.
 - Pas encore de vraie signature, de notarisation ni de mises à jour (la seconde moitié du
   jalon 5) : pour une nouvelle version, relance `./tools/install-macos.sh`.
 

@@ -269,8 +269,14 @@ lancée depuis `/Applications` a écrit le fichier, dossier et fichier réservé
   dans `assets/` ou dans le dossier de `CAPRI_ASSETS` ; l'essai
   `the_app_bundle_carries_exactly_the_images_the_code_reads` de `assets.rs` vérifie qu'elle suit
   `assets::SPRITE`, `capri_core::sheets` et `sheets::stand`) dans `Contents/Resources/assets/`, et
-  `CREDITS.md` dans `Contents/Resources/` ; signée « ad hoc » **après** la copie des ressources,
-  que la signature scelle. Il ne télécharge rien : sans les images, il s'arrête et dit quoi lancer.
+  `CREDITS.md` dans `Contents/Resources/`, et son icône `Contents/Resources/Capri.icns` (nommée par
+  `CFBundleIconFile`), fabriquée sur place à partir de `capri-face.png` du même dossier d'images
+  (`sips` puis `iconutil`, de 16 à 256 px : l'image mesure 256 px, jamais agrandie ; fichiers de
+  travail dans un dossier temporaire retiré à la sortie). Cette image n'est **pas** dans `IMAGES`
+  (le code ne la lit pas) : sans elle, l'app est fabriquée sans icône, avec une ligne qui le dit
+  (l'essai `the_app_icon_is_named_alike…` vérifie que l'`Info.plist` et le script nomment le même
+  fichier). Signée « ad hoc » **après** la copie des ressources et la fabrication de l'icône, que
+  la signature scelle. Il ne télécharge rien : sans les images, il s'arrête et dit quoi lancer.
   L'app cherche ses images dans cet ordre (`assets::candidates`, essayé) : `CAPRI_ASSETS`, à côté de
   l'exécutable, `Contents/Resources/assets` de son app, puis le dépôt.
   `install-macos.sh [--no-hook] [dossier]` l'installe (par défaut dans `/Applications`) : refus si
@@ -278,7 +284,8 @@ lancée depuis `/Applications` a écrit le fichier, dossier et fichier réservé
   puis avant de mettre en place ; `pgrep`, `lsof`, `ps`, rien d'autre), `bundle-macos.sh`, copie
   complète sous un nom caché à côté et signature vérifiée, puis renommage (une installation
   précédente, seulement si c'est une Capri, mise de côté puis retirée, ou remise en place en cas
-  d'échec), le hook de Claude Code qui suit s'il était branché (`capri hook install
+  d'échec ; `touch` de l'app installée ensuite, pour que le Finder relise son icône), le hook de
+  Claude Code qui suit s'il était branché (`capri hook install
   --if-plugged` de l'app installée : `hook_setup::follow`, `capri_claude::settings::follow`), puis
   `target/Capri.app` retirée, pour que l'agent d'ouverture de session se répare au lancement suivant
   (`login_setup::at_launch`, `capri_core::login::repair` : l'app inscrite n'existe plus).
@@ -408,7 +415,9 @@ faux `settings.json` regardé avant et après.
   ni partagée, ni jointe à une version, ni fabriquée par la CI. Les images ne sont pas à ce projet
   (PolyForm Noncommercial pour ses poses, captures et fan art pour son dessin d'avant), et chacun
   les télécharge pour soi : l'app de `tools/bundle-macos.sh` est faite sur une machine, pour cette
-  machine. La CI (`.github/workflows/ci.yml`) ne télécharge aucune image, ne lance ni
+  machine. Son icône (`Capri.icns`), tirée de `capri-face.png`, en fait partie : jamais dans le
+  dépôt (ni elle, ni un `.iconset`, ni une image de travail), seulement dans l'app fabriquée.
+  La CI (`.github/workflows/ci.yml`) ne télécharge aucune image, ne lance ni
   `fetch-assets` ni `bundle-macos.sh`, et ne téléverse que les deux binaires (`capri`, `capri-hook`),
   qui ne contiennent aucune image (elles sont lues au lancement, jamais `include_bytes!`) : ne rien
   y ajouter qui en contienne.
