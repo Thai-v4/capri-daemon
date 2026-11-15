@@ -495,6 +495,34 @@ mod tests {
             read.sort_unstable();
             assert_eq!(listed, read);
         }
+
+        #[test]
+        fn the_app_icon_is_named_alike_by_the_plist_and_the_script_and_is_no_image_the_code_reads() {
+            let plist = include_str!("../../../tools/macos/Info.plist");
+            let script = include_str!("../../../tools/bundle-macos.sh");
+            let after_key =
+                plist.split("<key>CFBundleIconFile</key>").nth(1).expect("la clé CFBundleIconFile");
+            let declared = after_key
+                .split("<string>")
+                .nth(1)
+                .and_then(|rest| rest.split("</string>").next())
+                .expect("son nom");
+            assert!(declared.ends_with(".icns"), "{declared}");
+            assert!(
+                script.contains(&format!("\"$APP/Contents/Resources/{declared}\"")),
+                "le script ne fabrique pas {declared} dans Contents/Resources"
+            );
+            // elle est tirée de capri-face.png, que le code ne lit pas : jamais dans IMAGES
+            assert!(script.contains("FACE=\"$ASSETS/capri/capri-face.png\""));
+            let images: Vec<&str> = script
+                .lines()
+                .map(str::trim)
+                .skip_while(|line| *line != "IMAGES=(")
+                .skip(1)
+                .take_while(|line| *line != ")")
+                .collect();
+            assert!(images.iter().all(|line| !line.contains("capri-face")), "{images:?}");
+        }
     }
 
     mod standing {

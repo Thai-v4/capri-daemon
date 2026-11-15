@@ -14,6 +14,9 @@
 # s'arrête et dit quoi lancer (tools/fetch-assets.sh). CREDITS.md les accompagne, dans
 # Contents/Resources/ : il porte les mentions que leurs licences exigent.
 #
+# Son icône (Capri.icns) est fabriquée ici, par les outils du système, à partir de capri-face.png
+# du même dossier d'images : une image de plus qui entre dans l'app (voir plus bas).
+#
 # **Cette app ne se distribue pas.** Ni téléversée, ni publiée, ni partagée, ni fabriquée par la
 # CI : les images ne sont pas à ce projet (PolyForm Noncommercial pour ses poses, des captures et
 # du fan art pour son dessin d'avant, voir CREDITS.md), elles ne sont pas dans le dépôt, et
@@ -81,6 +84,31 @@ for image in "${IMAGES[@]}"; do
   cp -X "$ASSETS/$image" "$APP/Contents/Resources/assets/$image"
 done
 cp -X CREDITS.md "$APP/Contents/Resources/CREDITS.md"
+
+# L'icône : Contents/Resources/Capri.icns (celle que nomme CFBundleIconFile, dans Info.plist),
+# tirée de capri-face.png, que l'utilisateur a déjà téléchargée. Elle n'est pas dans IMAGES : le
+# code ne la lit pas, et sans elle l'app est fabriquée quand même, sans icône. L'image mesure
+# 256 x 256 : on ne fabrique que les tailles de 16 à 256 (réductions par sips), jamais un
+# agrandissement pour les tailles 512 et 1024 (iconutil accepte un jeu sans elles). Rien d'autre
+# que des outils du système ; les fichiers de travail vont dans un dossier temporaire, retiré à
+# la sortie. Avant la signature, qui scelle cette ressource.
+FACE="$ASSETS/capri/capri-face.png"
+if [ -f "$FACE" ]; then
+  ICON_WORK="$(mktemp -d "${TMPDIR:-/tmp}/capri-icone.XXXXXX")"
+  trap 'rm -rf "$ICON_WORK"' EXIT
+  mkdir "$ICON_WORK/Capri.iconset"
+  # taille:nom, les noms qu'impose iconutil (man iconutil, « iconset »)
+  for spec in 16:icon_16x16 32:icon_16x16@2x 32:icon_32x32 64:icon_32x32@2x \
+    128:icon_128x128 256:icon_128x128@2x 256:icon_256x256; do
+    size="${spec%%:*}"
+    /usr/bin/sips -z "$size" "$size" -s format png "$FACE" \
+      --out "$ICON_WORK/Capri.iconset/${spec#*:}.png" > /dev/null
+  done
+  /usr/bin/iconutil -c icns -o "$ICON_WORK/Capri.icns" "$ICON_WORK/Capri.iconset"
+  cp -X "$ICON_WORK/Capri.icns" "$APP/Contents/Resources/Capri.icns"
+else
+  echo "capri-face.png est introuvable dans $ASSETS/capri : Capri.app est fabriquée sans icône." >&2
+fi
 
 # Signer en dernier : le second programme d'abord, puis l'app, qui scelle tout ce qu'elle contient.
 codesign --force --sign - "$APP/Contents/MacOS/capri-hook"

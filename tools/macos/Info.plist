@@ -10,6 +10,10 @@
     <string>local.capri-daemon.capri</string>
     <key>CFBundleExecutable</key>
     <string>capri</string>
+    <!-- Son icône, fabriquée par tools/bundle-macos.sh dans Contents/Resources/ ; absente si
+         l'image dont elle est tirée l'était, et l'app a alors l'icône générique. -->
+    <key>CFBundleIconFile</key>
+    <string>Capri.icns</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleInfoDictionaryVersion</key>
