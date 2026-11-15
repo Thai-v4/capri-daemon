@@ -1731,8 +1731,9 @@ est arrêté pour Ollama, et c'est Capri qui l'a lancé ; case cochée, c'est el
 **Son journal : à vérifier à la main** (écrit et testé sans écran le 15 novembre 2026 ; le même
 jour, `Capri.app` refaite par `tools/install-macos.sh` et lancée depuis `/Applications` sur le Mac
 de l'utilisateur : **le point 1 est fait**, le fichier est apparu, dossier en `drwx------`, fichier
-en `-rw-------`, avec la ligne de lancement puis les lignes habituelles ; le reste de la liste n'a
-pas été fait : ni le menu, ni le Finder ; dans `Capri.app` installée, ou par `cargo run --release`
+en `-rw-------`, avec la ligne de lancement puis les lignes habituelles ; **le point 2 a été essayé** par
+l'utilisateur, qui a dit « ça fonctionne » : dans l'ensemble, sans préciser lequel des deux menus ;
+les points 3 à 8 n'ont pas été faits ; dans `Capri.app` installée, ou par `cargo run --release`
 pour les points 1 à 4) :
 
 1. **le fichier** : lancée (double-clic sur l'app), `~/Library/Logs/Capri/capri.log` apparaît ; la

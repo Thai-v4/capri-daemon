@@ -31,8 +31,8 @@ ouverture de session vérifiés depuis). Pas de vraie signature, de notarisation
 Son journal, lancée comme app à fenêtre, s'écrit aussi dans un fichier borné
 (`~/Library/Logs/Capri/capri.log` sur macOS), que « Montrer le journal » de son menu montre dans
 le Finder (écrit et testé sans écran le 15 novembre 2026 ; le même jour, l'app réinstallée et
-lancée depuis `/Applications` a écrit le fichier, dossier et fichier réservés à l'utilisateur ; ni
-le menu ni le Finder essayés).
+lancée depuis `/Applications` a écrit le fichier, dossier et fichier réservés à l'utilisateur, et
+« Montrer le journal » a été essayé par l'utilisateur, dans l'ensemble, pas point par point).
 
 ## Architecture : où va quoi
 
