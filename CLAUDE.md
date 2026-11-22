@@ -27,7 +27,11 @@ session). Jalon 5, sa première moitié : une `Capri.app` qui emporte ses images
 `/Applications` par `tools/install-macos.sh` (écrit, essayé vers un dossier temporaire, puis
 installée pour de bon le 12 novembre 2026 : images lues dans l'app, inscription à l'ouverture de
 session réparée, hook de Claude Code qui suit ; ni ce qui se voit, ni le micro, ni une vraie
-ouverture de session vérifiés depuis). Pas de vraie signature, de notarisation ni de mises à jour.
+ouverture de session vérifiés depuis). Sa signature : « ad hoc » par défaut, ou par l'identité
+« Developer ID Application » du trousseau s'il y en a une (écrit, et essayé le 23 novembre 2026
+vers un dossier temporaire avec la vraie identité de l'utilisateur ; que macOS ne redemande plus
+le micro d'une installation à l'autre n'est pas encore vérifié). Pas de notarisation ni de mises
+à jour.
 Son journal, lancée comme app à fenêtre, s'écrit aussi dans un fichier borné
 (`~/Library/Logs/Capri/capri.log` sur macOS), que « Montrer le journal » de son menu montre dans
 le Finder (écrit et testé sans écran le 15 novembre 2026 ; le même jour, l'app réinstallée et
@@ -280,8 +284,15 @@ lancée depuis `/Applications` a écrit le fichier, dossier et fichier réservé
   travail dans un dossier temporaire retiré à la sortie). Cette image n'est **pas** dans `IMAGES`
   (le code ne la lit pas) : sans elle, l'app est fabriquée sans icône, avec une ligne qui le dit
   (l'essai `the_app_icon_is_named_alike…` vérifie que l'`Info.plist` et le script nomment le même
-  fichier). Signée « ad hoc » **après** la copie des ressources et la fabrication de l'icône, que
-  la signature scelle. Il ne télécharge rien : sans les images, il s'arrête et dit quoi lancer.
+  fichier). Signée **après** la copie des ressources et la fabrication de l'icône, que la
+  signature scelle : par `CAPRI_SIGN_IDENTITY` si elle est posée (un nom ou une empreinte, ou `-`
+  pour « ad hoc »), sinon par la seule identité « Developer ID Application » valide du trousseau
+  (`security find-identity -v -p codesigning`, dont il ne lit que les noms ; plusieurs : il
+  s'arrête avant de compiler), sinon « ad hoc ». Toujours `--timestamp=none`, le second programme
+  d'abord ; une signature qui échoue retire l'app à moitié faite (l'essai
+  `signing_the_app_bundle_never_leaves_the_machine` vérifie l'horodatage refusé et l'absence
+  d'outil de notarisation dans les deux scripts). Il ne télécharge rien : sans les images, il
+  s'arrête et dit quoi lancer.
   L'app cherche ses images dans cet ordre (`assets::candidates`, essayé) : `CAPRI_ASSETS`, à côté de
   l'exécutable, `Contents/Resources/assets` de son app, puis le dépôt.
   `install-macos.sh [--no-hook] [dossier]` l'installe (par défaut dans `/Applications`) : refus si
@@ -370,7 +381,10 @@ Après un changement de `tools/bundle-macos.sh` ou de `tools/install-macos.sh` (
 macOS : pas de tableau vide sous `set -u`, et `${VAR}` entre accolades devant un caractère non
 ASCII) : `bash -n`, puis l'installation vers un dossier temporaire (vide, puis par-dessus), avec
 `CLAUDE_CONFIG_DIR` et `CAPRI_CONFIG_DIR` d'essai, `codesign --verify --strict` de la copie, et le
-faux `settings.json` regardé avant et après.
+faux `settings.json` regardé avant et après. Ces essais se font avec `CAPRI_SIGN_IDENTITY=-`
+(sans elle, le script signe avec l'identité du trousseau, et macOS peut demander la clé) ; la
+signature par une identité s'essaie à part, et les cas « aucune » et « plusieurs » identités par
+une fausse commande `security` placée en tête du `PATH`.
 
 ## Règles
 
@@ -436,6 +450,14 @@ faux `settings.json` regardé avant et après.
   `fetch-assets` ni `bundle-macos.sh`, et ne téléverse que les deux binaires (`capri`, `capri-hook`),
   qui ne contiennent aucune image (elles sont lues au lancement, jamais `include_bytes!`) : ne rien
   y ajouter qui en contienne.
+  **La signer avec une identité « Developer ID Application » n'y change rien**, et se fait sur la
+  machine sans rien envoyer : `--timestamp=none` à chaque signature (pas d'horodatage par le
+  serveur d'Apple), et **jamais de notarisation** (`notarytool`, `altool`, `stapler`), qui la
+  téléverserait chez Apple avec ses images. Le nom de l'identité, celui de son titulaire,
+  l'identifiant d'équipe et l'empreinte du certificat ne s'écrivent **jamais dans le dépôt** (ni
+  script, ni documentation, ni essai, ni message de commit) : le script les trouve dans le
+  trousseau, ou les reçoit par `CAPRI_SIGN_IDENTITY`. Ni certificat ni clé dans le dépôt, ni dans
+  la CI.
 - **`tools/install-macos.sh`** ne quitte, ne tue ni ne signale **jamais** Capri ni aucun processus :
   il refuse et dit de la quitter par son menu. Il ne demande jamais `sudo`. Il ne touche au
   `settings.json` de Claude Code **que par `capri hook install --if-plugged`** de l'app installée,

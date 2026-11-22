@@ -585,8 +585,10 @@ open /Applications/Capri.app              # quitte d'abord une Capri déjà lanc
   qu'à une app qui dit pourquoi elle les veut. À la première écoute, il te pose les deux
   questions ; réponds, puis recommence. Lancée nue (`cargo run`), Capri garde tout le reste et dit
   simplement qu'elle ne peut pas t'écouter ;
-- l'app est signée pour ta machine seulement, et macOS rattache ses permissions à cette
-  signature : après chaque reconstruction, il les redemande ;
+- macOS rattache ses permissions à la signature de l'app. Signée « ad hoc » (sans identité de
+  signature dans ton trousseau), elle en change à chaque reconstruction, et il les redemande
+  après chacune ; signée avec une identité « Developer ID Application », ce qu'il en retient ne
+  change plus (voir « Sa signature », dans l'installation) ;
 - quand tu commences à parler, elle se tait. Le micro met un instant à s'ouvrir : laisse passer
   une demi-seconde avant ton premier mot ;
 - les délais (appui bref, silence, attente d'un premier mot, durée maximale) sont des constantes
@@ -743,8 +745,8 @@ pas tant que la première existe (décoche puis recoche depuis celle que tu veux
 
 Pourquoi un agent de lancement plutôt que `SMAppService`, l'API de macOS 13 pour les éléments
 d'ouverture : d'après son en-tête (`SMAppService.h`), l'app doit être signée, et l'inscription doit
-être refaite quand l'exécutable change. Capri est signée « ad hoc » et reconstruite souvent : un
-fichier lié à un chemin survit aux reconstructions, et se vérifie sans écran.
+être refaite quand l'exécutable change. Capri est signée « ad hoc » par défaut et reconstruite
+souvent : un fichier lié à un chemin survit aux reconstructions, et se vérifie sans écran.
 
 **Pour les essais : `CAPRI_CONFIG_DIR`.** Lancée avec cette variable (qui remplace le dossier de
 ses réglages, et y met aussi son journal), Capri ne lit ni n'écrit rien dans le vrai
@@ -909,6 +911,36 @@ garde l'icône générique. Après une réinstallation, le Finder peut montrer l
 `install-macos.sh` change la date de l'app installée pour qu'il la relise (pas vérifié sur ton
 Finder : à regarder).
 
+**Sa signature** est faite au même moment, sur ta machine, en dernier : elle scelle les deux
+programmes, les images et l'icône. macOS rattache les permissions de l'app (le micro, la
+reconnaissance vocale) à cette signature :
+
+- **sans identité de signature** dans ton trousseau, elle est « ad hoc » : elle ne vaut que pour
+  cette machine, et ce que macOS retient de l'app est l'empreinte de son contenu, qui change à
+  chaque fabrication. Il redemande donc le micro et la reconnaissance vocale à la première
+  écoute après chaque installation ;
+- **avec une identité « Developer ID Application »** (le certificat d'un compte développeur
+  Apple, rangé dans ton trousseau avec sa clé), `bundle-macos.sh` la prend de lui-même s'il n'y
+  en a qu'une de valide. Ce que macOS retient de l'app (`codesign -d -r-` le montre) est alors
+  son identifiant et ton équipe, qui ne changent pas d'une fabrication à l'autre. Il redemande
+  ses permissions une fois, au passage d'une signature à l'autre ; qu'il ne les redemande plus
+  ensuite n'a pas encore été vérifié ;
+- **`CAPRI_SIGN_IDENTITY`** choisit : un nom ou une empreinte que `codesign` connaît
+  (indispensable s'il y a plusieurs identités « Developer ID Application » : le script s'arrête
+  plutôt que de choisir), ou `-` pour rester « ad hoc ». `install-macos.sh` la transmet.
+
+Du trousseau, le script ne lit que les noms des identités de signature (`security find-identity
+-v -p codesigning`) ; c'est `codesign` qui se sert de la clé, et macOS peut te demander de l'y
+autoriser (« Toujours autoriser », pour qu'il ne le redemande pas à chaque signature). Si la
+signature échoue, l'app à moitié faite est retirée et rien n'est installé. **Signer n'envoie rien** : pas
+d'horodatage par le serveur d'Apple (`--timestamp=none`), et **jamais de notarisation**, qui
+téléverserait l'app, avec ses images, chez Apple ; un essai vérifie que chaque signature du
+script refuse l'horodatage et qu'aucun des deux scripts ne nomme un outil de notarisation. Une
+identité de signature ne change donc rien à « cette app ne se distribue pas », et son nom n'est
+écrit nulle part dans ce dépôt. Une identité a une date de fin : le script ne prend que celles
+que `security` dit valides, et revient à « ad hoc », en le disant, quand il n'y en a plus (pas
+essayé avec une identité expirée).
+
 - **Elle lit d'abord ses propres images** ; celles du dépôt seulement si l'app n'avait pas
   `capri-cutout.png` (l'ordre est dans `assets.rs`, essayé sans écran). `CAPRI_ASSETS` passe
   toujours avant : c'est le moyen d'essayer d'autres images, en la lançant depuis un terminal
@@ -918,14 +950,14 @@ Finder : à regarder).
 - **Ne remplace pas une image dans l'app** : la signature scelle les ressources, et une image
   changée la casse (`codesign --verify` le dit : « a sealed resource is missing or invalid »).
 - **macOS redemande le micro et la reconnaissance vocale** à la première écoute après chaque
-  installation : l'app est signée « ad hoc », pour cette machine, et cette signature change à
-  chaque fabrication.
+  installation tant que l'app est signée « ad hoc » (voir « Sa signature », ci-dessus).
 - **Cette app ne se distribue pas** : ni partagée, ni publiée, ni téléversée. Les images ne sont
   pas à ce projet (voir [CREDITS.md](CREDITS.md)) et chacun les télécharge pour soi ; son icône,
   tirée de l'une d'elles, en fait partie. La CI ne fabrique pas cette app et ne téléverse que les
   deux programmes, qui ne contiennent aucune image.
-- Pas encore de vraie signature, de notarisation ni de mises à jour (la seconde moitié du
-  jalon 5) : pour une nouvelle version, relance `./tools/install-macos.sh`.
+- Pas de notarisation (elle enverrait l'app et ses images chez Apple), et pas encore de mises à
+  jour (la seconde moitié du jalon 5) : pour une nouvelle version, relance
+  `./tools/install-macos.sh`.
 
 **Windows** (avec les outils de compilation C++ de Visual Studio, demandés par rustup)
 
@@ -1040,8 +1072,8 @@ Règle : tout ce qui peut être testé sans écran va dans `capri-core`, `capri-
 
 Vérifié automatiquement :
 
-- formatage, `clippy -D warnings` et 563 tests sur **macOS Apple Silicon** (le 15 novembre 2026 ;
-  562 en version optimisée, un essai de la répétition de la musique n'existant qu'en version de
+- formatage, `clippy -D warnings` et 564 tests sur **macOS Apple Silicon** (le 23 novembre 2026 ;
+  563 en version optimisée, un essai de la répétition de la musique n'existant qu'en version de
   débogage ; plus 12 qui ne
   tournent qu'à la main : ils écrivent des images ou dessinent sur la vraie carte graphique,
   lisent un vrai `settings.json`, touchent au vrai trousseau, créent de vraies voix et un vrai
@@ -1738,6 +1770,24 @@ la vraie Capri qui tournait depuis `target/Capri.app` (la liste des processus lu
 pas le script entier. **Pas essayé** : la remise en place d'une installation précédente quand le
 renommage échoue ou qu'on interrompt le script (lue, pas exécutée).
 
+**Sa signature** : essayée le 23 novembre 2026 vers un dossier temporaire, avec les mêmes lieux
+d'essai, sans lancer l'app. Sans identité de signature (une fausse commande `security` en tête du
+`PATH`, qui n'en rend aucune de cette sorte, puis `CAPRI_SIGN_IDENTITY=-`) : signée « ad hoc »,
+comme avant. Avec la vraie identité « Developer ID Application » du Mac de l'utilisateur, trouvée
+d'elle-même, deux fois de suite par-dessus : `codesign --verify --strict` passe, les deux
+programmes portent l'identité et sa chaîne jusqu'à la racine d'Apple, `codesign -dv` ne montre
+aucun horodatage par un serveur (pas de ligne `Timestamp=`), et ce que macOS retient de l'app
+(`codesign -d -r-` : son identifiant, la chaîne d'Apple et l'équipe, et non plus l'empreinte de
+son contenu) est le même d'une fois à l'autre. Une identité inconnue : la signature échoue,
+`target/Capri.app` est retirée, l'installation précédente reste en place, signature intacte.
+Plusieurs identités (fausse commande `security`) : le script s'arrête avant de compiler et les
+liste. Le faux `settings.json` est identique à l'octet après chaque essai. Le même jour, installée
+pour de bon dans `/Applications`, signée avec cette identité (elle était « ad hoc ») ; le vrai
+`settings.json`, comparé à sa sauvegarde, a les mêmes réglages à l'ordre des hooks près.
+**Pas vérifié** : que macOS ne redemande plus le micro et la reconnaissance vocale d'une
+installation à l'autre (le point 3 de la liste ci-dessous) ; une identité expirée ; un refus dans
+la fenêtre du trousseau ; l'app lancée depuis cette installation.
+
 **L'app installée : à vérifier à la main** (le 12 novembre 2026, installée pour de bon dans
 `/Applications` sur le Mac de l'utilisateur : le point 1 ; du point 2, la ligne du journal, pas
 ce qui se voit ; du point 4, l'agent qui nomme `/Applications/Capri.app` après le premier
@@ -1753,7 +1803,9 @@ ne dépendant pas de leur ordre. Le reste de la liste n'a pas été fait) :
 2. lancée par `open --stderr /tmp/capri.log /Applications/Capri.app` : elle apparaît avec ses
    planches (debout, puis assise sur une fenêtre), et `/tmp/capri.log` dit
    `sprite : /Applications/Capri.app/Contents/MacOS/../Resources/assets/capri/capri-cutout.png` ;
-3. le micro (⌃⌥D) : macOS redemande le micro et la reconnaissance vocale, puis elle t'écoute ;
+3. le micro (⌃⌥D) : macOS redemande le micro et la reconnaissance vocale, puis elle t'écoute.
+   Signée avec une identité : il les redemande à la première installation ainsi signée, et ne
+   doit plus les redemander à la suivante ;
 4. case « Se lancer à l'ouverture de session » cochée avant l'installation : après ce premier
    lancement, `~/Library/LaunchAgents/local.capri-daemon.capri.login.plist` nomme
    `/Applications/Capri.app` ; à l'ouverture de session suivante, elle apparaît seule ;
@@ -1858,8 +1910,10 @@ Points à surveiller :
    `/Applications` par `tools/install-macos.sh`~~ (écrit, essayé vers un dossier temporaire, puis
    installée pour de bon le 12 novembre 2026 : elle lit ses images dans l'app, son inscription à
    l'ouverture de session et le hook de Claude Code ont suivi ; ce qui se voit, le micro et une
-   vraie ouverture de session restent à vérifier, voir plus haut). Reste : une app signée et notarisée, un
-   installeur, des mises à jour (il y faut un compte développeur Apple).
+   vraie ouverture de session restent à vérifier, voir plus haut). Sa signature par une identité
+   « Developer ID Application » du trousseau : écrite, et essayée le 23 novembre 2026 vers un
+   dossier temporaire (voir « État de validation »). Reste : un installeur, des mises à jour.
+   Pas de notarisation tant que l'app emporte ses images : elle les enverrait chez Apple.
 
 ## Licence
 
