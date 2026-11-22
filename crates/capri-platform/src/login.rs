@@ -16,8 +16,8 @@
 //! `SMAppService.h`, « Apps that use SMAppService APIs must be code signed », et une app mal signée
 //! reçoit `kSMErrorInvalidSignature` ; l'inscription est rattachée à l'app signée, et « if an app
 //! updates either the plist or the executable […] the SMAppService must be re-registered or it may
-//! not launch ». Capri est signée « ad hoc » et reconstruite souvent : sa signature change à chaque
-//! fois. Un agent de lancement est un fichier, lié à un chemin, qui ne dépend pas de la signature,
+//! not launch ». Capri est signée « ad hoc » par défaut et reconstruite souvent : sa signature
+//! change alors à chaque fois. Un agent de lancement est un fichier, lié à un chemin, qui ne dépend pas de la signature,
 //! survit aux reconstructions et se vérifie sans écran. `SMAppService.h` le désigne comme la voie
 //! « legacy » (`statusForLegacyURL:`), toujours chargée par `launchd`.
 //!

@@ -22,10 +22,23 @@
 # du fan art pour son dessin d'avant, voir CREDITS.md), elles ne sont pas dans le dépôt, et
 # chacun les télécharge pour soi. L'app est faite sur cette machine, pour cette machine.
 #
-# Elle est signée « ad hoc », pour cette machine seulement, **après** la copie des ressources :
-# la signature les scelle. Remplacer une image dans l'app casse donc sa signature ; pour essayer
-# d'autres images, CAPRI_ASSETS reste le moyen. macOS rattache les permissions à cette signature :
-# après chaque reconstruction, il redemande le micro et la reconnaissance vocale.
+# Elle est signée **après** la copie des ressources : la signature les scelle. Remplacer une image
+# dans l'app casse donc sa signature ; pour essayer d'autres images, CAPRI_ASSETS reste le moyen.
+# macOS rattache les permissions (le micro, la reconnaissance vocale) à cette signature :
+# - sans identité de signature, elle est « ad hoc », pour cette machine seulement, et change à
+#   chaque fabrication : après chacune, il les redemande ;
+# - avec une identité « Developer ID Application » de ton trousseau (le certificat d'un compte
+#   développeur Apple, et sa clé), ce que macOS retient de l'app est son identifiant et ton
+#   équipe, qui ne changent pas d'une fabrication à l'autre.
+# Laquelle : CAPRI_SIGN_IDENTITY si elle est posée (un nom ou une empreinte que codesign connaît,
+# ou « - » pour « ad hoc ») ; sinon la seule identité « Developer ID Application » valide du
+# trousseau, s'il y en a une ; sinon « ad hoc ». S'il y en a plusieurs, le script s'arrête plutôt
+# que de choisir. Du trousseau, il ne lit que les noms des identités de signature (`security
+# find-identity`) : c'est codesign qui se sert de la clé, et macOS demande de l'y autoriser.
+#
+# Signer se fait sur cette machine, **sans rien envoyer** : pas d'horodatage par le serveur
+# d'Apple (--timestamp=none), et jamais de notarisation, qui téléverserait l'app et ses images
+# chez Apple. Une identité de signature ne change rien à « cette app ne se distribue pas ».
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd -P)"
@@ -65,6 +78,38 @@ fi
 if ! command -v cargo > /dev/null; then
   echo "cargo est introuvable : installe Rust (https://rustup.rs), ou ajoute son dossier au PATH." >&2
   exit 1
+fi
+
+# Avec quoi signer (voir l'en-tête), décidé avant de compiler : CAPRI_SIGN_IDENTITY, sinon la seule
+# identité « Developer ID Application » valide du trousseau, sinon « ad hoc » (« - » pour codesign).
+SIGN_IDENTITY="${CAPRI_SIGN_IDENTITY:-}"
+if [ "$SIGN_IDENTITY" = "-" ]; then
+  SIGN_SAYS="« ad hoc », comme le demande CAPRI_SIGN_IDENTITY"
+elif [ -n "$SIGN_IDENTITY" ]; then
+  SIGN_SAYS="avec l'identité que désigne CAPRI_SIGN_IDENTITY"
+else
+  # Une ligne par identité valide de cette sorte : son empreinte, puis son nom. Rien d'autre
+  # n'est lu du trousseau, et aucune clé.
+  identities="$(security find-identity -v -p codesigning 2> /dev/null |
+    sed -n 's/^ *[0-9]*) \([0-9A-F]\{40\}\) "\(Developer ID Application: .*\)"$/\1 \2/p' || true)"
+  count="$(printf '%s\n' "$identities" | grep -c . || true)"
+  case "$count" in
+    0)
+      SIGN_IDENTITY="-"
+      SIGN_SAYS="« ad hoc » (aucune identité « Developer ID Application » valide dans ton trousseau)"
+      ;;
+    1)
+      SIGN_IDENTITY="${identities%% *}"
+      SIGN_SAYS="avec ton identité « ${identities#* } »"
+      ;;
+    *)
+      echo "Plusieurs identités « Developer ID Application » sont dans ton trousseau :" >&2
+      printf '%s\n' "$identities" | sed 's/^/  /' >&2
+      echo "Choisis-en une : relance avec CAPRI_SIGN_IDENTITY=<son empreinte> devant la commande" >&2
+      echo "(ou CAPRI_SIGN_IDENTITY=- pour une signature « ad hoc »)." >&2
+      exit 1
+      ;;
+  esac
 fi
 
 cargo build --release -p capri-app -p capri-hook
@@ -110,10 +155,22 @@ else
   echo "capri-face.png est introuvable dans $ASSETS/capri : Capri.app est fabriquée sans icône." >&2
 fi
 
-# Signer en dernier : le second programme d'abord, puis l'app, qui scelle tout ce qu'elle contient.
-codesign --force --sign - "$APP/Contents/MacOS/capri-hook"
-codesign --force --sign - "$APP"
+# Signer en dernier, sur cette machine et sans rien envoyer (--timestamp=none : pas d'horodatage
+# par un serveur) : le second programme d'abord, puis l'app, qui scelle tout ce qu'elle contient.
+# Si une signature échoue (identité inconnue, accès à sa clé refusé dans la fenêtre du trousseau),
+# l'app à moitié faite est retirée : il ne reste jamais une Capri.app qui ne serait pas signée.
+sign() {
+  if ! codesign --force --timestamp=none --sign "$SIGN_IDENTITY" "$1"; then
+    rm -rf "$APP"
+    echo "La signature a échoué ($SIGN_SAYS) : Capri.app n'est pas fabriquée." >&2
+    echo "Pour une signature « ad hoc » à la place : relance avec CAPRI_SIGN_IDENTITY=- devant la commande." >&2
+    exit 1
+  fi
+}
+sign "$APP/Contents/MacOS/capri-hook"
+sign "$APP"
 codesign --verify --strict "$APP"
 
 echo "Capri.app est prête, avec ses images : $APP"
+echo "Elle est signée $SIGN_SAYS."
 echo "Pour la lancer : open \"$APP\"   (quitte d'abord une Capri déjà lancée)"

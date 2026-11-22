@@ -523,6 +523,34 @@ mod tests {
                 .collect();
             assert!(images.iter().all(|line| !line.contains("capri-face")), "{images:?}");
         }
+
+        /// Signer `Capri.app` ne sort jamais de la machine, avec ou sans identité de signature :
+        /// chaque signature du script refuse l'horodatage par un serveur, et aucun des deux
+        /// scripts ne connaît un outil qui téléverserait l'app chez Apple (la notariser serait la
+        /// distribuer, avec ses images).
+        #[test]
+        fn signing_the_app_bundle_never_leaves_the_machine() {
+            let bundle = include_str!("../../../tools/bundle-macos.sh");
+            let install = include_str!("../../../tools/install-macos.sh");
+            let code = |script: &'static str| {
+                script.lines().map(str::trim).filter(|line| !line.starts_with('#')).collect::<Vec<_>>()
+            };
+            let signings: Vec<&str> =
+                code(bundle).into_iter().filter(|line| line.contains("--sign ")).collect();
+            assert!(!signings.is_empty(), "le script ne signe plus l'app ?");
+            for line in signings {
+                assert!(line.contains("--timestamp=none"), "une signature horodatée par un serveur : {line}");
+            }
+            assert!(
+                code(install).iter().all(|line| !line.contains("--sign ")),
+                "l'installation ne signe pas"
+            );
+            for line in code(bundle).into_iter().chain(code(install)) {
+                for tool in ["notarytool", "altool", "stapler"] {
+                    assert!(!line.contains(tool), "{tool} téléverserait l'app : {line}");
+                }
+            }
+        }
     }
 
     mod standing {

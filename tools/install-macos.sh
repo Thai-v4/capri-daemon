@@ -11,7 +11,7 @@
 #    de fabriquer l'app (après, il aurait déjà remplacé l'app sous une Capri qui tourne), puis de
 #    nouveau juste avant de la mettre en place ;
 # 2. il fabrique l'app, avec ses images, par tools/bundle-macos.sh (CAPRI_ASSETS lui est
-#    transmise) ;
+#    transmise, et CAPRI_SIGN_IDENTITY, qui choisit sa signature) ;
 # 3. il la copie dans la destination d'un seul coup : une copie complète sous un nom temporaire,
 #    à côté, dont la signature est vérifiée, puis un renommage. Une installation précédente (une
 #    Capri, jamais une autre app du même nom) est mise de côté le temps du renommage, puis retirée,
@@ -202,13 +202,27 @@ rm -rf "$BUILT"
 echo
 echo "target/Capri.app est retirée : l'app installée ne dépend plus de ce dépôt."
 
-# 6. et 7. Ce qui reste à faire, sans lancer l'app.
+# 6. et 7. Ce qui reste à faire, sans lancer l'app. Le micro : macOS le rattache à la signature de
+# l'app installée, lue ici (codesign -dv dit « Signature=adhoc » d'une signature « ad hoc »). Sa
+# sortie est lue en entier avant d'y chercher : sous pipefail, un grep -q qui s'arrête à la
+# première ligne trouvée ferait échouer codesign, et le test avec lui.
+SIGNATURE="$(codesign -dv "$INSTALLED" 2>&1 || true)"
+case "$SIGNATURE" in
+  *Signature=adhoc*)
+    MICROPHONE="- à ta première écoute, macOS te redemandera le micro et la reconnaissance vocale : sa signature
+  « ad hoc » change à chaque fabrication ;"
+    ;;
+  *)
+    MICROPHONE="- elle est signée avec ton identité, qui ne change pas d'une fabrication à l'autre : macOS ne
+  devrait te redemander le micro et la reconnaissance vocale que la première fois après un
+  changement de signature (une app signée « ad hoc » jusque-là, par exemple) ;"
+    ;;
+esac
 cat <<EOF
 
 Ensuite :
 - lance-la : open "$INSTALLED" (ou un double-clic dans le Finder) ; ce script ne la lance pas ;
-- à ta première écoute, macOS te redemandera le micro et la reconnaissance vocale : sa signature
-  « ad hoc » change à chaque fabrication ;
+$MICROPHONE
 - si « Se lancer à l'ouverture de session » était cochée, lance-la une fois depuis sa nouvelle
   place avant ta prochaine ouverture de session : elle répare elle-même son inscription (d'ici là,
   l'ouverture de session chercherait l'ancienne app, qui n'existe plus).
