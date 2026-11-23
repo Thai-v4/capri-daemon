@@ -812,7 +812,12 @@ une fausse commande `security` placée en tête du `PATH`.
   serveur. Même règle que pour les API : format et adresses d'un fournisseur se vérifient dans sa
   documentation, pas de mémoire (les sources de chaque adresse sont citées dans
   `capri_chat::brain`). Aucun en-tête qui présente l'app à un fournisseur (`HTTP-Referer`,
-  `X-OpenRouter-Title`…).
+  `X-OpenRouter-Title`…). Le `User-Agent` que ureq envoie de lui-même (`ureq/<version>`) **reste**
+  dans les requêtes du chat, par décision de l'utilisateur le 23 novembre 2026 : il ne nomme ni
+  Capri ni l'utilisateur, la requête porte déjà sa clé, et des services refusent une requête qui
+  n'en a pas (le « Browser Integrity Check » de Cloudflare, d'après sa documentation ; pas
+  vérifié fournisseur par fournisseur). Seule la lecture des versions le retire, parce que rien
+  d'autre n'y identifie quoi que ce soit.
 - **Une clé est liée à l'adresse pour laquelle elle a été donnée.** Son compte dans le trousseau
   nomme le fournisseur et l'adresse, hôte et port (`openrouter@openrouter.ai:443` :
   `capri_chat::KeyAccount`, à ne jamais changer sans perdre les clés rangées). Elle n'est lue que
