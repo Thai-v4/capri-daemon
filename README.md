@@ -858,8 +858,8 @@ pour qui la lance d'un terminal).
 ## Savoir qu'une version existe
 
 Comme Droppy, Capri regarde d'elle-même s'il existe une version
-plus récente qu'elle, et te le dit. **Elle ne télécharge ni n'installe rien** : ce sera un geste de
-ta part, plus tard (la dernière partie du jalon 5).
+plus récente qu'elle, et te le dit. **D'elle-même, elle ne télécharge ni n'installe rien** : c'est
+un geste de ta part (voir « Installer une version, sur un geste », plus bas).
 
 - **La case** « Chercher les mises à jour », dans son menu (icône de la barre des menus, ou clic
   droit sur elle), **cochée par défaut**. Décochée, elle ne regarde plus, et oublie ce qu'elle
@@ -871,12 +871,13 @@ ta part, plus tard (la dernière partie du jalon 5).
   double à chaque échec, jamais plus d'un jour. Chaque lancement en refait une, une minute après.
 - **Ce qu'elle dit** : si une version plus récente existe, une fois, au-dessus de sa tête : « Une
   nouvelle version de moi est sortie : la 0.2.0 », mais à son tour (après ce que tu lui dis, ce
-  qu'elle te répond, et la ligne de Claude Code, et seulement visible) ; puis une ligne
-  « Version 0.2.0 disponible » apparaît sous la case, dans ses deux menus. La choisir lui fait dire
-  si elle pourra s'installer depuis son menu (plus tard), ou pourquoi pas : elle change ce que
-  contient l'app (ses images : il faudra la réinstaller), elle n'est pas publiée pour ton système,
-  ou son manifeste est d'un format qu'elle ne lit pas encore. La même version, retrouvée le
-  lendemain, n'est pas redite ; relancée, elle la redit une fois.
+  qu'elle te répond, et la ligne de Claude Code, et seulement visible) ; puis une ligne apparaît
+  sous la case, dans ses deux menus : sur macOS, « Installer la version 0.2.0 » (voir plus bas) ;
+  ailleurs, ou si elle ne s'installe pas depuis l'app, « Version 0.2.0 disponible », qui dit
+  pourquoi : elle change ce que contient l'app (ses images : il faudra la réinstaller par
+  `tools/install-macos.sh`), elle n'est pas publiée pour ton système, ou son manifeste est d'un
+  format qu'elle ne lit pas encore. La même version, retrouvée le lendemain, n'est pas redite ;
+  relancée, elle la redit une fois.
 - **Sur demande, dans un terminal** : `capri update check` dit la version installée, la dernière
   publiée, et le verdict (sans tenir compte de la case : c'est toi qui le demandes).
 
@@ -897,7 +898,7 @@ ta part, plus tard (la dernière partie du jalon 5).
   est refusée **avant** de s'y connecter. Pas de proxy, même déclaré par l'environnement ; 64 Kio
   au plus ; 10 s pour se connecter, 30 s par échange ;
 - rien n'en est envoyé à son cerveau, et rien d'autre ne devient permis : télécharger et installer
-  resteront un geste, et l'adresse d'un fichier d'une version sera calculée par l'app, jamais lue
+  restent un geste, et l'adresse d'un fichier d'une version est calculée par l'app, jamais lue
   dans le manifeste.
 
 **Son journal** n'en dit que la conclusion : « mises à jour : à jour (installée 0.1.0, dernière
@@ -926,6 +927,74 @@ essayé avec ton accord, une fois une version publiée avec son manifeste) ; **c
 la phrase au-dessus de sa tête, la ligne glissée sous la case dans les deux menus et ce qu'elle
 dit quand on la choisit, la case décochée puis recochée ; **sous Windows**, rien n'a tourné
 ailleurs que dans la CI. Ailleurs (Linux), pas de `https` : elle ne regarde pas.
+
+## Installer une version, sur un geste
+
+Sur macOS seulement, et **seulement quand tu le demandes**. La ligne « Installer la version … »
+de son menu, choisie :
+
+1. **elle télécharge** les trois fichiers de la version pour macOS (`capri`, `capri-hook`,
+   `Info.plist`, exactement ceux-là ; jamais d'images : celles de ton app restent les tiennes), par
+   la même règle que le manifeste (les deux hôtes de GitHub, ses redirections suivies une à une,
+   rien sur toi ni sur ta machine, ni proxy, ni clé), chacun **vérifié pendant sa lecture** : la
+   taille exacte et l'empreinte SHA-256 que dit le manifeste, sinon il est retiré et rien n'est
+   installé. 10 s pour se connecter, 30 s de silence au plus, 15 min par fichier ;
+2. **elle refait son app à côté de l'installée**, dans un dossier caché du même dossier
+   (`.Capri.app.capri-update-<numéro>`, réservé à toi) : les fichiers reçus à leur place,
+   l'`Info.plist` reçu vérifié (notre identifiant, la bonne version), et les ressources de ton app
+   (ses images, son icône, ses crédits) recopiées telles quelles, après avoir vérifié que sa
+   signature tient encore ;
+3. **elle la signe comme ton app** : « ad hoc » si la tienne l'est ; avec la même identité de ton
+   trousseau sinon (seuls les noms des identités de signature sont lus, et seulement dans ce cas ;
+   macOS peut te demander d'autoriser `codesign` à se servir de la clé). Si cette identité n'y est
+   plus, « ad hoc », et elle te dit que macOS te redemandera le micro ; s'il y en a plusieurs du
+   même nom, elle ne choisit pas et n'installe rien. Toujours sans horodatage par un serveur, et
+   jamais de notarisation : rien n'est envoyé chez Apple ;
+4. la ligne devient **« Redémarrer pour passer à la … »**. Choisie, Capri lance le programme de fin
+   de la nouvelle app (`capri update finish`), qui dit qu'il prend le relais, puis elle se quitte
+   comme par « Quitter ». Le programme de fin attend qu'elle soit sortie (sans jamais signaler
+   aucun processus : il sait qu'elle est sortie quand le tube qu'elle tenait se ferme ; 30 s au
+   plus, sinon il ne touche à rien), met la nouvelle app à la place de l'ancienne comme
+   `tools/install-macos.sh` (l'ancienne mise de côté, la nouvelle renommée, sa signature vérifiée,
+   l'ancienne retirée, ou remise en place au moindre échec ; jamais par-dessus autre chose qu'une
+   Capri, jamais à travers un lien, jamais `sudo`), puis la relance par `open`.
+
+Chaque étape se dit au-dessus de sa tête, à son tour. Un refus aussi, en une phrase : pas lancée
+depuis une `Capri.app`, dossier de l'app où elle ne peut pas écrire, version qui change ce que
+contient l'app (là, et seulement là, elle te renvoie à `tools/install-macos.sh`), téléchargement
+impossible, fichier abîmé, signature impossible. **Quitter Capri, ou décocher « Chercher les mises à
+jour », pendant l'installation l'arrête, et il ne reste rien** à côté de ton app ; une app prête
+mais pas redémarrée est retirée de même. Au lancement, les restes d'une mise à jour interrompue
+(une coupure de courant…) sont retirés s'ils sont à elle sans doute possible, et laissés sinon,
+avec une ligne dans son journal. Son journal ne dit que les étapes et la conclusion, jamais une
+adresse signée ni le nom d'une identité ; le programme de fin y écrit aussi, une fois l'ancienne
+sortie.
+
+Puisque l'app est refaite avec les ressources de la tienne, elle ne contient que ce que tu avais
+déjà, et **ne se distribue toujours pas**. Le `capri-hook` de l'app garde sa place : le hook de
+Claude Code n'a pas à suivre ; pendant les quelques millisecondes du remplacement, il ne le
+trouverait pas.
+
+**Pour le répéter sans rien publier**, en version de débogage :
+
+```bash
+cargo test -p capri-app --test mise_a_jour_installee -- --ignored --test-threads=1
+```
+
+fabrique une petite `Capri.app` d'essai dans un dossier temporaire (le vrai `capri` de débogage,
+de fausses ressources), signée « ad hoc » par le vrai `codesign`, et lance depuis elle
+`capri update rehearse` contre un faux serveur de cette machine qui redirige comme GitHub : tout
+le déroulé, jusqu'à la mise en place par le programme de fin et sa vérification ; puis un fichier
+abîmé, qui n'installe rien. Ni `/Applications`, ni `~/Library`, ni `~/.claude`, ni le trousseau ne
+sont touchés.
+
+Pas encore vérifié : **le vrai chemin jusqu'à GitHub** (aucune version n'est publiée ; il sera
+essayé avec ton accord) ; **la signature par une vraie identité** (les essais ne signent qu'en
+« ad hoc », et le choix de l'identité n'est essayé que sur des textes inventés) ; **la relance par
+`open`** (pendant un essai, le programme de fin la saute : `open` ne lui passerait pas ses lieux
+d'essai, et pourrait réveiller ta Capri, du même identifiant) ; **ce qui se voit** (la ligne du
+menu à chaque étape, les phrases à leur tour, Capri qui disparaît et revient) ; **sous Windows**,
+la ligne n'y est qu'une information, essayée seulement dans la CI.
 
 ## Installer et lancer
 
@@ -1027,9 +1096,9 @@ essayé avec une identité expirée).
   pas à ce projet (voir [CREDITS.md](CREDITS.md)) et chacun les télécharge pour soi ; son icône,
   tirée de l'une d'elles, en fait partie. La CI ne fabrique pas cette app et ne téléverse que les
   deux programmes, qui ne contiennent aucune image.
-- Pas de notarisation (elle enverrait l'app et ses images chez Apple), et pas encore de mises à
-  jour (la seconde moitié du jalon 5) : pour une nouvelle version, relance
-  `./tools/install-macos.sh`.
+- Pas de notarisation (elle enverrait l'app et ses images chez Apple). Une nouvelle version
+  s'installe depuis son menu (voir « Installer une version, sur un geste »), sauf si elle change
+  ce que contient l'app : alors, relance `./tools/install-macos.sh`.
 
 **Windows** (avec les outils de compilation C++ de Visual Studio, demandés par rustup)
 
@@ -1166,7 +1235,12 @@ crates/
                    journal » ; tests/journal_des_commandes.rs : ses commandes n'en écrivent pas)
                    Et les versions (update_setup.rs : la case, update.json, où regarder,
                    `capri update check` ; update_view.rs : la veille sur un thread à part ;
-                   tests/mises_a_jour.rs : la commande et la vraie app contre un faux serveur)
+                   tests/mises_a_jour.rs : la commande et la vraie app contre un faux serveur ;
+                   install_view.rs : la ligne du menu qui installe, puis redémarre ;
+                   update_install.rs : la préparation sur un thread à part, le dossier caché,
+                   les restes ; update_finish.rs : `capri update finish`, le programme de fin,
+                   et `capri update rehearse` ; tests/mise_a_jour_installee.rs : la répétition
+                   de bout en bout)
 tools/             récupération vérifiée des images, fabrication de Capri.app avec ses images
                    (bundle-macos.sh) et son installation dans /Applications (install-macos.sh)
 ```
@@ -1356,6 +1430,26 @@ Vérifié automatiquement :
   dossier d'essai, le faux serveur lu en version de débogage, sans jamais écrire l'adresse
   signée) ; aucune répétition ni aucun essai qui lance `capri` ne peut joindre GitHub ; le format
   du contenu de l'app lié à la liste `IMAGES` de `tools/bundle-macos.sh` ;
+- installer une version, sur un geste, sans sortir de la machine (le 23 novembre 2026) : la
+  SHA-256 (ses constantes recalculées de leur définition, les exemples de FIPS 180-2, onze
+  longueurs autour du remplissage comparées à `shasum`, par morceaux quelconques) ; le plan
+  (exactement nos trois fichiers, chacun à sa place) et l'`Info.plist` reçu (identifiant,
+  version, programme ; un lecteur strict, une quinzaine de plists refusés) ; le déroulé en machine
+  à états (le geste, les étapes, l'app prête, le redémarrage, le relais manqué, chaque refus et sa
+  phrase, courte et sans commande sauf le renvoi au script d'installation) ; la signature lue dans
+  `codesign` et `security` (« ad hoc », une identité, aucune, plusieurs ; jamais un nom ni une
+  empreinte dans un `Debug`) ; contre un faux serveur local, le téléchargement (deux redirections,
+  la requête réduite à sa ligne et `Host`, une taille annoncée ou réelle fausse, une empreinte
+  fausse, une redirection hors de la règle, un 404, un serveur muet, un arrêt demandé : le fichier
+  refusé retiré chaque fois) ; le vrai `codesign` en « ad hoc » (signée, vérifiée, décrite ; une
+  ressource changée après coup, et la vérification échoue) ; le relais par un tube (le faux
+  programme de fin n'apprend la fermeture qu'au lâcher du dernier bout : aucun bout ne lui est
+  passé ; une mauvaise réponse n'est pas un relais) ; la préparation avec un faux système (l'app
+  refaite à côté avec les ressources de l'installée, sans son `_CodeSignature`, signée comme elle,
+  le trousseau pas lu pour une app « ad hoc » ; chaque refus, dossier non inscriptible compris, ne
+  laisse rien) ; les restes au lancement (retirés seulement s'ils sont à nous et libres) ;
+  l'arrêt de la préparation pendant un téléchargement, qui ne laisse rien ; `capri update finish`
+  lancé hors d'une mise à jour, refusé sans journal ;
 - `clippy -D warnings` en compilation croisée pour **Windows x64** et **Linux x64** (le code
   compile, il n'est pas exécuté).
 

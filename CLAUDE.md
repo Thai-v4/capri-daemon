@@ -45,8 +45,13 @@ geste). Le premier est écrit le 23 novembre 2026 (`.github/workflows/release.ym
 version n'est publiée. Le deuxième est écrit et testé sans réseau le même jour : la case « Chercher les
 mises à jour » de son menu (cochée par défaut), une vérification par jour sur un thread à elle,
 ce qu'elle en dit, et `capri update check` ; répété dans la vraie app contre un faux serveur de
-cette machine, jamais encore contre GitHub, ni regardé à l'écran, ni exécuté sous Windows. Elle
-ne télécharge ni n'installe rien.
+cette machine, jamais encore contre GitHub, ni regardé à l'écran, ni exécuté sous Windows. Le
+troisième est écrit et testé sans écran le 23 novembre 2026 (macOS seulement) : sur un geste, la
+ligne « Installer la version … » de son menu la télécharge, la vérifie, refait son app à côté de
+l'installée et la signe comme elle ; « Redémarrer pour passer à la … » la met en place par le
+programme de fin de la nouvelle app. Répété de bout en bout depuis une `Capri.app` d'essai signée
+« ad hoc », contre un faux serveur de cette machine ; jamais contre GitHub, ni avec une vraie
+identité, ni regardé à l'écran, et la relance par `open` n'est pas essayée (voir plus bas).
 
 ## Architecture : où va quoi
 
@@ -99,6 +104,19 @@ ne télécharge ni n'installe rien.
   Et `journal` : quand son **journal en fichier** passe au fichier suivant (`must_rotate` : avant
   la ligne qui ferait dépasser `MAX_BYTES`, et au lancement s'il la dépasse déjà) et la ligne trop
   longue rognée sans couper un caractère (`clip`). L'écriture est dans `capri-app` (`journal.rs`).
+  Et `bundle` : ce qu'une mise à jour remplace dans `Capri.app` (`PROGRAM`, `HOOK_PROGRAM`,
+  `BUNDLE_ID` repris de `login`), la lecture stricte d'un `Info.plist` en XML (`info_strings`,
+  `info_string` : les chaînes du dictionnaire de premier niveau, les cinq entités de XML et
+  rien d'autre, une clé en double refusée), les noms de ce qu'une mise à jour fabrique à côté de
+  l'app (`staging_name`, `previous_name`, `leftover`, qui ne reconnaît qu'eux, au chiffre près ;
+  `MARKER`, `MARKER_TEXT`, `NEXT`), et le protocole du relais entre l'ancienne Capri et le
+  programme de fin (`HANDOVER_READY`, `HANDOVER_GO`). Et `codesign` : la signature de l'app lue
+  dans ce qu'écrivent `codesign -d --verbose=2` (`signature` : `Signature=adhoc`, ou le premier
+  `Authority=`) et `security find-identity -v -p codesigning` (`identities`), le choix de
+  l'identité (`choose` : « ad hoc » comme l'installée, la seule identité valide du même nom, aucune
+  et « ad hoc », plusieurs et refus ; le trousseau n'est pas lu pour une app « ad hoc »), et les
+  arguments de `codesign` (`sign_args`, toujours `--timestamp=none`). `IdentityName` et
+  `IdentityHash` n'ont pas de `Display`, et leur `Debug` les masque.
 - `capri-claude` : tout ce que Capri sait de Claude Code, lui aussi **sans dépendance système** :
   lecture de l'entrée des hooks, protocole (et la forme pour le journal d'un message,
   `Message::for_log`), suivi des sessions, édition de `settings.json` de
@@ -132,7 +150,7 @@ ne télécharge ni n'installe rien.
   (`MAJEUR.MINEUR.CORRECTIF`, écriture canonique, car l'étiquette `v<version>` en est calculée) ;
   la lecture stricte du manifeste `latest.json` (`manifest` : champs inconnus ignorés à tous les
   niveaux, tout le reste refusé en entier ; un `format` inconnu n'est lu que pour sa version) ;
-  le verdict (`verdict` : à jour, installable plus tard, ou pas, avec son `Obstacle` : `format`
+  le verdict (`verdict` : à jour, installable depuis l'app, ou pas, avec son `Obstacle` : `format`
   inconnu, `bundle` différent, cible absente) ; l'adresse du dépôt, écrite une fois
   (`REPOSITORY`), d'où sont calculées celle du manifeste et celle d'un fichier (`asset_url`,
   jamais lue dans le manifeste) ; la règle des redirections (`route::Route`, prise en paramètre
@@ -140,7 +158,16 @@ ne télécharge ni n'installe rien.
   regarder (`schedule`, horloge passée en paramètre) ; où regarder (`source` : jamais GitHub
   depuis un essai) ; ce qu'elle en dit (`say`, et `Failure`, les causes d'un échec). Ici plutôt
   que dans `capri-core` parce que `serde_json` y est déjà, et que `capri-net`, qui doit recevoir
-  la règle, ne dépend que de ce crate.
+  la règle, ne dépend que de ce crate. Et `update::digest` : l'empreinte SHA-256, écrite d'après
+  FIPS 180-4, sans dépendance (essayée contre ses constantes recalculées en nombres entiers, les
+  exemples de la norme et des empreintes de `shasum`). Et `update::install`, sur un geste : le
+  plan (`plan` : une version `Installable` dont la cible macOS donne exactement `capri`,
+  `capri-hook` et `Info.plist`, chacun à sa place, `Slot`), l'`Info.plist` reçu vérifié
+  (`check_info` : notre identifiant de bundle, la version du manifeste deux fois, notre
+  programme), les refus et leurs phrases (`Refusal`, `say` et `for_log`), et le déroulé, une
+  machine à états (`Installation` : la ligne choisie, les étapes, l'app prête, le redémarrage,
+  et la ligne du menu qui en découle). L'adresse d'un fichier se calcule par la source
+  (`Source::asset_url` : `asset_url` chez GitHub, la même forme sous le faux serveur d'essai).
 - `capri-net` : **le seul crate qui parle au réseau** (ureq). Il se connecte et rien d'autre :
   quoi envoyer et comment lire la réponse est décidé par `capri-chat` (`Wire`, `key_header`, qu'il
   pose tels quels). Et `knock` : quelque chose répond-il à une adresse **de cette machine
@@ -154,7 +181,12 @@ ne télécharge ni n'installe rien.
   (aucun paramètre de clé, aucun `Ask`, aucun corps) : un `GET` qui suit lui-même, une à une,
   les redirections que la règle passée en paramètre permet (ureq à zéro redirection), sans proxy,
   sans `User-Agent` ni `Accept` (retirés : ureq les enverrait de lui-même), sans connexion
-  gardée ouverte, borné en durée et en taille (64 Kio). La seule entrée qui suit des redirections.
+  gardée ouverte, borné en durée et en taille (64 Kio). Avec `update::download`, sur un geste
+  seulement, les deux seules entrées qui suivent des redirections : le fichier d'une version, par
+  la même règle et le même agent, écrit au fil de l'eau dans un fichier que l'appelant a créé,
+  **exactement** à la taille du manifeste (refusé dès un `Content-Length` différent), son
+  empreinte calculée pendant la lecture, borné en durée (connexion, silence à chaque lecture,
+  échange entier) et par un arrêt demandé ; refusé, le fichier est retiré.
 - `capri-render` : wgpu, et le tracé du texte du bandeau et de la bulle (cosmic-text, polices du
   système). Ses images sont confiées une fois (`Renderer::add_image`, qui compte ce qu'elles
   pèsent) ; chaque dessin en prend une part (`Crop` : une case de grille), lue à un demi-texel des
@@ -163,7 +195,8 @@ ne télécharge ni n'installe rien.
 - Les appels système et l'`unsafe` lié à l'OS vivent dans **deux crates, et nulle part
   ailleurs** : `capri-platform` (la fenêtre, la voix, le micro, le trousseau, la liste des
   fenêtres, l'inscription à l'ouverture de session, le lancement d'Ollama, un fichier montré dans
-  le Finder) et `capri-ipc` (le canal local).
+  le Finder, la signature de l'app qu'une mise à jour refait et le relais vers son programme de
+  fin) et `capri-ipc` (le canal local).
 - `capri-ipc` : socket Unix ou tube nommé Windows, réservés à l'utilisateur. À part de
   `capri-platform` parce que `capri-hook` le charge à chaque événement de Claude Code : ni winit
   ni AppKit ici. Sous Windows, un tube n'a pas la file d'attente d'une socket : un thread
@@ -245,7 +278,17 @@ ne télécharge ni n'installe rien.
   ailleurs : `LaunchError::Unavailable`). Ni l'un ni l'autre ne sait ce qu'est Ollama : c'est
   `capri_chat::startup` qui décide quoi lancer. Et `reveal` : un fichier montré dans le Finder
   par `/usr/bin/open -R`, chemin absolu seulement, `open` attendu par un thread « capri-montre »
-  et jamais par la boucle (ailleurs : `LaunchError::Unavailable`).
+  et jamais par la boucle (ailleurs : `LaunchError::Unavailable`). Et `hand_over`, le relais
+  d'une mise à jour : le `capri` de la nouvelle app, détaché (son propre groupe), son entrée sur
+  un tube (`std::io::pipe`, dont les deux bouts sont fermés à l'exécution d'un autre programme :
+  seul le sien lui passe) ; sa première ligne lue par un thread « capri-relais » (`Relay::ready`),
+  puis « go » écrit (`Relay::go`) et le bout du tube gardé jusqu'à la sortie
+  (`Gone::keep_until_exit`). Rien d'autre n'est lu de lui ; aucun processus n'est signalé.
+  La signature de l'app qu'une mise à jour refait aussi (`codesign.rs` : `describe`, `sign`,
+  `verify` par `/usr/bin/codesign`, avec les arguments de `capri_core::codesign` ; `identities`
+  par `/usr/bin/security find-identity -v -p codesigning`, appelée seulement pour une app
+  installée signée par une identité ; leur sortie n'est jamais recopiée ; ailleurs :
+  `CodesignError::Unavailable`).
 - `capri-app` : assemble le tout. Pas d'appel système direct ici (sauf menus via `tray-icon`).
   La fenêtre passe toujours par `capri_platform::Overlay`, jamais par `winit::window::Window`.
   Les clés passent par `keys` (le trait `KeyStore` : le trousseau du système, ou un trousseau en
@@ -309,7 +352,21 @@ ne télécharge ni n'installe rien.
   faux monde à l'horloge factice ; la lâcher l'arrête, et rien ne l'attend en quittant. Ce
   qu'elle trouve est relevé par la boucle (`App::handle_updates`) : dit une fois au-dessus de sa
   tête par `BannerView::announce` (un message de l'app qui attend qu'elle soit visible et libre),
-  et rappelé par une ligne « Version … disponible » glissée sous la case, dans ses deux menus.
+  et rappelé par une ligne glissée sous la case, dans ses deux menus (`update_view::Found` : le
+  verdict et le manifeste dont il vient). Sur macOS, cette ligne est le geste qui installe
+  (« Installer la version … »), puis celui qui redémarre (« Redémarrer pour passer à la … ») ;
+  ailleurs, ou pour une version qui ne s'installe pas depuis l'app, « Version … disponible », qui
+  dit pourquoi. `install_view` exécute ce qu'ordonne `capri_chat::update::install::Installation`
+  (`App::choose_update`, `App::handle_install`, `App::exiting` qui abandonne tout en quittant).
+  `update_install` (macOS seulement) : la préparation sur un thread « capri-installe »
+  (`Preparation` ; `prepare`, derrière un trait `Workshop` que les essais remplacent : le dossier
+  caché `Staging` en `0700`, sa marque verrouillée par `File::try_lock`, les fichiers créés par
+  `create_new`, les dossiers par `create_dir` sans jamais recréer un parent retiré,
+  `Contents/Resources` de l'installée recopié octet par octet, fichiers et dossiers seulement),
+  l'arrêt borné (`Preparation::stop`, `STOP_WAIT`), les restes au lancement
+  (`clear_leftovers`, appelé par `main` pour l'app à fenêtre), et le relais (`start_relay`,
+  `complete_relay`, `HANDOVER_WAIT`). `update_finish` : `capri update finish` (le programme de fin)
+  et, en version de débogage, `capri update rehearse`.
 - `tools/` : `fetch-assets.sh` (et `.ps1`), qui télécharge les images et vérifie leurs
   empreintes ; `bundle-macos.sh`, qui fabrique `target/Capri.app` : les deux binaires, l'`Info.plist`
   (`tools/macos/Info.plist`), les images que lit le code et seulement elles (sa liste `IMAGES`, prise
@@ -388,6 +445,18 @@ tout essai qui lance `capri` pose `CAPRI_CONFIG_DIR` (`every_test_that_launches_
 Pour répéter la vérification : `CAPRI_UPDATE_URL=http://127.0.0.1:<port>/…` (version de débogage),
 un faux serveur de cette machine et rien d'autre, regardé 3 s après le lancement
 (`CAPRI_ASSETS=… cargo test -p capri-app --test mises_a_jour -- --ignored`).
+Pour répéter l'installation : `capri update rehearse` (version de débogage, macOS), lancé depuis
+une `Capri.app`, avec `CAPRI_CONFIG_DIR` et un `CAPRI_UPDATE_URL` de la forme de GitHub
+(`http://127.0.0.1:<port>/…/releases/latest/download/latest.json` : ses fichiers sont cherchés sous
+`…/releases/download/v<version>/`), refusé sans eux. L'essai ignoré
+`cargo test -p capri-app --test mise_a_jour_installee -- --ignored --test-threads=1` le lance
+depuis une petite `Capri.app` d'essai d'un dossier temporaire, signée « ad hoc » par le vrai
+`codesign` (le vrai `capri` de débogage, un faux second programme, de fausses ressources), contre
+un faux serveur qui redirige comme GitHub vers des adresses « signées » : l'app refaite, signée,
+mise en place par le programme de fin, vérifiée ; et un fichier abîmé, qui n'installe rien. Il ne
+relance pas l'app (avec `CAPRI_CONFIG_DIR`, le programme de fin saute la relance) et n'écrit ni
+dans `/Applications`, ni dans `~/Library`, ni dans `~/.claude`. À relancer après tout changement
+de l'installation.
 
 ## Vérifier avant de dire « c'est fait »
 
@@ -545,8 +614,9 @@ une fausse commande `security` placée en tête du `PATH`.
      se vérifie dans la documentation de GitHub, pas de mémoire.
   4. **Comment la couper** : décocher la case (`update.json` : `{ "enabled": false }`) ; un
      fichier illisible la coupe aussi. Le thread s'arrête, et elle oublie ce qu'elle avait trouvé.
-  5. **Ce qui ne change pas** : elle ne télécharge ni n'installe rien d'elle-même (ce sera un
-     geste) ; l'adresse d'un fichier se calcule (`asset_url`), jamais lue dans le manifeste ;
+  5. **Ce qui ne change pas** : elle ne télécharge ni n'installe rien d'elle-même (c'est un
+     geste : voir la règle suivante) ; l'adresse d'un fichier se calcule (`asset_url`), jamais lue
+     dans le manifeste ;
      rien n'en est envoyé à son cerveau ; le journal ne dit que la conclusion (« à jour », « version
      … disponible », « vérification impossible » et une cause courte), jamais une adresse signée
      (`Address` ne montre que l'hôte ; ureq masque le chemin au niveau `debug`, et ses traces sont
@@ -557,6 +627,64 @@ une fausse commande `security` placée en tête du `PATH`.
      (`http://127.0.0.1:<port>/…`, `Route::this_machine`) ; une autre adresse est refusée, jamais
      remplacée par GitHub. Aucun essai ne contacte GitHub, et le chemin réel ne s'essaie qu'avec
      l'accord de l'utilisateur.
+- **Installer une version : seulement sur un geste, et sur macOS seulement.** Décidé par
+  l'utilisateur le 23 novembre 2026. D'elle-même, elle ne fait toujours que lire le manifeste.
+  1. **Le geste** : la ligne « Installer la version … » de son menu (là seulement si la version
+     est `Installable` et que ce système sait l'installer ; ailleurs, la ligne dit pourquoi :
+     Windows et Linux, une version qui change ce que contient l'app, avec alors le seul renvoi
+     permis à une commande, `tools/install-macos.sh`, puisque l'app ne sait pas faire cette
+     installation-là). Puis « Redémarrer pour passer à la … », le second geste.
+  2. **Ce qui part** : les trois fichiers de la version (`capri`, `capri-hook`, `Info.plist` de
+     la cible `macos-arm64`, exactement ceux-là), chacun par un `GET` à l'adresse que calcule
+     `asset_url` (jamais lue dans le manifeste), par la même règle que le manifeste (mêmes hôtes,
+     redirections une à une, ni proxy, ni `User-Agent`, ni `Accept`, ni clé possible :
+     `capri_net::update::download`). Rien d'autre.
+  3. **Ce qui est vérifié avant d'installer** : chaque fichier à la taille exacte et à l'empreinte
+     SHA-256 du manifeste (calculée en route ; sinon il est retiré) ; l'`Info.plist` reçu, notre
+     identifiant de bundle, la version du manifeste, notre programme ; la signature de l'app
+     installée, avant de recopier ses ressources ; la signature de la nouvelle, à côté puis à sa
+     place.
+  4. **Où** : un seul dossier caché à côté de l'app installée (`.Capri.app.capri-update-<pid>`,
+     `0700`, qui ne finit pas par `.app`, sa marque `capri-managed` verrouillée tant qu'on s'en
+     sert), et, le temps du remplacement, l'installation précédente mise de côté à côté
+     (`…-previous`). La nouvelle app y est refaite avec `Contents/Resources` de l'installée recopié
+     tel quel (les images ne sont jamais téléchargées : elles restent celles de l'utilisateur, et
+     l'app ne se distribue toujours pas), jamais son ancien `_CodeSignature`. Au moindre refus,
+     case décochée ou Capri quittée, ce dossier est retiré. **Au lancement**, un reste n'est
+     retiré que s'il est à nous sans doute possible (vrai dossier, notre nom au chiffre près, notre
+     marque au texte exact, son verrou libre) ; sinon il est laissé, avec une ligne au journal.
+  5. **La signature** : celle de l'app installée, refaite sur la machine (`codesign` par son
+     chemin absolu, toujours `--timestamp=none`, le second programme puis l'app, puis
+     `--verify --strict`) ; jamais de notarisation ni d'outil qui téléverse (l'essai
+     `signing_never_leaves_the_machine` de `capri_core::codesign` le vérifie sur les arguments).
+     « Ad hoc » si l'installée l'est ; sinon l'identité valide du trousseau au même nom (seuls les
+     noms et les empreintes des identités de signature sont lus, et seulement dans ce cas) : une,
+     on signe avec elle ; aucune, « ad hoc », et elle dit que macOS redemandera le micro ;
+     plusieurs, refus. **Le nom et l'empreinte d'une identité ne s'écrivent jamais**, ni dans le
+     journal, ni dans un message, ni dans le dépôt. Les essais ne signent qu'en « ad hoc » et ne
+     lisent jamais le trousseau.
+  6. **La mise en place, au redémarrage** : l'ancienne lance, détaché, `capri update finish
+     <app>` de la nouvelle app (`capri_platform::launch::hand_over`), puis se quitte par le même
+     chemin que « Quitter » (la boucle s'arrête, `App::exiting`). Le programme de fin attend sa
+     sortie **sans jamais signaler aucun processus, pas même par le signal 0** : son entrée est un
+     tube dont elle garde l'autre bout ; « go » écrit, puis le tube fermé à sa sortie ; 30 s au
+     plus, sinon il renonce et ne touche à rien. Puis il fait comme `tools/install-macos.sh` :
+     jamais une demi-app (des renommages), jamais par-dessus autre chose qu'une Capri (identifiant
+     de bundle), jamais à travers un lien, l'ancienne remise en place au moindre échec, jamais
+     `sudo`. Il relance l'app par `/usr/bin/open`, sauf avec `CAPRI_CONFIG_DIR` (un essai : `open`
+     ne lui passerait pas ses lieux d'essai, et pourrait retrouver la Capri de l'utilisateur, du
+     même identifiant). **Ce relais est un contrat entre deux versions** (l'ancienne lance le
+     programme de la nouvelle : `capri update finish <app>`, la ligne `HANDOVER_READY`, puis
+     `HANDOVER_GO` et la fermeture du tube, dans `capri_core::bundle`) : il ne change pas, ou par
+     des ajouts que l'autre côté ignore. Une nouvelle qui ne prend pas le relais en 5 s laisse
+     l'ancienne en place, qui le dit.
+  7. **Ce qui se voit** : chaque étape se dit au-dessus de sa tête, à son tour
+     (`BannerView::announce`), jamais une commande de terminal sauf le cas du point 1 ; la ligne
+     du menu dit où en est l'installation. Le travail se fait hors du thread principal.
+  8. **Le journal** ne dit que les étapes et la conclusion : jamais une adresse signée, jamais une
+     identité, jamais la sortie de `codesign` ni de `security`.
+  Limite connue : pendant le remplacement (quelques millisecondes), un hook de Claude Code qui
+  appellerait `capri-hook` ne le trouverait pas.
 - Le chat : seules la personnalité et la conversation partent vers le modèle, et seulement vers
   l'adresse que l'utilisateur a choisie. Jamais l'activité de Claude Code, ni la ligne du miroir
   (`Chat::relay` ne l'ajoute pas à la conversation). Pas de proxy, aucune
@@ -691,7 +819,11 @@ une fausse commande `security` placée en tête du `PATH`.
   `trace` de ureq (`NoWireLog` dans `journal.rs`), qui écrivent les octets échangés sans masque :
   ni sur la sortie d'erreur, ni dans le fichier du journal.
 - **Le journal en fichier.** Seulement l'app à fenêtre (`journal::start`), jamais ses commandes de
-  terminal, jamais `capri-hook`. Où : `~/Library/Logs/Capri/capri.log` sur macOS,
+  terminal, jamais `capri-hook`. Une seule exception : le programme de fin d'une mise à jour
+  (`capri update finish`, `journal::start_finisher`), qui n'est pas une commande de terminal (l'app
+  le lance, sur un geste), et n'ouvre le fichier qu'une fois l'ancienne Capri sortie ; refusé ou
+  renonçant avant, il n'écrit rien (l'essai `journal_des_commandes` le lance hors d'une mise à
+  jour). Où : `~/Library/Logs/Capri/capri.log` sur macOS,
   `<dossier de Capri>/logs/capri.log` ailleurs, et `<CAPRI_CONFIG_DIR>/logs/capri.log` dès que
   `CAPRI_CONFIG_DIR` est posée, sur tous les systèmes (`capri_claude::places::log_file`) : les
   essais et les répétitions posent `CAPRI_CONFIG_DIR` et n'écrivent **jamais** dans le vrai
@@ -782,8 +914,10 @@ une fausse commande `security` placée en tête du `PATH`.
 - **⌘Q et ⌘H ne touchent jamais à Capri tant qu'un de ses panneaux est la fenêtre clé** : dans la
   fenêtre de réglages et dans le champ de saisie, ils ferment seulement ce panneau (comme ⌘W et
   Échap), parce que `EditKeysView` (`macos/edit_keys.rs`) les prend avant le menu par défaut de
-  winit (Quitter, Masquer). Capri ne se quitte que par « Quitter » dans son propre menu, et ne se
-  masque que par son propre raccourci. Tout nouveau panneau qui prend le clavier porte cette vue.
+  winit (Quitter, Masquer). Capri ne se quitte que par un geste dans son propre menu, « Quitter »,
+  ou « Redémarrer pour passer à la … » une fois une mise à jour prête (et seulement si la nouvelle
+  version a pris le relais), et ne se masque que par son propre raccourci. Tout nouveau panneau
+  qui prend le clavier porte cette vue.
 - Le `settings.json` de Claude Code appartient à l'utilisateur et à d'autres outils : toute
   modification passe par `capri_claude::settings` (réécriture à l'octet près, vérification) et
   par `hook_setup` (sauvegarde, écriture atomique). Jamais d'édition directe.
