@@ -33,7 +33,18 @@ fn terminal_commands_never_write_a_journal_file() {
     let _ = std::fs::remove_dir_all(&scratch.0);
     std::fs::create_dir_all(scratch.0.join("capri")).unwrap();
     std::fs::create_dir_all(scratch.0.join("claude")).unwrap();
-    for args in [&["hook", "status"][..], &["hook"], &["update", "check"], &["inconnue"]] {
+    // le programme de fin d'une mise à jour, lancé hors de la nouvelle app d'un dossier caché :
+    // refusé avant de rien dire au relais, et sans journal (il n'en ouvre un qu'une fois l'ancienne
+    // Capri sortie)
+    let finish = ["update", "finish", "/nulle-part/Capri.app"];
+    for args in [
+        &["hook", "status"][..],
+        &["hook"],
+        &["update", "check"],
+        &["update", "finish"],
+        &finish,
+        &["inconnue"],
+    ] {
         let output = capri(&scratch.0, args);
         let said =
             format!("{}{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));

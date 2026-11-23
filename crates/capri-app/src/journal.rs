@@ -44,6 +44,27 @@ pub const PREVIOUS_NAME: &str = "capri.old.log";
 /// fichier, qu'il ait pu s'ouvrir ou non ([`show`] regarde s'il est là), ou `None` si elle est
 /// inconnue.
 pub fn start() -> Option<PathBuf> {
+    start_as(&format!("Capri {} lancée", env!("CARGO_PKG_VERSION")))
+}
+
+/// Le journal du programme de fin d'une mise à jour (`capri update finish`), qui n'est pas une
+/// commande de terminal : lancé par l'app, sur le geste qui la redémarre, il écrit dans le même
+/// fichier qu'elle, et seulement **après sa sortie** (il ne l'ouvre qu'une fois qu'elle est
+/// sortie : jamais deux écrivains à la fois, sauf l'instant où il relance la nouvelle).
+#[cfg(target_os = "macos")]
+pub fn start_finisher() -> Option<PathBuf> {
+    start_as(&format!("programme de fin d'une mise à jour (version {})", env!("CARGO_PKG_VERSION")))
+}
+
+/// Le journal sur la sortie d'erreur seulement, sans fichier : la répétition d'une mise à jour
+/// (`capri update rehearse`, version de débogage), une commande de terminal.
+#[cfg(all(debug_assertions, target_os = "macos"))]
+pub fn start_without_file() {
+    init(None);
+}
+
+/// Lance le journal, sa première ligne disant `who` et la place du fichier.
+fn start_as(who: &str) -> Option<PathBuf> {
     let place = places::log_file(|name| std::env::var_os(name), System::CURRENT);
     let opened = place
         .as_ref()
@@ -53,7 +74,7 @@ pub fn start() -> Option<PathBuf> {
         Ok(file) => {
             init(Some(file));
             if let Ok(path) = &place {
-                log::info!("Capri {} lancée ; journal : {}", env!("CARGO_PKG_VERSION"), path.display());
+                log::info!("{who} ; journal : {}", path.display());
             }
         }
         Err(err) => {

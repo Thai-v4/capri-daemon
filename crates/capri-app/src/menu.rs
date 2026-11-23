@@ -38,7 +38,10 @@ pub enum Action {
     /// Lui permettre de regarder chaque jour s'il existe une version plus récente, ou le lui
     /// interdire.
     ToggleUpdates,
-    /// La ligne « Version … disponible », là seulement quand une version plus récente existe.
+    /// La ligne des mises à jour, là seulement quand une version plus récente existe : sur macOS,
+    /// « Installer la version … » (le geste qui l'installe), puis « Redémarrer pour passer à la … »
+    /// (celui qui finit) ; ailleurs, ou si elle ne s'installe pas depuis l'app, « Version …
+    /// disponible », qui dit pourquoi.
     UpdateLine,
     /// Ouvrir la fenêtre de réglages, ou la ramener devant.
     Settings,

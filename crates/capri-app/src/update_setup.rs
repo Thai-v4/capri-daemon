@@ -105,8 +105,16 @@ fn offline(why: &Offline) -> String {
     }
 }
 
-/// La commande `capri update <action>`. Rend le code de sortie du processus.
+/// La commande `capri update <action>`. Rend le code de sortie du processus. `finish` est réservée
+/// au programme de fin d'une mise à jour, que Capri lance elle-même (`update_finish`) : l'usage ne
+/// la cite pas.
 pub fn run_cli(args: &[String]) -> i32 {
+    match args.first().map(String::as_str) {
+        Some("finish") => return crate::update_finish::run_finish(&args[1..]),
+        #[cfg(debug_assertions)]
+        Some("rehearse") if args.len() == 1 => return crate::update_finish::run_rehearse(),
+        _ => {}
+    }
     if args.len() != 1 || args[0] != "check" {
         eprintln!(
             "usage : capri update check    la version installée, la dernière publiée, et si elle peut \

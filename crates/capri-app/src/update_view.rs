@@ -5,19 +5,27 @@
 //! (`App::handle_updates`).
 //!
 //! Quand regarder est décidé par `capri_chat::update::schedule`, quoi conclure par
-//! `capri_chat::update` ; lire le manifeste, par `capri_net::update::fetch`, et rien d'autre. Elle
-//! ne télécharge ni n'installe rien. Le journal ne dit que la conclusion (à jour, telle version
-//! disponible, vérification impossible et une cause courte), jamais une adresse.
+//! `capri_chat::update` ; lire le manifeste, par `capri_net::update::fetch`, et rien d'autre.
+//! D'elle-même, elle ne télécharge ni n'installe rien : le manifeste lu est rendu avec le verdict,
+//! pour le geste qui installera (`install_view`). Le journal ne dit que la conclusion (à jour,
+//! telle version disponible, vérification impossible et une cause courte), jamais une adresse.
 
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, TryRecvError, channel};
 use std::time::{Duration, Instant};
 
-use capri_chat::update::{self, Failure, Installed, Schedule, Source, Verdict, say};
+use capri_chat::update::{self, Failure, Installed, Manifest, Schedule, Source, Verdict, say};
+
+/// Ce que la veille a trouvé : le verdict, et le manifeste dont il vient.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Found {
+    pub verdict: Verdict,
+    pub manifest: Manifest,
+}
 
 /// La veille, tant que la case est cochée. La lâcher l'arrête (à son prochain réveil, ou à la fin
 /// d'une lecture en cours, bornée).
 pub struct UpdateWatch {
-    found: Receiver<Verdict>,
+    found: Receiver<Found>,
     /// Lâché avec elle : le thread l'apprend en attendant, et s'arrête.
     _stop: Sender<()>,
 }
@@ -69,8 +77,8 @@ impl UpdateWatch {
         }
     }
 
-    /// Le dernier verdict arrivé depuis l'appel précédent, s'il y en a un.
-    pub fn heard(&self) -> Option<Verdict> {
+    /// Ce qu'elle a trouvé en dernier depuis l'appel précédent, s'il y a du nouveau.
+    pub fn heard(&self) -> Option<Found> {
         let mut last = None;
         loop {
             match self.found.try_recv() {
@@ -97,19 +105,20 @@ fn watch(
     line: &mut impl Line,
     installed: &Installed,
     mut schedule: Schedule,
-    report: &mut dyn FnMut(Verdict) -> bool,
+    report: &mut dyn FnMut(Found) -> bool,
 ) {
     loop {
         if !line.wait(schedule.wait(line.elapsed())) {
             return;
         }
-        let concluded = line.fetch().and_then(|body| update::conclude(&body, installed));
+        let concluded = line.fetch().and_then(|body| Manifest::parse(&body).map_err(Failure::Manifest));
         let succeeded = concluded.is_ok();
         let next = schedule.checked(line.elapsed(), succeeded);
         match concluded {
-            Ok(verdict) => {
+            Ok(manifest) => {
+                let verdict = update::verdict(&manifest, installed);
                 log::info!("mises à jour : {}", say::for_log(&verdict, installed));
-                if !report(verdict) {
+                if !report(Found { verdict, manifest }) {
                     return;
                 }
             }
@@ -205,7 +214,7 @@ mod tests {
         let mut fake = Fake::new(vec![Ok(manifest("0.1.0")), Ok(manifest("0.2.0"))], 3 * schedule::EVERY);
         let mut found = Vec::new();
         watch(&mut fake, &HERE, Schedule::new(), &mut |verdict| {
-            found.push(verdict);
+            found.push(verdict.verdict);
             true
         });
         assert_eq!(fake.fetched_at[0], schedule::GRACE, "pas avant le délai de grâce");
@@ -231,7 +240,7 @@ mod tests {
         let mut fake = Fake::new(answers, 2 * schedule::EVERY);
         let mut found = Vec::new();
         watch(&mut fake, &HERE, Schedule::new(), &mut |verdict| {
-            found.push(verdict);
+            found.push(verdict.verdict);
             true
         });
         let gaps: Vec<Duration> = fake.fetched_at.windows(2).map(|pair| pair[1] - pair[0]).collect();
@@ -260,7 +269,7 @@ mod tests {
         let windows_only = Installed { target: Some("linux-x86_64"), ..HERE };
         let mut found = Vec::new();
         watch(&mut fake, &windows_only, Schedule::new(), &mut |verdict| {
-            found.push(verdict);
+            found.push(verdict.verdict);
             true
         });
         assert_eq!(
@@ -308,7 +317,7 @@ mod tests {
         };
         let mut found = Vec::new();
         watch(&mut half, &HERE, Schedule::new(), &mut |verdict| {
-            found.push(verdict);
+            found.push(verdict.verdict);
             true
         });
         assert_eq!(found, [Verdict::Installable { latest: Version::new(0, 4, 2) }]);

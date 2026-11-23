@@ -25,7 +25,11 @@
 //! aussi, borné (`journal`), que « Montrer le journal » de son menu montre dans le Finder.
 //! « Chercher les mises à jour » (cochée par défaut) lui fait regarder une fois par jour s'il
 //! existe une version plus récente, sur un thread à part (`update_view`), et le dire ;
-//! `capri update check` le fait sur demande. Elle ne télécharge ni n'installe rien.
+//! `capri update check` le fait sur demande. D'elle-même, elle ne télécharge ni n'installe rien :
+//! sur macOS, « Installer la version … » de son menu la télécharge, la vérifie et refait son app
+//! à côté de l'installée, hors du thread principal (`install_view`, `update_install`), et
+//! « Redémarrer pour passer à la … » la met en place, par le programme de fin de la nouvelle app
+//! (`capri update finish`, `update_finish`).
 
 mod assets;
 mod banner_view;
@@ -37,6 +41,8 @@ mod ear_setup;
 mod fake_server;
 mod figure;
 mod hook_setup;
+#[cfg(any(target_os = "macos", windows))]
+mod install_view;
 mod journal;
 mod keys;
 mod login_setup;
@@ -57,6 +63,9 @@ mod portraits;
 mod settings_view;
 mod size_setup;
 mod style_setup;
+mod update_finish;
+#[cfg(target_os = "macos")]
+mod update_install;
 mod update_setup;
 mod update_view;
 #[cfg(debug_assertions)]
@@ -113,6 +122,11 @@ fn main() -> Result<()> {
 
     // l'app à fenêtre seulement : ses commandes de terminal, plus haut, n'écrivent aucun fichier
     let journal_file = journal::start();
+    // les restes d'une mise à jour interrompue, à côté de son app, s'ils sont à nous
+    #[cfg(target_os = "macos")]
+    if let Some(app) = login_setup::this_app() {
+        update_install::clear_leftovers(std::path::Path::new(&app));
+    }
     let loaded = Instant::now();
     let sprite = assets::load_sprite()?;
     // ses planches debout et assise ; sans elles, son dessin d'avant
@@ -171,8 +185,12 @@ struct App {
     updates_enabled: bool,
     /// Regarder chaque jour s'il existe une version plus récente, case cochée : son thread.
     updates: Option<update_view::UpdateWatch>,
-    /// La version plus récente trouvée, s'il y en a une : la ligne de menu la rappelle.
-    update_found: Option<capri_chat::update::Verdict>,
+    /// La version plus récente trouvée, s'il y en a une, et son manifeste : la ligne de menu la
+    /// rappelle, et l'installe sur un geste.
+    update_found: Option<update_view::Found>,
+    /// L'installation d'une version, sur un geste : la préparation, l'app prête, le relais.
+    #[cfg(any(target_os = "macos", windows))]
+    install: install_view::InstallView,
     fatal: Option<anyhow::Error>,
 }
 
@@ -253,6 +271,14 @@ impl ApplicationHandler for App {
         self.handle_overlay(event_loop);
     }
 
+    /// La boucle s'arrête (« Quitter », la fenêtre fermée, ou le relais d'une mise à jour pris) :
+    /// une installation en cours est abandonnée, et il ne reste rien à côté de son app (sauf ce qui
+    /// vient d'être confié au programme de fin).
+    fn exiting(&mut self, _event_loop: &ActiveEventLoop) {
+        #[cfg(any(target_os = "macos", windows))]
+        self.install.abandon();
+    }
+
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
         self.handle_menus(event_loop);
         #[cfg(any(target_os = "macos", windows))]
@@ -260,6 +286,8 @@ impl ApplicationHandler for App {
         self.handle_hotkey();
         self.handle_ollama();
         self.handle_updates();
+        #[cfg(any(target_os = "macos", windows))]
+        self.handle_install(event_loop);
         self.handle_overlay(event_loop);
         if let Some(r) = self.running.as_mut() {
             if self.hidden {
@@ -536,7 +564,7 @@ impl App {
                     menu::Action::ToggleClaudeHook => self.toggle_claude_hook(),
                     menu::Action::ToggleLogin => self.toggle_login(),
                     menu::Action::ToggleUpdates => self.toggle_updates(),
-                    menu::Action::UpdateLine => self.explain_update(),
+                    menu::Action::UpdateLine => self.choose_update(),
                     menu::Action::Settings => self.open_settings(),
                     menu::Action::ShowJournal => self.show_journal(),
                     menu::Action::Quit => event_loop.exit(),
@@ -917,18 +945,42 @@ impl App {
     /// rappelle ; la même, trouvée de nouveau le lendemain, n'est pas redite.
     fn handle_updates(&mut self) {
         use capri_chat::update::say;
-        let Some(verdict) = self.updates.as_ref().and_then(update_view::UpdateWatch::heard) else { return };
-        let before = self.update_found.and_then(|found| found.newer());
-        let newer = verdict.newer();
-        self.update_found = newer.map(|_| verdict);
+        let Some(found) = self.updates.as_ref().and_then(update_view::UpdateWatch::heard) else { return };
+        let before = self.update_found.as_ref().and_then(|found| found.verdict.newer());
+        let newer = found.verdict.newer();
+        self.update_found = newer.map(|_| found);
         #[cfg(any(target_os = "macos", windows))]
-        if let Some(menus) = &self.menus {
-            menus.set_update_line(newer.map(say::menu_line).as_deref());
-        }
+        self.refresh_update_line();
         if let Some(version) = newer.filter(|&version| before != Some(version))
             && let Some(r) = self.running.as_mut()
         {
             r.banner.announce(say::available(version), capri_claude::Tone::Done);
+        }
+    }
+
+    /// La ligne des mises à jour de ses menus : la version trouvée, ou où en est son installation.
+    #[cfg(any(target_os = "macos", windows))]
+    fn refresh_update_line(&self) {
+        let text = self.install.menu_line(self.update_found.as_ref().map(|found| &found.verdict));
+        if let Some(menus) = &self.menus {
+            menus.set_update_line(text.as_deref());
+        }
+    }
+
+    /// Ce que l'installation d'une version a rapporté : dit au-dessus de sa tête, à son tour ; et,
+    /// le relais pris par le programme de fin, elle se quitte, par le même chemin que « Quitter ».
+    #[cfg(any(target_os = "macos", windows))]
+    fn handle_install(&mut self, event_loop: &ActiveEventLoop) {
+        let heard = self.install.pump();
+        if heard.said.is_empty() && !heard.quit {
+            return;
+        }
+        for (text, tone) in heard.said {
+            self.with_banner(|banner| banner.announce(text, tone));
+        }
+        self.refresh_update_line();
+        if heard.quit {
+            event_loop.exit();
         }
     }
 
@@ -960,9 +1012,9 @@ impl App {
                 self.updates_enabled = false;
                 self.updates = None;
                 self.update_found = None;
-                if let Some(menus) = &self.menus {
-                    menus.set_update_line(None);
-                }
+                // une installation en cours est arrêtée, et rien ne reste à côté de son app
+                self.install.abandon();
+                self.refresh_update_line();
                 self.with_banner(BannerView::forget_announcement);
                 (say::NOT_CHECKING, Tone::Done)
             }
@@ -973,13 +1025,15 @@ impl App {
         }
     }
 
-    /// La ligne « Version … disponible » de son menu : elle dit ce qu'il en est (installable plus
-    /// tard depuis l'app, ou pourquoi pas).
+    /// La ligne des mises à jour de son menu, choisie : le geste qui installe la version trouvée,
+    /// puis celui qui la redémarre pour finir ; ou ce qui l'empêche (`install_view`).
     #[cfg(any(target_os = "macos", windows))]
-    fn explain_update(&mut self) {
-        let Some(verdict) = self.update_found else { return };
-        let text = capri_chat::update::say::detail(&verdict);
-        self.with_banner(|banner| banner.announce(text, capri_claude::Tone::Done));
+    fn choose_update(&mut self) {
+        let said = self.install.chosen(self.update_found.as_ref());
+        self.refresh_update_line();
+        if let Some((text, tone)) = said {
+            self.with_banner(|banner| banner.announce(text, tone));
+        }
     }
 
     /// Branche Claude Code sur Capri, ou le débranche s'il l'est déjà.
