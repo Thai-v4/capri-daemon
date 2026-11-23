@@ -367,10 +367,17 @@ mod tests {
             serve(vec![Reply::Send("HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n".to_owned())]);
         let url = format!("http://{address}/latest.json");
         assert_eq!(fetch(&here(address.port()), &url, QUICK), Err(Failure::Status(204)));
-        // personne
+        // personne. Sous Windows, la connexion à un port de cette machine où personne n'écoute
+        // n'échoue pas tout de suite : la borne d'une seconde tombe d'abord (observé dans la CI le
+        // 23 novembre 2026, `TimedOut` au lieu d'`Unreachable`). Les deux disent « personne ».
         let port = TcpListener::bind("127.0.0.1:0").and_then(|l| l.local_addr()).expect("un port").port();
         let url = format!("http://127.0.0.1:{port}/latest.json");
-        assert_eq!(fetch(&here(port), &url, QUICK), Err(Failure::Unreachable));
+        let nobody = fetch(&here(port), &url, QUICK);
+        if cfg!(windows) {
+            assert!(matches!(nobody, Err(Failure::Unreachable | Failure::TimedOut)), "{nobody:?}");
+        } else {
+            assert_eq!(nobody, Err(Failure::Unreachable));
+        }
     }
 
     #[test]
