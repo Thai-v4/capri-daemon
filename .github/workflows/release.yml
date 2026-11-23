@@ -24,6 +24,9 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
+        with:
+          # le jeton ne reste pas dans la configuration de git : seul `gh` s'en sert, là où il faut
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
       - name: Build release
         run: cargo build --release --locked -p capri-app -p capri-hook
@@ -50,6 +53,9 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
+        with:
+          # le jeton ne reste pas dans la configuration de git : seul `gh` s'en sert, là où il faut
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
       - name: Build release
         run: cargo build --release --locked -p capri-app -p capri-hook
@@ -77,6 +83,9 @@ jobs:
       GH_REPO: ${{ github.repository }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          # le jeton ne reste pas dans la configuration de git : seul `gh` s'en sert, là où il faut
+          persist-credentials: false
       - uses: actions/download-artifact@v4
         with:
           path: parts
