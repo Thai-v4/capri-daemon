@@ -32,6 +32,10 @@
 /// Combien attendre que l'ancienne Capri soit sortie.
 #[cfg(target_os = "macos")]
 const FINISH_WAIT: std::time::Duration = std::time::Duration::from_secs(30);
+/// Combien attendre, ensuite, que le verrou du dossier caché soit libre : l'ancienne le tient
+/// jusqu'à sa sortie, et le système peut fermer le tube un instant avant de lâcher le verrou.
+#[cfg(target_os = "macos")]
+const LOCK_WAIT: std::time::Duration = std::time::Duration::from_secs(2);
 
 /// `capri update finish <app>`. Rend le code de sortie du processus.
 pub fn run_finish(args: &[String]) -> i32 {
@@ -68,7 +72,7 @@ mod mac {
 
     use capri_core::bundle::{self, HANDOVER_GO, HANDOVER_READY, Leftover, NEXT, PROGRAM};
 
-    use super::FINISH_WAIT;
+    use super::{FINISH_WAIT, LOCK_WAIT};
     use crate::update_install::{is_capri, open_marker};
 
     /// Où il est : le dossier de l'app installée, le dossier caché, la nouvelle app, l'installée.
@@ -218,7 +222,9 @@ mod mac {
     fn put_in_place(place: &Place) -> Result<(), Failed> {
         let marker =
             open_marker(&place.root).ok_or_else(|| failed("le dossier caché n'a pas notre marque", true))?;
-        marker.try_lock().map_err(|_| failed("le dossier caché est tenu par un autre", true))?;
+        if !lock_within(&marker, LOCK_WAIT) {
+            return Err(failed("le dossier caché est tenu par un autre", true));
+        }
         log::info!("mise à jour : dossier caché verrouillé");
         let discard = |why: &'static str, relaunch_installed: bool| {
             let _ = std::fs::remove_dir_all(&place.root);
@@ -276,6 +282,23 @@ mod mac {
         let _ =
             std::fs::File::open(&place.app).and_then(|app| app.set_modified(std::time::SystemTime::now()));
         Ok(())
+    }
+
+    /// Verrouille la marque du dossier caché, en réessayant au plus `wait` : l'ancienne Capri
+    /// tient ce verrou jusqu'à sa sortie, et le tube qui annonce sa sortie peut se fermer un
+    /// instant avant que le système ne lâche le verrou. Sans cela, une mise à jour prête serait
+    /// abandonnée pour quelques millisecondes.
+    fn lock_within(marker: &std::fs::File, wait: std::time::Duration) -> bool {
+        let deadline = std::time::Instant::now() + wait;
+        loop {
+            if marker.try_lock().is_ok() {
+                return true;
+            }
+            if std::time::Instant::now() >= deadline {
+                return false;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
     }
 
     /// Relance l'app par `/usr/bin/open`, sauf pendant un essai.
@@ -381,5 +404,37 @@ mod mac {
         }
         println!("Relais pris : elle sort, le programme de fin finit.");
         0
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use std::time::{Duration, Instant};
+
+        use super::lock_within;
+
+        /// Le verrou tenu par un autre (ici, une autre ouverture du même fichier, comme celle de
+        /// l'ancienne Capri) : attendu, pris dès qu'il est lâché ; jamais lâché, on renonce au
+        /// bout du délai, pas avant.
+        #[test]
+        fn the_lock_is_waited_for_then_given_up() {
+            let directory = std::env::temp_dir().join(format!("capri-test-verrou-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&directory);
+            std::fs::create_dir_all(&directory).expect("le dossier d'essai");
+            let path = directory.join("capri-update");
+            std::fs::write(&path, "marque\n").expect("la marque");
+            let held = std::fs::File::open(&path).expect("ouverte");
+            held.try_lock().expect("tenue");
+            let ours = std::fs::File::open(&path).expect("ouverte de nouveau");
+            let started = Instant::now();
+            assert!(!lock_within(&ours, Duration::from_millis(150)), "tenue par l'autre : on renonce");
+            assert!(started.elapsed() >= Duration::from_millis(150), "pas avant le délai");
+            let release = std::thread::spawn(move || {
+                std::thread::sleep(Duration::from_millis(120));
+                drop(held);
+            });
+            assert!(lock_within(&ours, Duration::from_secs(5)), "lâchée : on la prend");
+            release.join().expect("le thread qui la lâche");
+            let _ = std::fs::remove_dir_all(&directory);
+        }
     }
 }
