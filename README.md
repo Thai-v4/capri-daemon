@@ -971,6 +971,32 @@ journal, voir « Son journal ») : `RUST_LOG=debug cargo run --release` ; pour c
 fait le hook :
 `CAPRI_HOOK_DEBUG=1` (il écrit alors une ligne sur sa sortie d'erreur).
 
+## Publier une version
+
+Une version est un tag `vMAJEUR.MINEUR.CORRECTIF` (chiffres seulement) égal à `version` de
+`Cargo.toml` ; le workflow `.github/workflows/release.yml` échoue sinon. Pour la publier : monter
+`version` dans `Cargo.toml` et le commiter, poser le tag (`git tag v0.2.0`), puis le pousser
+(`git push origin v0.2.0`).
+
+Le workflow construit les deux programmes sur macOS (arm64) et sous Windows (x86_64), puis un job
+séparé, le seul à pouvoir écrire dans le dépôt, crée la version GitHub avec six fichiers :
+`capri-macos-arm64`, `capri-hook-macos-arm64`, `capri-windows-x86_64.exe`,
+`capri-hook-windows-x86_64.exe`, `Info.plist` (celui de `tools/macos/`, `@VERSION@` remplacé) et
+`latest.json`, le manifeste que l'app lira à
+`https://github.com/<propriétaire>/<dépôt>/releases/latest/download/latest.json` (format, version,
+numéro de bundle, et pour chaque fichier son nom, sa taille et son empreinte SHA-256). Il est
+fabriqué par `tools/release-manifest.sh`. La version est créée en brouillon puis publiée, et le
+brouillon est retiré si quelque chose échoue en route ; un tag qui n'est pas en chiffres seulement
+(`v1.0.0-rc1`) est refusé, jamais publié comme préversion.
+
+Il ne publie **jamais** `Capri.app`, ni images, ni icône, et ne signe rien (aucun certificat ni
+aucune clé n'y entre) : les images ne se distribuent pas.
+
+Pour tout essayer sans rien publier : lancer le workflow à la main (« Run workflow » sur
+l'onglet Actions, ou `gh workflow run release.yml`). C'est une répétition : tout est construit et
+le manifeste fabriqué, mais aucune version n'est créée ; les six fichiers sont déposés comme
+artefact du workflow et le manifeste est recopié dans le résumé du job.
+
 ## Organisation
 
 ```

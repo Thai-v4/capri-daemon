@@ -553,6 +553,93 @@ mod tests {
         }
     }
 
+    /// Les lignes d'un script ou d'un workflow, sans les commentaires ni les blancs.
+    fn code_lines(text: &str) -> Vec<&str> {
+        text.lines().map(str::trim).filter(|line| !line.is_empty() && !line.starts_with('#')).collect()
+    }
+
+    /// La CI et la publication ne fabriquent, ne signent ni ne joignent jamais `Capri.app`, ses
+    /// images ou son icône : aucun de leurs gestes ne nomme ce qui les porterait.
+    #[test]
+    fn the_workflows_never_touch_the_app_its_images_or_a_signature() {
+        let ci = include_str!("../../../.github/workflows/ci.yml");
+        let release = include_str!("../../../.github/workflows/release.yml");
+        for (name, text) in [("ci.yml", ci), ("release.yml", release)] {
+            for line in code_lines(text) {
+                for banned in [
+                    "fetch-assets",
+                    "bundle-macos",
+                    "install-macos",
+                    "codesign",
+                    "assets/",
+                    "Capri.app",
+                    ".icns",
+                    "secrets.",
+                ] {
+                    assert!(!line.contains(banned), "{name} nomme {banned} : {line}");
+                }
+            }
+        }
+        // seul le job de publication peut écrire dans le dépôt
+        let writes: Vec<&str> =
+            code_lines(release).into_iter().filter(|line| line.contains("contents: write")).collect();
+        assert_eq!(writes.len(), 1, "{writes:?}");
+        assert!(code_lines(ci).iter().all(|line| !line.contains("write")), "ci.yml n'écrit nulle part");
+    }
+
+    /// Le contrat de la publication : les noms de fichiers de la version sont ceux du workflow
+    /// et ceux du script du manifeste, qui écrit aussi les champs que l'app lira.
+    #[test]
+    fn the_release_files_are_named_alike_by_the_workflow_and_the_manifest_script() {
+        let release = include_str!("../../../.github/workflows/release.yml");
+        let script = include_str!("../../../tools/release-manifest.sh");
+        let workflow = code_lines(release).join("\n");
+        let manifest = code_lines(script).join("\n");
+        let assets = [
+            "capri-macos-arm64",
+            "capri-hook-macos-arm64",
+            "capri-windows-x86_64.exe",
+            "capri-hook-windows-x86_64.exe",
+            "Info.plist",
+            "latest.json",
+        ];
+        for asset in assets {
+            assert!(workflow.contains(asset), "release.yml ne nomme pas {asset}");
+        }
+        // le manifeste décrit les cinq fichiers, sous leur nom installé
+        for (name, asset) in [
+            ("capri", "capri-macos-arm64"),
+            ("capri-hook", "capri-hook-macos-arm64"),
+            ("Info.plist", "Info.plist"),
+            ("capri.exe", "capri-windows-x86_64.exe"),
+            ("capri-hook.exe", "capri-hook-windows-x86_64.exe"),
+        ] {
+            assert!(manifest.contains(&format!("file_entry {name} {asset}\n")), "{name} {asset}");
+        }
+        for field in [
+            "\"format\"",
+            "\"version\"",
+            "\"bundle\"",
+            "\"targets\"",
+            "\"macos-arm64\"",
+            "\"windows-x86_64\"",
+            "\"files\"",
+            "\"name\"",
+            "\"asset\"",
+            "\"size\"",
+            "\"sha256\"",
+        ] {
+            assert!(manifest.contains(field), "le script n'écrit pas {field}");
+        }
+        // le manifeste est fabriqué par le script, avec le numéro de bundle du dépôt
+        assert!(workflow.contains("tools/release-manifest.sh release"));
+        assert!(workflow.contains("tools/macos/bundle-format"));
+        // une version se publie en brouillon complet, jamais comme préversion
+        assert!(workflow.contains("--draft"));
+        assert!(workflow.contains("--prerelease=false"));
+        assert!(!workflow.contains("--prerelease\n") && !workflow.contains("--prerelease "));
+    }
+
     mod standing {
         use std::path::Path;
 

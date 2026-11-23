@@ -458,6 +458,15 @@ une fausse commande `security` placée en tête du `PATH`.
   script, ni documentation, ni essai, ni message de commit) : le script les trouve dans le
   trousseau, ou les reçoit par `CAPRI_SIGN_IDENTITY`. Ni certificat ni clé dans le dépôt, ni dans
   la CI.
+  Le workflow de publication (`.github/workflows/release.yml`, déclenché par un tag `v*.*.*`)
+  obéit à la même règle et à celle de la signature : il ne nomme ni `fetch-assets`, ni
+  `bundle-macos`, ni `install-macos`, ni `codesign`, ni `assets/`, ne signe rien, ne reçoit ni
+  certificat ni clé, et ne joint à la version que les deux binaires de chaque système,
+  `Info.plist` et `latest.json`. Un essai de `assets.rs` le vérifie, sur lui et sur `ci.yml`.
+- `tools/release-manifest.sh <dossier> <version> <format> <bundle>` écrit `latest.json` sur la
+  sortie standard (bash 3.2 et Ubuntu, `shasum` ou `sha256sum`, pas de `jq`, aucun réseau) ; le
+  contrat du manifeste (noms des fichiers de la version, champs) est celui que lit l'app, et le
+  workflow de publication l'appelle. `tools/macos/bundle-format` en donne le numéro de bundle.
 - **`tools/install-macos.sh`** ne quitte, ne tue ni ne signale **jamais** Capri ni aucun processus :
   il refuse et dit de la quitter par son menu. Il ne demande jamais `sudo`. Il ne touche au
   `settings.json` de Claude Code **que par `capri hook install --if-plugged`** de l'app installée,

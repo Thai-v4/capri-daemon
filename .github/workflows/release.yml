@@ -1,0 +1,156 @@
+name: Release
+
+# Publie une version : les deux programmes (macOS arm64, Windows x86_64), l'Info.plist et le
+# manifeste `latest.json` que l'app lira. Un tag `vMAJEUR.MINEUR.CORRECTIF` égal à `version` de
+# Cargo.toml. Jamais Capri.app, jamais d'images ni d'icône (elles ne se distribuent pas, voir
+# CREDITS.md), et rien n'est signé : aucun certificat ni aucune clé ne passe par ici.
+#
+# `workflow_dispatch` est une répétition : tout est construit et le manifeste fabriqué, mais aucune
+# version n'est créée ; les fichiers sont déposés comme artefact et le manifeste est recopié dans
+# le résumé du job.
+
+on:
+  push:
+    tags: ["v*.*.*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-macos:
+    # macos-latest est arm64 (documenté par GitHub ; le job le vérifie quand même).
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build release
+        run: cargo build --release --locked -p capri-app -p capri-hook
+      - name: Vérifier l'architecture et nommer les fichiers
+        run: |
+          for program in capri capri-hook; do
+            archs="$(lipo -archs "target/release/$program")"
+            if [ "$archs" != "arm64" ]; then
+              echo "$program n'est pas un binaire arm64 : $archs" >&2
+              exit 1
+            fi
+          done
+          mkdir dist
+          cp target/release/capri dist/capri-macos-arm64
+          cp target/release/capri-hook dist/capri-hook-macos-arm64
+      - uses: actions/upload-artifact@v4
+        with:
+          name: build-macos
+          path: dist/
+          if-no-files-found: error
+
+  build-windows:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build release
+        run: cargo build --release --locked -p capri-app -p capri-hook
+      - name: Nommer les fichiers
+        shell: bash
+        run: |
+          mkdir dist
+          cp target/release/capri.exe dist/capri-windows-x86_64.exe
+          cp target/release/capri-hook.exe dist/capri-hook-windows-x86_64.exe
+      - uses: actions/upload-artifact@v4
+        with:
+          name: build-windows
+          path: dist/
+          if-no-files-found: error
+
+  publish:
+    needs: [build-macos, build-windows]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Le seul job qui écrit dans le dépôt.
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: parts
+      - name: Rassembler les fichiers
+        run: |
+          mkdir release
+          cp parts/build-macos/* parts/build-windows/* release/
+      - name: Lire la version
+        id: version
+        run: |
+          # Même lecture que tools/bundle-macos.sh.
+          VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)"
+          case "$VERSION" in
+            [0-9]*.[0-9]*.[0-9]*) ;;
+            *) echo "version illisible dans Cargo.toml : « $VERSION »" >&2; exit 1 ;;
+          esac
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+      - name: Vérifier que le tag est la version
+        if: github.event_name == 'push'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          # Chiffres seulement : jamais une préversion (v1.0.0-rc1) comme version ordinaire.
+          if ! [[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "tag non conforme : $GITHUB_REF_NAME" >&2
+            exit 1
+          fi
+          if [ "$GITHUB_REF_NAME" != "v$VERSION" ]; then
+            echo "le tag $GITHUB_REF_NAME diffère de la version de Cargo.toml (v$VERSION)" >&2
+            exit 1
+          fi
+      - name: Rendre Info.plist
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: sed "s/@VERSION@/$VERSION/g" tools/macos/Info.plist > release/Info.plist
+      - name: Fabriquer latest.json
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          BUNDLE="$(tr -d ' \r\n' < tools/macos/bundle-format)"
+          tools/release-manifest.sh release "$VERSION" 1 "$BUNDLE" > latest.json
+          if [ "$(wc -c < latest.json)" -ge 65536 ]; then
+            echo "latest.json dépasse 64 Kio" >&2
+            exit 1
+          fi
+          cp latest.json release/latest.json
+          {
+            echo '### latest.json'
+            echo '```json'
+            cat latest.json
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Répétition, fichiers déposés sans rien publier
+        if: github.event_name != 'push'
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-files
+          path: release/
+          if-no-files-found: error
+      # Créée en brouillon avec ses six fichiers, puis publiée : « latest » de GitHub ne la voit
+      # qu'entière. En cas d'échec, le brouillon est retiré (jamais le tag, jamais une version
+      # déjà publiée).
+      - name: Créer la version
+        if: github.event_name == 'push'
+        run: |
+          gh release create "$GITHUB_REF_NAME" --verify-tag --draft \
+            --title "$GITHUB_REF_NAME" --generate-notes \
+            release/capri-macos-arm64 release/capri-hook-macos-arm64 \
+            release/capri-windows-x86_64.exe release/capri-hook-windows-x86_64.exe \
+            release/Info.plist release/latest.json
+          gh release edit "$GITHUB_REF_NAME" --draft=false --prerelease=false --latest
+      - name: Retirer le brouillon en cas d'échec
+        if: github.event_name == 'push' && failure()
+        run: |
+          if [ "$(gh release view "$GITHUB_REF_NAME" --json isDraft --jq .isDraft 2> /dev/null)" = "true" ]; then
+            gh release delete "$GITHUB_REF_NAME" --yes
+          fi
