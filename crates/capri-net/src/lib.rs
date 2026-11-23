@@ -28,8 +28,16 @@
 //! Il sait aussi frapper à une adresse **de cette machine seulement** ([`knock`]) : une connexion
 //! ouverte puis fermée, sans rien envoyer, pour savoir si Ollama tourne avant de le lancer.
 //!
+//! Et lire le manifeste de la dernière version publiée de Capri ([`update::fetch`]) : une entrée à
+//! part, qui n'a rien de la conversation (ni clé, ni [`Ask`], ni corps). C'est la seule qui suit
+//! des redirections, elle-même, une à une, et seulement celles que permet la règle qu'on lui passe
+//! (`capri_chat::update::Route` : GitHub en vrai, cette machine dans les essais). Les garanties
+//! ci-dessus valent pour la conversation ; les siennes sont en tête de [`update`].
+//!
 //! Ailleurs (Linux), pas de TLS du tout : il y faudrait OpenSSL. Une adresse en `https://` y est
 //! refusée avec un message clair, avant toute connexion.
+
+pub mod update;
 
 use std::io::Read;
 use std::sync::atomic::{AtomicBool, Ordering};
