@@ -23,7 +23,11 @@
 //! - [`startup`] : se lancer à l'ouverture de session avec Ollama, quand c'est son cerveau sur
 //!   cette machine : faut-il le lancer, où le chercher, ce qu'elle en dit ;
 //! - [`echo`] : le cerveau de secours, qui répète ce qu'on lui dit tant qu'aucun modèle n'est
-//!   choisi.
+//!   choisi ;
+//! - [`update`] : savoir qu'une version plus récente de Capri existe : la version, la lecture
+//!   stricte du manifeste, le verdict, la règle des redirections, quand regarder, et ce qu'elle en
+//!   dit. Ici parce que `serde_json` y est déjà, et que `capri-net`, qui ne dépend que de ce crate,
+//!   doit recevoir la règle des redirections en paramètre.
 //!
 //! Se connecter est le travail de `capri-net`, le seul crate qui parle au réseau.
 
@@ -43,6 +47,7 @@ pub mod reply;
 pub mod settings;
 pub mod sse;
 pub mod startup;
+pub mod update;
 pub mod voice;
 pub mod wire;
 
