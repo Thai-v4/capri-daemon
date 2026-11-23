@@ -924,11 +924,14 @@ fichier de journal (au niveau `trace`) ne contiennent l'adresse signée.
 
 Le chemin réel jusqu'à GitHub (qu'aucun essai ne contacte) a été essayé le 23 novembre 2026,
 avec l'accord de l'utilisateur : `capri update check` de l'app installée, en 0.1.0, a lu le
-manifeste de la 0.2.0 publiée, par les vraies redirections. Pas encore vérifié : la veille de
-l'app elle-même contre GitHub (une minute après son lancement) ; **ce qui se voit** :
-la phrase au-dessus de sa tête, la ligne glissée sous la case dans les deux menus et ce qu'elle
-dit quand on la choisit, la case décochée puis recochée ; **sous Windows**, rien n'a tourné
-ailleurs que dans la CI. Ailleurs (Linux), pas de `https` : elle ne regarde pas.
+manifeste de la 0.2.0 publiée, par les vraies redirections. Le même jour, la veille de l'app
+elle-même : lancée depuis `/Applications`, son journal dit « version 0.2.0 disponible » une
+minute après son lancement, puis, une minute après sa mise à jour, « à jour (installée 0.2.0,
+dernière publiée 0.2.0) » ; la ligne glissée sous la case a servi à l'installer (voir plus bas).
+Pas encore vérifié : **ce qui se voit**, point par point (la phrase au-dessus de sa tête, la
+ligne dans les deux menus, la case décochée puis recochée : rapporté dans l'ensemble
+seulement) ; **sous Windows**, rien n'a tourné ailleurs que dans la CI. Ailleurs (Linux), pas de
+`https` : elle ne regarde pas.
 
 ## Installer une version, sur un geste
 
@@ -1000,13 +1003,27 @@ novembre 2026 avec l'identité « Developer ID Application » de l'utilisateur :
 signée par la même identité, mise en place et vérifiée (et la fenêtre du trousseau est apparue une
 fois).
 
-Pas encore vérifié : **le vrai chemin jusqu'à GitHub** (la 0.2.0 est publiée depuis le 23
-novembre 2026, et son manifeste lu par l'app ; ses fichiers n'ont pas encore été téléchargés par
-elle) ; **la relance par
-`open`** (pendant un essai, le programme de fin la saute : `open` ne lui passerait pas ses lieux
-d'essai, et pourrait réveiller ta Capri, du même identifiant) ; **ce qui se voit** (la ligne du
-menu à chaque étape, les phrases à leur tour, Capri qui disparaît et revient) ; **sous Windows**,
-la ligne n'y est qu'une information, essayée seulement dans la CI.
+**Essayé pour de bon le 23 novembre 2026**, par l'utilisateur, sur son Mac, de la 0.1.0 installée
+dans `/Applications` (signée par son identité « Developer ID Application ») à la 0.2.0 publiée sur
+GitHub. Son journal le raconte : l'installation demandée par la ligne du menu ; les trois fichiers
+reçus de GitHub, chacun à la taille du manifeste et son empreinte vérifiée, en une seconde ; l'app
+refaite à côté, « signée par la même identité que l'app installée » ; douze secondes plus tard,
+le redémarrage demandé, et dans la même seconde le programme de fin qui prend le relais,
+l'ancienne sortie, le dossier caché verrouillé, l'installation précédente mise de côté, la
+nouvelle à sa place et sa signature vérifiée, la relance par `open`, et « Capri 0.2.0 lancée ».
+Regardé ensuite : `/Applications/Capri.app` est en 0.2.0, `codesign --verify --strict` passe, elle
+est signée par une identité et sans horodatage, et rien n'est resté à côté d'elle. D'après
+l'utilisateur : aucune fenêtre du trousseau, elle est revenue toute seule, et macOS n'a pas
+redemandé le micro (le journal ne dit pas si le micro a été ouvert depuis : une écoute réussie
+n'y écrit rien).
+
+Pas encore vérifié : **ce qui se voit**, étape par étape (les phrases à leur tour, la ligne du
+menu pendant l'installation : rapporté dans l'ensemble seulement) ; **un échec en vrai** (réseau
+coupé pendant le téléchargement, relais manqué : essayés contre un faux serveur et un faux
+système seulement) ; **une app « ad hoc » mise à jour pour de bon**, et une identité qui n'est
+plus dans le trousseau ; **sous Windows**, la ligne n'y est qu'une information, essayée seulement
+dans la CI. Pendant un essai, le programme de fin saute toujours la relance : `open` ne lui
+passerait pas ses lieux d'essai, et pourrait réveiller ta Capri, du même identifiant.
 
 ## Installer et lancer
 
@@ -1076,8 +1093,9 @@ reconnaissance vocale) à cette signature :
   Apple, rangé dans ton trousseau avec sa clé), `bundle-macos.sh` la prend de lui-même s'il n'y
   en a qu'une de valide. Ce que macOS retient de l'app (`codesign -d -r-` le montre) est alors
   son identifiant et ton équipe, qui ne changent pas d'une fabrication à l'autre. Il redemande
-  ses permissions une fois, au passage d'une signature à l'autre ; qu'il ne les redemande plus
-  ensuite n'a pas encore été vérifié ;
+  ses permissions une fois, au passage d'une signature à l'autre ; ensuite, d'après
+  l'utilisateur, il n'a pas redemandé le micro après la mise à jour vers la 0.2.0, signée par la
+  même identité (le 23 novembre 2026 ; rapporté, pas mesuré) ;
 - **`CAPRI_SIGN_IDENTITY`** choisit : un nom ou une empreinte que `codesign` connaît
   (indispensable s'il y a plusieurs identités « Developer ID Application » : le script s'arrête
   plutôt que de choisir), ou `-` pour rester « ad hoc ». `install-macos.sh` la transmet.
@@ -2014,9 +2032,13 @@ Plusieurs identités (fausse commande `security`) : le script s'arrête avant de
 liste. Le faux `settings.json` est identique à l'octet après chaque essai. Le même jour, installée
 pour de bon dans `/Applications`, signée avec cette identité (elle était « ad hoc ») ; le vrai
 `settings.json`, comparé à sa sauvegarde, a les mêmes réglages à l'ordre des hooks près.
-**Pas vérifié** : que macOS ne redemande plus le micro et la reconnaissance vocale d'une
-installation à l'autre (le point 3 de la liste ci-dessous) ; une identité expirée ; un refus dans
-la fenêtre du trousseau ; l'app lancée depuis cette installation.
+Lancée depuis cette installation le même jour, puis mise à jour par elle-même vers la 0.2.0
+(voir « Installer une version, sur un geste ») : d'après l'utilisateur, macOS n'a pas redemandé
+le micro ensuite (le point 3 de la liste ci-dessous, rapporté dans l'ensemble : le journal ne dit
+pas si le micro a été ouvert depuis).
+**Pas vérifié** : la reconnaissance vocale, à part du micro ; d'une installation par le script à
+la suivante (seule la mise à jour par l'app l'a été) ; une identité expirée ; un refus dans la
+fenêtre du trousseau.
 
 **L'app installée : à vérifier à la main** (le 12 novembre 2026, installée pour de bon dans
 `/Applications` sur le Mac de l'utilisateur : le point 1 ; du point 2, la ligne du journal, pas
@@ -2145,10 +2167,11 @@ Points à surveiller :
    dossier temporaire (voir « État de validation »). Des mises à jour à la manière de Droppy, en
    trois lots : publier les versions (le workflow de publication, écrit le 23 novembre 2026 ; la
    0.2.0 publiée par lui le même jour) ; savoir qu'une version existe (écrit et répété le même
-   jour contre un faux serveur de cette machine, puis contre GitHub par `capri update check` ;
-   pas encore regardé à l'écran) ; la télécharger, la vérifier et l'installer sur un geste (écrit
-   le même jour, macOS seulement, répété de bout en bout dans un dossier temporaire ; pas encore
-   essayé contre GitHub ni regardé à l'écran). Reste aussi : un installeur.
+   jour contre un faux serveur de cette machine, puis contre GitHub par `capri update check` et
+   par l'app elle-même) ; la télécharger, la vérifier et l'installer sur un geste (écrit le même
+   jour, macOS seulement, répété de bout en bout dans un dossier temporaire, puis essayé pour de
+   bon : la 0.1.0 installée s'est mise à jour vers la 0.2.0 depuis GitHub et est revenue seule ;
+   ce qui se voit rapporté dans l'ensemble, pas étape par étape). Reste aussi : un installeur.
    Pas de notarisation tant que l'app emporte ses images : elle les enverrait chez Apple.
 
 ## Licence

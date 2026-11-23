@@ -29,9 +29,11 @@ installée pour de bon le 12 novembre 2026 : images lues dans l'app, inscription
 session réparée, hook de Claude Code qui suit ; ni ce qui se voit, ni le micro, ni une vraie
 ouverture de session vérifiés depuis). Sa signature : « ad hoc » par défaut, ou par l'identité
 « Developer ID Application » du trousseau s'il y en a une (écrit, et essayé le 23 novembre 2026
-vers un dossier temporaire avec la vraie identité de l'utilisateur ; que macOS ne redemande plus
-le micro d'une installation à l'autre n'est pas encore vérifié). Pas de notarisation ; ses mises
-à jour sont en cours (voir plus bas).
+vers un dossier temporaire avec la vraie identité de l'utilisateur, puis installée ainsi dans
+`/Applications` ; le même jour, d'après l'utilisateur, macOS n'a pas redemandé le micro après la
+mise à jour vers la 0.2.0, signée par la même identité : rapporté dans l'ensemble, le journal ne
+disant pas si le micro a été ouvert depuis, une écoute réussie n'y écrivant rien). Pas de
+notarisation ; ses mises à jour sont écrites, et essayées pour de bon sur macOS (voir plus bas).
 Son journal, lancée comme app à fenêtre, s'écrit aussi dans un fichier borné
 (`~/Library/Logs/Capri/capri.log` sur macOS), que « Montrer le journal » de son menu montre dans
 le Finder (écrit et testé sans écran le 15 novembre 2026 ; le même jour, l'app réinstallée et
@@ -47,16 +49,25 @@ empreintes du manifeste contrôlées à part). Le deuxième est écrit et testé
 mises à jour » de son menu (cochée par défaut), une vérification par jour sur un thread à elle,
 ce qu'elle en dit, et `capri update check` ; répété dans la vraie app contre un faux serveur de
 cette machine, puis, avec l'accord de l'utilisateur, contre GitHub par `capri update check` de
-l'app installée (la 0.2.0 trouvée depuis la 0.1.0, par les vraies redirections) ; ni regardé à
-l'écran, ni exécuté sous Windows. Le
+l'app installée (la 0.2.0 trouvée depuis la 0.1.0, par les vraies redirections), puis par la
+veille de l'app elle-même (son journal : « version 0.2.0 disponible » une minute après son
+lancement, et « à jour » une minute après la mise à jour) ; pas exécuté sous Windows. Le
 troisième est écrit et testé sans écran le 23 novembre 2026 (macOS seulement) : sur un geste, la
 ligne « Installer la version … » de son menu la télécharge, la vérifie, refait son app à côté de
 l'installée et la signe comme elle ; « Redémarrer pour passer à la … » la met en place par le
 programme de fin de la nouvelle app. Répété de bout en bout depuis une `Capri.app` d'essai signée
 « ad hoc », contre un faux serveur de cette machine, puis, le même jour, depuis la même app
 d'essai signée par la vraie identité de l'utilisateur (la nouvelle signée par elle aussi, son nom
-écrit nulle part) ; jamais contre GitHub, ni regardé à l'écran, et la relance par `open` n'est pas
-essayée (voir plus bas).
+écrit nulle part). Puis essayé pour de bon le même jour, par l'utilisateur, sur son Mac : la Capri
+installée en 0.1.0 dans `/Applications`, signée par son identité, a téléchargé la 0.2.0 de GitHub
+sur son geste (les trois fichiers, tailles et empreintes vérifiées, en une seconde), l'a refaite
+et signée par la même identité, puis, au redémarrage, le programme de fin l'a mise en place et
+relancée par `open` (tout le relais dans la même seconde, d'après son journal) ; ensuite
+`/Applications/Capri.app` est en 0.2.0, sa signature se vérifie, rien n'est resté à côté. D'après
+l'utilisateur : aucune fenêtre du trousseau, elle est revenue seule, macOS n'a pas redemandé le
+micro ; ce qui se voit est rapporté dans l'ensemble, pas étape par étape. Pas essayé : un échec
+en vrai (réseau coupé, relais manqué), une app « ad hoc » mise à jour pour de bon, une identité
+qui n'est plus dans le trousseau.
 
 ## Architecture : où va quoi
 
