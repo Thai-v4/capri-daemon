@@ -26,6 +26,21 @@
 //! pointe du pied) vaut la hauteur choisie, et un pixel de ses planches assises vaut
 //! `1 / STAND_OVER_PERCH` pixel de ses planches debout ([`stand::perch_scale`]).
 //!
+//! **Apparaître et s'effacer** ([`life`]) : au lancement ([`Look::enter`]), et quand on la montre
+//! après l'avoir cachée ([`Look::appear`]), elle se matérialise ([`life::arriving`]) à la place de
+//! son image debout, ses pieds sur ses pieds et à la même taille ([`life::over_stand`]), sans
+//! flotter (son tour s'arrête : `Capri::still`) ; puis sa boucle, par une coupe franche (ce n'est
+//! pas le même dessin, voir [`life`]), et son flottement reprend là où il s'était arrêté. Quand on la
+//! cache ([`Look::vanish`]), elle s'efface ([`life::leaving`]), son tour arrêté de même, puis il
+//! n'y a plus rien à montrer ([`Look::is_gone`]). Assise (avec ses planches assises), elle s'efface
+//! de son bord ([`sheets::leaving`]) et, toujours posée quand on la montre, y réapparaît
+//! ([`sheets::arriving`]) ; sa fenêtre partie entre-temps, elle se matérialise debout. Cachée ou
+//! montrée au milieu de l'une de ces suites, elle revient sur ses pas : la même suite, à l'envers,
+//! du dessin où elle en est (pas de saut). Attrapée pendant qu'elle apparaît, elle est debout tout
+//! de suite, là où elle apparaissait ; pendant qu'elle s'efface, rien ne l'attrape. Tant qu'une de
+//! ces suites dure, elle n'est pas libre ([`Look::is_here`]). Sans ses planches de vie, ou sans sa
+//! pose debout sur laquelle elles s'alignent, elle apparaît et disparaît d'un coup, comme avant.
+//!
 //! **Le temps** : l'image d'animation à 24 i/s ; tous ses dessins sont tenus deux images (12 par
 //! seconde). Rien n'est tiré au hasard : la même image donne toujours le même dessin.
 
@@ -34,7 +49,7 @@ use crate::body::Capri;
 use crate::geom::{Rect, Vec2};
 use crate::mask::AlphaMask;
 use crate::perch::{FOOT, Reach, Stature};
-use crate::sheets::{self, stand};
+use crate::sheets::{self, life, stand};
 
 /// Un tour de sa boucle, debout comme assise : 60 images, 2,5 s.
 pub const TOUR: u64 = 60;
@@ -57,6 +72,9 @@ pub enum Drawing {
     Stand(stand::Cell),
     /// Une case de sa pose assise.
     Perch(sheets::Cell),
+    /// Une case de ses planches de vie (elle apparaît, elle s'efface), sur la toile de sa boucle
+    /// debout.
+    Life(life::Cell),
 }
 
 /// Ce qu'on dessine à une image donnée.
@@ -87,6 +105,85 @@ pub struct Wardrobe {
     /// Sa pose debout : l'union de la boucle et du clignement.
     pub stand: Option<AlphaMask>,
     pub perch: Option<PerchMasks>,
+    /// Ses planches de vie : l'union des dessins de son arrivée (rien ne l'attrape quand elle
+    /// s'efface).
+    pub life: Option<AlphaMask>,
+}
+
+/// Une suite jouée une fois pour apparaître ou s'effacer : ses planches de vie, par-dessus son
+/// image debout, ou celles de sa pose assise, posée sur le bord en `at`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Clip {
+    Arrive,
+    Leave,
+    PerchArrive { at: Vec2 },
+    PerchLeave { at: Vec2 },
+}
+
+/// Une suite jouée une fois, dans un sens ou dans l'autre : à l'image d'animation `since`, elle en
+/// est à l'image `from` de sa feuille d'exposition (`len` images) ; à l'envers (`backward`), elle
+/// revient sur ses pas jusqu'à l'image 0.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Run {
+    clip: Clip,
+    since: u64,
+    from: u64,
+    len: u64,
+    backward: bool,
+}
+
+impl Run {
+    /// Depuis le début, à l'endroit, à partir de l'image `since`.
+    fn new(clip: Clip, since: u64, len: u64) -> Self {
+        Self { clip, since, from: 0, len, backward: false }
+    }
+
+    /// L'image de sa feuille montrée à l'image d'animation `frame`.
+    fn position(self, frame: u64) -> u64 {
+        let elapsed = frame.saturating_sub(self.since);
+        if self.backward {
+            self.from.saturating_sub(elapsed)
+        } else {
+            (self.from + elapsed).min(self.len.saturating_sub(1))
+        }
+    }
+
+    /// Combien d'images il lui reste à l'image `frame` ; 0 : finie.
+    fn left(self, frame: u64) -> u64 {
+        let elapsed = frame.saturating_sub(self.since);
+        if self.backward {
+            (self.from + 1).saturating_sub(elapsed)
+        } else {
+            self.len.saturating_sub(self.from + elapsed)
+        }
+    }
+
+    /// La même, repartie dans l'autre sens à l'image `frame`, du dessin où elle en est.
+    fn turned(self, frame: u64) -> Self {
+        Self { since: frame, from: self.position(frame), backward: !self.backward, ..self }
+    }
+
+    /// Assise : là où elle est posée.
+    fn seat(self) -> Option<Vec2> {
+        match self.clip {
+            Clip::PerchArrive { at } | Clip::PerchLeave { at } => Some(at),
+            Clip::Arrive | Clip::Leave => None,
+        }
+    }
+}
+
+/// Est-elle là ?
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Presence {
+    /// Là : ses dessins de tous les jours.
+    Here,
+    /// Elle apparaît.
+    Appearing(Run),
+    /// Elle s'efface.
+    Vanishing(Run),
+    /// Partie, après la suite qui l'a effacée (aucune, sans ses planches de vie) : plus rien à
+    /// montrer.
+    Gone(Option<Run>),
 }
 
 /// Où en est sa pose assise.
@@ -113,12 +210,16 @@ struct Sheets {
     music: Sheet<sheets::Cell>,
     arriving: Sheet<sheets::Cell>,
     leaving: Sheet<sheets::Cell>,
+    life_arriving: Sheet<life::Cell>,
+    life_leaving: Sheet<life::Cell>,
 }
 
 pub struct Look {
     wardrobe: Wardrobe,
     /// Sa hauteur debout, en pixels de l'overlay.
     height: f32,
+    /// Apparaître et s'effacer.
+    presence: Presence,
     seat: Seat,
     /// Le point posé sur le bord à la dernière mise à jour où elle l'était : là où elle s'efface.
     last_seat: Option<Vec2>,
@@ -130,11 +231,13 @@ pub struct Look {
 }
 
 impl Look {
-    /// `height` : sa hauteur debout, en pixels de l'overlay.
+    /// `height` : sa hauteur debout, en pixels de l'overlay. Elle est là tout de suite ; pour
+    /// qu'elle apparaisse, [`Look::enter`].
     pub fn new(wardrobe: Wardrobe, height: f32) -> Self {
         Self {
             wardrobe,
             height,
+            presence: Presence::Here,
             seat: Seat::Standing,
             last_seat: None,
             frame: 0,
@@ -150,7 +253,137 @@ impl Look {
                 music: sheets::music(),
                 arriving: sheets::arriving(),
                 leaving: sheets::leaving(),
+                life_arriving: life::arriving(),
+                life_leaving: life::leaving(),
             },
+        }
+    }
+
+    /// Ses planches de vie sont-elles là, avec sa pose debout sur laquelle elles s'alignent ?
+    /// Sinon, elle apparaît et disparaît d'un coup.
+    pub fn has_life(&self) -> bool {
+        self.wardrobe.life.is_some() && self.has_stand()
+    }
+
+    /// Elle entre en scène (au lancement), à l'image `frame` : elle apparaît, debout, ou assise si
+    /// elle est posée.
+    pub fn enter(&mut self, capri: &mut Capri, frame: u64) {
+        self.frame = self.frame.max(frame);
+        self.presence = self.entrance(capri, frame);
+    }
+
+    /// On la montre, à l'image `frame` : cachée, elle apparaît ([`Look::enter`]) ; en train de
+    /// s'effacer, elle revient sur ses pas. `capri` doit être à jour (sa fenêtre relue) : c'est
+    /// lui qui dit si elle réapparaît assise.
+    pub fn appear(&mut self, capri: &mut Capri, frame: u64) {
+        self.frame = self.frame.max(frame);
+        self.presence = match self.presence {
+            Presence::Here | Presence::Appearing(_) => return,
+            Presence::Gone(_) => self.entrance(capri, frame),
+            // elle s'effaçait de son bord, qu'elle a quitté depuis : elle se matérialise debout
+            Presence::Vanishing(run) if run.seat().is_some() && capri.seat().is_none() => {
+                self.entrance(capri, frame)
+            }
+            Presence::Vanishing(run) => {
+                let run = run.turned(frame);
+                self.resume_after(capri, run, frame);
+                Presence::Appearing(run)
+            }
+        };
+    }
+
+    /// On la cache, à l'image `frame` : elle s'efface, de là où elle est dessinée ; en train
+    /// d'apparaître, elle revient sur ses pas. Sans ses planches de vie, elle est partie tout de
+    /// suite ([`Look::is_gone`]).
+    pub fn vanish(&mut self, capri: &mut Capri, frame: u64) {
+        let picture = self.picture(capri);
+        self.frame = self.frame.max(frame);
+        self.presence = match self.presence {
+            Presence::Vanishing(_) | Presence::Gone(_) => return,
+            Presence::Appearing(run) => {
+                if run.seat().is_none() {
+                    capri.still(None);
+                }
+                Presence::Vanishing(run.turned(frame))
+            }
+            Presence::Here if !self.has_life() => Presence::Gone(None),
+            Presence::Here => Presence::Vanishing(self.exit(capri, picture.drawing, frame)),
+        };
+    }
+
+    /// Est-elle là, ni en train d'apparaître ni de s'effacer ? Sinon, elle n'est pas libre : ce
+    /// qui attend son tour au-dessus de sa tête attend encore.
+    pub fn is_here(&self) -> bool {
+        self.presence == Presence::Here
+    }
+
+    /// S'efface-t-elle, ou est-elle partie ? Ce qu'elle dit attend son retour.
+    pub fn is_away(&self) -> bool {
+        matches!(self.presence, Presence::Vanishing(_) | Presence::Gone(_))
+    }
+
+    /// Est-elle partie : plus rien à montrer, la fenêtre peut se cacher.
+    pub fn is_gone(&self) -> bool {
+        matches!(self.presence, Presence::Gone(_))
+    }
+
+    /// Comment elle apparaît : assise sur son bord si elle y est posée (avec ses planches
+    /// assises), sinon debout, son tour arrêté le temps de son arrivée ; d'un coup sans ses
+    /// planches de vie.
+    fn entrance(&mut self, capri: &mut Capri, frame: u64) -> Presence {
+        if !self.has_life() {
+            return Presence::Here;
+        }
+        let run = match capri.seat().filter(|_| self.has_perch()) {
+            Some(at) => {
+                self.last_seat = Some(at);
+                Run::new(Clip::PerchArrive { at }, frame, self.sheets.arriving.len())
+            }
+            None => {
+                self.seat = Seat::Standing;
+                Run::new(Clip::Arrive, frame, self.sheets.life_arriving.len())
+            }
+        };
+        self.resume_after(capri, run, frame);
+        Presence::Appearing(run)
+    }
+
+    /// Ce qui reprend une fois la suite `run` finie : son tour, toujours, là où il s'était
+    /// arrêté (même assise : il a pu s'arrêter pendant qu'elle s'effaçait debout, avant d'être
+    /// posée, et doit tourner quand elle repartira de son bord) ; assise, sa boucle aussi, au
+    /// dessin 0, que la fin de l'arrivée et le début du départ recouvrent.
+    fn resume_after(&mut self, capri: &mut Capri, run: Run, frame: u64) {
+        let end = frame + run.left(frame);
+        capri.still(Some(end));
+        if run.seat().is_some() {
+            self.seat = Seat::Sitting { since: end };
+        }
+    }
+
+    /// Où dessiner une suite assise commencée sur le bord en `was` : sur son bord tant qu'elle y
+    /// est posée (il suit sa fenêtre), sinon là où elle l'était en dernier, comme son départ
+    /// ordinaire ([`Seat::Leaving`]).
+    fn run_seat(&self, capri: &Capri, was: Vec2) -> Vec2 {
+        capri.seat().or(self.last_seat).unwrap_or(was)
+    }
+
+    /// Comment elle s'efface, d'après ce qui est dessiné (`drawing`) : assise, de son bord (en
+    /// train d'y arriver, elle revient sur ses pas ; en train d'en repartir, elle continue) ;
+    /// debout, ses planches de vie, son tour arrêté.
+    fn exit(&self, capri: &mut Capri, drawing: Drawing, frame: u64) -> Run {
+        let (arrive, leave) = (self.sheets.arriving.len(), self.sheets.leaving.len());
+        match (drawing, self.seat, self.seated_at(capri)) {
+            (Drawing::Perch(_), Seat::Arriving { since }, Some(at)) => {
+                Run::new(Clip::PerchArrive { at }, since, arrive).turned(frame)
+            }
+            (Drawing::Perch(_), Seat::Leaving { since, at }, _) => {
+                Run::new(Clip::PerchLeave { at }, since, leave)
+            }
+            (Drawing::Perch(_), _, Some(at)) => Run::new(Clip::PerchLeave { at }, frame, leave),
+            _ => {
+                capri.still(None);
+                Run::new(Clip::Leave, frame, self.sheets.life_leaving.len())
+            }
         }
     }
 
@@ -209,7 +442,7 @@ impl Look {
 
     /// Se balance-t-elle en ce moment ?
     pub fn is_grooving(&self) -> bool {
-        self.grooving && matches!(self.seat, Seat::Sitting { .. }) && !self.talking
+        self.grooving && matches!(self.seat, Seat::Sitting { .. }) && !self.talking && self.is_here()
     }
 
     /// À chaque pas, après celui de Capri et le suivi de sa fenêtre : l'image d'animation
@@ -236,6 +469,15 @@ impl Look {
         if seat.is_some() {
             self.last_seat = seat;
         }
+        // apparaître ou s'effacer : jusqu'au bout de la suite, sauf si on l'attrape pendant
+        // qu'elle apparaît, ou si elle n'est plus là où elle apparaissait (posée, ou plus posée)
+        self.presence = match self.presence {
+            Presence::Appearing(_) if capri.is_held() => Presence::Here,
+            Presence::Appearing(run) if run.seat().is_some() != seat.is_some() => Presence::Here,
+            Presence::Appearing(run) if run.left(frame) == 0 => Presence::Here,
+            Presence::Vanishing(run) if run.left(frame) == 0 => Presence::Gone(Some(run)),
+            unchanged => unchanged,
+        };
         // la musique se prend et se quitte au début d'un tour de sa boucle ; en parlant, elle ne
         // se balance pas, et n'y revient qu'au tour suivant
         match self.seat {
@@ -253,6 +495,12 @@ impl Look {
     /// Ce qu'on dessine maintenant.
     pub fn picture(&self, capri: &Capri) -> Picture {
         let frame = self.frame;
+        match self.presence {
+            // tenue, elle est debout tout de suite
+            Presence::Appearing(run) if !capri.is_held() => return self.played(capri, run),
+            Presence::Vanishing(run) | Presence::Gone(Some(run)) => return self.played(capri, run),
+            _ => {}
+        }
         if !capri.is_held() {
             let at = capri.seat().or(self.last_seat);
             match (self.seat, at) {
@@ -288,8 +536,11 @@ impl Look {
     }
 
     /// Le curseur est-il sur elle ? Au pixel près, d'après le masque de la pose dessinée (avec
-    /// une petite marge pour attraper ses membres fins).
+    /// une petite marge pour attraper ses membres fins). Jamais quand elle s'efface.
     pub fn is_over(&self, capri: &Capri, cursor: Vec2) -> bool {
+        if self.is_away() {
+            return false;
+        }
         let picture = self.picture(capri);
         let cutout = &self.wardrobe.cutout;
         let mask = match picture.drawing {
@@ -299,6 +550,10 @@ impl Look {
                 Some(masks) if cell.strip.cell().0 == sheets::WIDE => &masks.wide,
                 Some(masks) => &masks.narrow,
                 None => cutout,
+            },
+            Drawing::Life(_) => match &self.wardrobe.life {
+                Some(mask) => mask,
+                None => return false,
             },
         };
         picture.rect.to_unit(cursor).is_some_and(|uv| mask.hit(uv))
@@ -349,6 +604,11 @@ impl Look {
 
     /// Là où elle est (ou était) assise.
     fn seated_at(&self, capri: &Capri) -> Option<Vec2> {
+        if let Presence::Appearing(run) | Presence::Vanishing(run) | Presence::Gone(Some(run)) = self.presence
+            && let Some(at) = run.seat()
+        {
+            return Some(self.run_seat(capri, at));
+        }
         match self.seat {
             Seat::Leaving { at, .. } => Some(at),
             _ => capri.seat().or(self.last_seat),
@@ -367,12 +627,39 @@ impl Look {
                 ghost: pose.ghost,
             };
         }
-        let frame = self.frame;
-        let sheet = if blinks(frame / TOUR) { &self.sheets.standing_blink } else { &self.sheets.standing };
+        // la boucle suit son tour, que partage son flottement (il s'arrête quand elle apparaît ou
+        // s'efface) ; sa bouche, l'image d'animation
+        let tour = capri.tour();
+        let sheet = if blinks(tour / TOUR) { &self.sheets.standing_blink } else { &self.sheets.standing };
         Picture {
-            drawing: Drawing::Stand(sheet.at(frame)),
+            drawing: Drawing::Stand(sheet.at(tour)),
             rect: pose.rect,
-            mouth: self.talking.then(|| self.sheets.mouth.at(frame)),
+            mouth: self.talking.then(|| self.sheets.mouth.at(self.frame)),
+            boil_seed: 0,
+            ghost: Vec2::ZERO,
+        }
+    }
+
+    /// Une suite jouée pour apparaître ou s'effacer, au dessin où elle en est. Assise, sur son
+    /// bord ([`Look::run_seat`]).
+    fn played(&self, capri: &Capri, run: Run) -> Picture {
+        let at = run.position(self.frame);
+        let seat = |was: Vec2| self.run_seat(capri, was);
+        match run.clip {
+            Clip::Arrive => self.alive(capri, self.sheets.life_arriving.at(at)),
+            Clip::Leave => self.alive(capri, self.sheets.life_leaving.at(at)),
+            Clip::PerchArrive { at: was } => self.seated(seat(was), self.sheets.arriving.at(at)),
+            Clip::PerchLeave { at: was } => self.seated(seat(was), self.sheets.leaving.at(at)),
+        }
+    }
+
+    /// Une case de ses planches de vie, à la place de son image debout telle que `body.rs` la
+    /// place : ses pieds sur ses pieds.
+    fn alive(&self, capri: &Capri, cell: life::Cell) -> Picture {
+        Picture {
+            drawing: Drawing::Life(cell),
+            rect: life::over_stand(capri.pose().rect),
+            mouth: None,
             boil_seed: 0,
             ghost: Vec2::ZERO,
         }
@@ -444,7 +731,7 @@ mod tests {
         AlphaMask::from_rgba(width, height, &rgba, 96, 0)
     }
 
-    fn wardrobe(stand: bool, perch: bool) -> Wardrobe {
+    fn wardrobe(stand: bool, perch: bool, life: bool) -> Wardrobe {
         Wardrobe {
             cutout: full(220, 420),
             stand: stand.then(|| full(stand::CELL_WIDTH, sheets::CELL_HEIGHT)),
@@ -452,14 +739,18 @@ mod tests {
                 narrow: block(sheets::NARROW, sheets::CELL_HEIGHT, (10, 40, 150, 370)),
                 wide: full(sheets::WIDE, sheets::CELL_HEIGHT),
             }),
+            // l'union de son arrivée : plein de (30, 15) à (210, 370), comme les vraies planches
+            life: life.then(|| block(life::CELL_WIDTH, sheets::CELL_HEIGHT, (30, 15, 210, 370))),
         }
     }
 
     /// Debout, 300 points de haut sur un écran Retina.
     const HEIGHT: f32 = 600.0;
 
+    /// Avec ses planches de vie : tant qu'on ne la cache ni ne la fait entrer, elles ne changent
+    /// rien.
     fn dressed(stand: bool, perch: bool) -> Look {
-        Look::new(wardrobe(stand, perch), HEIGHT)
+        Look::new(wardrobe(stand, perch, true), HEIGHT)
     }
 
     fn capri(look: &Look) -> Capri {
@@ -720,5 +1011,389 @@ mod tests {
         assert!(look.is_over(&c, px(80, 200)));
         assert!(!look.is_over(&c, px(170, 200)), "hors de sa silhouette assise");
         assert!(!look.is_over(&c, px(80, 20)));
+    }
+
+    /// Le dessin de ses planches de vie, s'il en est un.
+    fn life_cell(picture: &Picture) -> Option<life::Cell> {
+        match picture.drawing {
+            Drawing::Life(cell) => Some(cell),
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn at_launch_she_materializes_over_her_standing_image_then_floats_without_a_jump() {
+        let mut look = dressed(true, true);
+        let mut c = capri(&look);
+        c.step(0.0, 0);
+        look.enter(&mut c, 0);
+        let arrive = life::arriving().len();
+        let still = c.pose().rect;
+        for frame in 0..arrive {
+            let picture = at(&mut look, &mut c, frame, false, false);
+            let cell = life_cell(&picture).unwrap_or_else(|| panic!("image {frame} : {picture:?}"));
+            assert_eq!(cell, life::Cell { strip: life::Strip::Arrive, index: frame as u32 / 2 }, "en deux");
+            // par-dessus son image debout, qui ne flotte pas pendant ce temps
+            assert_eq!(c.pose().rect, still, "image {frame}");
+            assert_eq!(picture.rect, life::over_stand(still));
+            assert!(!look.is_here(), "pas libre tant qu'elle apparaît");
+            assert_eq!(picture.mouth, None, "même en parlant, pas de bouche posée sur l'arrivée");
+        }
+        // puis sa boucle, du début de son tour, à la même place : la toile de l'arrivée recouvre
+        // exactement son image debout
+        let first = at(&mut look, &mut c, arrive, false, false);
+        assert_eq!(first.drawing, Drawing::Stand(stand::Cell { strip: StandStrip::Stand, index: 0 }));
+        assert_eq!(first.rect, still, "pas de saut");
+        assert_eq!(life::over_stand(first.rect), life::over_stand(still));
+        assert!(look.is_here());
+        // et son flottement reprend : le dessin suivant six images plus tard
+        assert_eq!(at(&mut look, &mut c, arrive + 5, false, false).rect, still);
+        assert_ne!(at(&mut look, &mut c, arrive + 6, false, false).rect, still);
+    }
+
+    /// Elle entre à l'image 0, puis va jusqu'à l'image `frame`, là.
+    fn entered(look: &mut Look, c: &mut Capri, frame: u64) -> Picture {
+        c.step(0.0, 0);
+        look.enter(c, 0);
+        for f in [1, frame] {
+            at(look, c, f, false, false);
+        }
+        assert!(look.is_here());
+        look.picture(c)
+    }
+
+    #[test]
+    fn hidden_she_fades_out_where_she_stands_and_shown_again_she_materializes_there() {
+        let mut look = dressed(true, true);
+        let mut c = capri(&look);
+        let before = entered(&mut look, &mut c, 100);
+        let tour = c.tour();
+        look.vanish(&mut c, 100);
+        let leave = life::leaving().len();
+        for frame in 100..100 + leave {
+            let picture = at(&mut look, &mut c, frame, false, false);
+            let cell = life_cell(&picture).unwrap_or_else(|| panic!("image {frame} : {picture:?}"));
+            assert_eq!(cell, life::Cell { strip: life::Strip::Leave, index: (frame - 100) as u32 / 2 });
+            assert_eq!(picture.rect, life::over_stand(before.rect), "là où elle était, sans flotter");
+            assert!(!look.is_here() && !look.is_gone());
+            // rien ne l'attrape, pas même au milieu de son dessin
+            let middle = picture.rect.min + picture.rect.size * 0.5;
+            assert!(!look.is_over(&c, middle) && !look.is_over(&c, before.rect.min + before.rect.size * 0.5));
+        }
+        at(&mut look, &mut c, 100 + leave, false, false);
+        assert!(look.is_gone(), "puis plus rien à montrer");
+        // on la montre bien plus tard : elle se matérialise au même endroit, et son tour reprend
+        // là où il s'était arrêté
+        c.step(0.0, 900);
+        look.appear(&mut c, 900);
+        let back = at(&mut look, &mut c, 900, false, false);
+        assert_eq!(life_cell(&back), Some(life::Cell { strip: life::Strip::Arrive, index: 0 }));
+        assert_eq!(back.rect, life::over_stand(before.rect));
+        let arrive = life::arriving().len();
+        let standing = at(&mut look, &mut c, 900 + arrive, false, false);
+        assert_eq!(standing.rect, before.rect, "pas de saut");
+        assert_eq!(c.tour(), tour, "son tour reprend là où il s'était arrêté");
+        assert!(look.is_here());
+    }
+
+    #[test]
+    fn shown_or_hidden_halfway_she_goes_back_on_her_steps_without_a_jump() {
+        let mut look = dressed(true, true);
+        let mut c = capri(&look);
+        let here = entered(&mut look, &mut c, 100);
+        look.vanish(&mut c, 100);
+        let leave = |index| Some(life::Cell { strip: life::Strip::Leave, index });
+        assert_eq!(life_cell(&at(&mut look, &mut c, 110, false, false)), leave(5));
+        // montrée de nouveau : le même dessin, puis les précédents, jusqu'au premier
+        look.appear(&mut c, 110);
+        assert!(!look.is_away() && !look.is_here());
+        let shown: Vec<_> =
+            (110..121).map(|frame| life_cell(&at(&mut look, &mut c, frame, false, false))).collect();
+        assert_eq!(shown[0], leave(5));
+        assert_eq!(shown[1], leave(4));
+        assert_eq!(shown[10], leave(0));
+        let standing = at(&mut look, &mut c, 121, false, false);
+        assert!(matches!(standing.drawing, Drawing::Stand(_)) && look.is_here());
+        assert_eq!(standing.rect, here.rect, "elle n'a pas bougé");
+
+        // cachée pendant qu'elle apparaît : l'arrivée à l'envers, jusqu'au trait, puis plus rien
+        c.step(0.0, 300);
+        look.vanish(&mut c, 300);
+        at(&mut look, &mut c, 330, false, false);
+        assert!(look.is_gone());
+        c.step(0.0, 400);
+        look.appear(&mut c, 400);
+        let arrive = |index| Some(life::Cell { strip: life::Strip::Arrive, index });
+        assert_eq!(life_cell(&at(&mut look, &mut c, 407, false, false)), arrive(3));
+        look.vanish(&mut c, 407);
+        assert!(look.is_away());
+        assert_eq!(life_cell(&at(&mut look, &mut c, 407, false, false)), arrive(3));
+        assert_eq!(life_cell(&at(&mut look, &mut c, 409, false, false)), arrive(2));
+        assert_eq!(life_cell(&at(&mut look, &mut c, 414, false, false)), arrive(0));
+        assert!(!look.is_gone());
+        at(&mut look, &mut c, 415, false, false);
+        assert!(look.is_gone());
+        // cacher ce qui est caché, montrer ce qui est là : rien ne change
+        look.vanish(&mut c, 416);
+        assert!(look.is_gone());
+        look.appear(&mut c, 500);
+        let appearing = look.presence;
+        look.appear(&mut c, 501);
+        assert_eq!(look.presence, appearing);
+    }
+
+    #[test]
+    fn grabbed_while_she_materializes_she_stands_at_once_where_she_was() {
+        let mut look = dressed(true, true);
+        let mut c = capri(&look);
+        c.step(0.0, 0);
+        look.enter(&mut c, 0);
+        let picture = at(&mut look, &mut c, 12, false, false);
+        assert!(life_cell(&picture).is_some());
+        // le masque de son arrivée l'attrape, pas le coin de sa case
+        let middle = picture.rect.min + picture.rect.size * 0.5;
+        assert!(look.is_over(&c, middle));
+        assert!(!look.is_over(&c, picture.rect.min + Vec2::new(2.0, 2.0)));
+        assert_eq!(look.grab_origin(&c, middle), None, "debout : elle reste où elle est");
+        let (position, tour) = (c.position(), c.tour());
+        c.grab(middle, 0.0);
+        let held = at(&mut look, &mut c, 13, false, false);
+        assert!(matches!(held.drawing, Drawing::Stand(_)), "debout tout de suite : {held:?}");
+        assert!(look.is_here());
+        assert_eq!(c.position(), position);
+        // lâchée, elle flotte : son tour a repris dès qu'on l'a attrapée, à l'image 12
+        c.release(0.01);
+        at(&mut look, &mut c, 20, false, false);
+        assert_eq!(c.tour(), tour + 8);
+    }
+
+    #[test]
+    fn seated_she_fades_from_her_edge_and_comes_back_on_it_if_it_is_still_there() {
+        let mut look = dressed(true, true);
+        let mut c = capri(&look);
+        land(&mut look, &mut c, 0);
+        let sitting = at(&mut look, &mut c, 100, false, false);
+        assert!(matches!(sitting.drawing, Drawing::Perch(cell) if cell.strip == Strip::Perch));
+        let seat_line = |picture: &Picture| {
+            let Drawing::Perch(cell) = picture.drawing else { panic!("{picture:?}") };
+            let uv = cell.strip.seat_uv();
+            picture.rect.min + Vec2::new(picture.rect.size.x * uv.x, picture.rect.size.y * uv.y)
+        };
+        look.vanish(&mut c, 100);
+        let leave = sheets::leaving().len();
+        for frame in 100..100 + leave {
+            let picture = at(&mut look, &mut c, frame, false, false);
+            assert_eq!(
+                picture.drawing,
+                Drawing::Perch(sheets::Cell { strip: Strip::PerchLeave, index: (frame - 100) as u32 / 2 })
+            );
+            assert!((seat_line(&picture) - EDGE).length() <= 1.0, "sur son bord");
+            assert!(!look.is_over(&c, seat_line(&picture) - Vec2::new(0.0, 40.0)));
+        }
+        at(&mut look, &mut c, 100 + leave, false, false);
+        assert!(look.is_gone());
+        assert!(c.perched().is_some(), "toujours posée, cachée, comme avant");
+        // montrée, toujours posée : elle réapparaît sur son bord, puis sa boucle du début
+        look.appear(&mut c, 300);
+        let arrive = sheets::arriving().len();
+        for frame in 300..300 + arrive {
+            let picture = at(&mut look, &mut c, frame, false, false);
+            assert_eq!(
+                picture.drawing,
+                Drawing::Perch(sheets::Cell { strip: Strip::PerchArrive, index: (frame - 300) as u32 / 2 })
+            );
+            assert!(!look.is_here());
+        }
+        let back = at(&mut look, &mut c, 300 + arrive, false, false);
+        assert_eq!(back.drawing, Drawing::Perch(sheets::Cell { strip: Strip::Perch, index: 0 }));
+        assert!(look.is_here() && (seat_line(&back) - EDGE).length() <= 1.0);
+        // sa fenêtre bouge pendant qu'elle y apparaît ou s'en efface : elle la suit
+        let moved = EDGE + Vec2::new(40.0, -20.0);
+        look.vanish(&mut c, 400);
+        c.ride(Perch { spot: SPOT, feet: moved });
+        assert!((seat_line(&at(&mut look, &mut c, 404, false, false)) - moved).length() <= 1.0);
+        look.appear(&mut c, 406);
+        c.ride(Perch { spot: SPOT, feet: EDGE });
+        assert!((seat_line(&at(&mut look, &mut c, 408, false, false)) - EDGE).length() <= 1.0);
+        at(&mut look, &mut c, 420, false, false);
+        assert!(look.is_here());
+
+        // cachée assise, puis sa fenêtre part pendant qu'elle est cachée : montrée, elle se
+        // matérialise debout, ses pieds là où elle était assise
+        look.vanish(&mut c, 500);
+        at(&mut look, &mut c, 500 + leave, false, false);
+        assert!(look.is_gone());
+        c.take_off();
+        c.step(0.0, 700);
+        look.appear(&mut c, 700);
+        let standing = at(&mut look, &mut c, 700, false, false);
+        assert_eq!(life_cell(&standing), Some(life::Cell { strip: life::Strip::Arrive, index: 0 }));
+        assert!((c.feet() - EDGE).length() < 0.5);
+    }
+
+    #[test]
+    fn hidden_while_she_lands_or_takes_off_she_fades_from_the_drawing_shown() {
+        // en train d'arriver sur son bord : l'arrivée assise à l'envers, du dessin montré
+        let mut look = dressed(true, true);
+        let mut c = capri(&look);
+        at(&mut look, &mut c, 0, false, false);
+        land(&mut look, &mut c, 1);
+        assert_eq!(
+            at(&mut look, &mut c, 9, false, false).drawing,
+            Drawing::Perch(sheets::Cell { strip: Strip::PerchArrive, index: 4 })
+        );
+        look.vanish(&mut c, 9);
+        assert_eq!(
+            at(&mut look, &mut c, 11, false, false).drawing,
+            Drawing::Perch(sheets::Cell { strip: Strip::PerchArrive, index: 3 })
+        );
+        at(&mut look, &mut c, 18, false, false);
+        assert!(look.is_gone());
+
+        // en train d'en repartir : son départ continue, là où il en était
+        let mut look = dressed(true, true);
+        let mut c = capri(&look);
+        land(&mut look, &mut c, 0);
+        at(&mut look, &mut c, 100, false, false);
+        c.take_off();
+        look.update(&c, 100, false, false);
+        at(&mut look, &mut c, 110, false, false);
+        look.vanish(&mut c, 110);
+        assert_eq!(
+            at(&mut look, &mut c, 112, false, false).drawing,
+            Drawing::Perch(sheets::Cell { strip: Strip::PerchLeave, index: 6 })
+        );
+        at(&mut look, &mut c, 124, false, false);
+        assert!(look.is_gone());
+        // montrée : sa fenêtre est loin, elle se matérialise debout
+        look.appear(&mut c, 200);
+        assert!(life_cell(&at(&mut look, &mut c, 200, false, false)).is_some());
+    }
+
+    #[test]
+    fn without_her_life_sheets_she_comes_and_goes_at_once_in_every_wardrobe() {
+        for stand in [false, true] {
+            for perch in [false, true] {
+                for life in [false, true] {
+                    let case = format!("debout {stand}, assise {perch}, vie {life}");
+                    let mut look = Look::new(wardrobe(stand, perch, life), HEIGHT);
+                    let mut c = capri(&look);
+                    c.step(0.0, 0);
+                    look.enter(&mut c, 0);
+                    let animated = stand && life;
+                    assert_eq!(look.has_life(), animated, "{case}");
+                    let first = at(&mut look, &mut c, 0, false, false);
+                    assert_eq!(life_cell(&first).is_some(), animated, "{case} : {first:?}");
+                    assert_eq!(look.is_here(), !animated, "{case}");
+                    let here = at(&mut look, &mut c, 40, false, false);
+                    assert!(look.is_here() && life_cell(&here).is_none(), "{case}");
+                    // debout, puis posée sur une fenêtre
+                    for (frame, perched) in [(40, false), (200, true)] {
+                        if perched {
+                            land(&mut look, &mut c, frame - 100);
+                            at(&mut look, &mut c, frame, false, false);
+                        }
+                        look.vanish(&mut c, frame);
+                        assert_eq!(look.is_gone(), !animated, "{case}, posée {perched}");
+                        at(&mut look, &mut c, frame + 30, false, false);
+                        assert!(look.is_gone(), "{case}, posée {perched}");
+                        look.appear(&mut c, frame + 40);
+                        assert_eq!(look.is_here(), !animated, "{case}, posée {perched}");
+                        at(&mut look, &mut c, frame + 80, false, false);
+                        assert!(look.is_here(), "{case}, posée {perched}");
+                        if !animated {
+                            // comme avant : son dessin d'avant, ses planches debout ou assises
+                            let picture = look.picture(&c);
+                            assert!(!matches!(picture.drawing, Drawing::Life(_)), "{case} : {picture:?}");
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn landed_while_she_fades_shown_seated_then_off_her_edge_she_floats_again() {
+        // on la traîne et on la cache avant de la lâcher : elle s'efface debout, son tour arrêté
+        let mut look = dressed(true, true);
+        let mut c = capri(&look);
+        entered(&mut look, &mut c, 100);
+        c.grab(c.position() + Vec2::new(50.0, 50.0), 0.0);
+        at(&mut look, &mut c, 100, false, false);
+        look.vanish(&mut c, 100);
+        // lâchée doucement sur le haut d'une fenêtre pendant qu'elle s'efface : elle s'y pose
+        c.step(0.0, 105);
+        c.release(10.0);
+        c.land(Perch { spot: SPOT, feet: EDGE });
+        look.update(&c, 105, false, false);
+        at(&mut look, &mut c, 140, false, false);
+        assert!(look.is_gone());
+        // montrée, toujours posée : elle réapparaît assise
+        c.step(0.0, 500);
+        look.appear(&mut c, 500);
+        at(&mut look, &mut c, 600, false, false);
+        assert!(look.is_here() && look.is_seated(&c));
+        // sa fenêtre se ferme : debout, elle flotte de nouveau, sa boucle et son tour avancent
+        c.take_off();
+        look.update(&c, 600, false, false);
+        let picture = at(&mut look, &mut c, 640, false, false);
+        let tour = c.tour();
+        let later = at(&mut look, &mut c, 700, false, false);
+        assert_eq!(c.tour(), tour + 60, "son tour avance");
+        assert!(matches!(later.drawing, Drawing::Stand(_)));
+        let heights: std::collections::HashSet<i64> =
+            (700..760).map(|frame| at(&mut look, &mut c, frame, false, false).rect.min.y as i64).collect();
+        assert!(heights.len() > 1, "elle flotte : {heights:?} ; {picture:?}");
+    }
+
+    #[test]
+    fn her_edge_moving_then_leaving_while_she_fades_she_stays_where_it_went() {
+        let seat_line = |picture: &Picture| {
+            let Drawing::Perch(cell) = picture.drawing else { panic!("{picture:?}") };
+            let uv = cell.strip.seat_uv();
+            picture.rect.min + Vec2::new(picture.rect.size.x * uv.x, picture.rect.size.y * uv.y)
+        };
+        let moved = EDGE + Vec2::new(300.0, 0.0);
+        // cachée assise : elle s'efface de son bord ; il glisse, puis sa fenêtre se ferme
+        let mut look = dressed(true, true);
+        let mut c = capri(&look);
+        land(&mut look, &mut c, 0);
+        at(&mut look, &mut c, 100, false, false);
+        look.vanish(&mut c, 100);
+        c.step(0.0, 104);
+        c.ride(Perch { spot: SPOT, feet: moved });
+        look.update(&c, 104, false, false);
+        assert!((seat_line(&look.picture(&c)) - moved).length() <= 1.0, "elle suit son bord");
+        c.step(0.0, 106);
+        c.take_off();
+        assert!((seat_line(&look.picture(&c)) - moved).length() <= 1.0, "avant le pas suivant");
+        look.update(&c, 106, false, false);
+        let picture = look.picture(&c);
+        assert!((seat_line(&picture) - moved).length() <= 1.0, "là où il est allé : {picture:?}");
+
+        // cachée pendant qu'elle arrive sur son bord : de même
+        let mut look = dressed(true, true);
+        let mut c = capri(&look);
+        at(&mut look, &mut c, 0, false, false);
+        land(&mut look, &mut c, 1);
+        at(&mut look, &mut c, 9, false, false);
+        look.vanish(&mut c, 9);
+        c.ride(Perch { spot: SPOT, feet: moved });
+        look.update(&c, 10, false, false);
+        c.take_off();
+        look.update(&c, 11, false, false);
+        assert!((seat_line(&look.picture(&c)) - moved).length() <= 1.0);
+    }
+
+    #[test]
+    fn a_run_plays_once_either_way() {
+        let run = Run::new(Clip::Leave, 10, 24);
+        assert_eq!((run.position(10), run.position(33), run.position(90)), (0, 23, 23));
+        assert_eq!((run.left(10), run.left(33), run.left(34)), (24, 1, 0));
+        let back = run.turned(15);
+        assert_eq!((back.position(15), back.position(20), back.position(21)), (5, 0, 0));
+        assert_eq!((back.left(15), back.left(20), back.left(21)), (6, 1, 0));
+        let again = back.turned(17);
+        assert_eq!((again.position(17), again.position(18), again.left(17)), (3, 4, 21));
     }
 }

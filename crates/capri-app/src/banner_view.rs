@@ -10,12 +10,13 @@
 //! 4. l'activité de Claude Code (`claude::Feed`), qui reprend la place dès qu'elle se tait.
 //!
 //! Avec le miroir, la ligne que Claude a écrite pour elle devient une prise de parole (2), mais
-//! seulement quand elle est libre : personne ne lui parle au micro, elle ne répond pas à
-//! l'utilisateur, et elle a fini ce qu'elle disait. Sinon la ligne attend (la plus récente
-//! seulement, pas trop longtemps : `capri_claude::mirror::Waiting`). Cachée, elle ne la dit pas.
+//! seulement quand elle est libre : elle est là (ni en train d'apparaître ni de s'effacer),
+//! personne ne lui parle au micro, elle ne répond pas à l'utilisateur, et elle a fini ce qu'elle
+//! disait. Sinon la ligne attend (la plus récente seulement, pas trop longtemps :
+//! `capri_claude::mirror::Waiting`). Cachée, ou en train de s'effacer, elle ne la dit pas.
 //!
 //! Un message de l'app qui doit être vu (une version plus récente existe : [`BannerView::announce`])
-//! attend lui aussi son tour : il ne s'affiche que quand elle est visible, libre de même, et
+//! attend lui aussi son tour : il ne s'affiche que quand elle est visible et là, libre de même, et
 //! qu'aucun autre message de l'app n'est affiché. Le plus récent seulement.
 //!
 //! L'animation et le placement sont dans `capri-core`, le tracé du texte dans `capri-render`.
@@ -140,8 +141,8 @@ impl BannerView {
         }
     }
 
-    /// Quand Capri est cachée : continuer à suivre Claude Code, sans rien dessiner. Elle ne
-    /// parle pas dans le vide : ce qu'elle disait attend son retour.
+    /// Quand Capri est cachée, ou s'efface : continuer à suivre Claude Code, sans rien dessiner.
+    /// Elle ne parle pas dans le vide : ce qu'elle disait attend son retour.
     pub fn listen_only(&mut self) {
         if let Some(feed) = &mut self.feed {
             feed.pump();
@@ -293,10 +294,16 @@ impl BannerView {
         self.announcement = None;
     }
 
-    /// Le message qui attendait son tour s'affiche, si elle est libre.
-    fn deliver_announcement(&mut self) {
+    /// Le message qui attendait son tour s'affiche, si elle est libre (`here` : ni en train
+    /// d'apparaître ni de s'effacer).
+    fn deliver_announcement(&mut self, here: bool) {
         let notice_shown = self.notice.as_ref().is_some_and(|(_, until)| Instant::now() < *until);
-        if self.announcement.is_none() || notice_shown || self.dictation.is_active() || self.chat.is_busy() {
+        if !here
+            || self.announcement.is_none()
+            || notice_shown
+            || self.dictation.is_active()
+            || self.chat.is_busy()
+        {
             return;
         }
         if let Some(headline) = self.announcement.take() {
@@ -324,11 +331,11 @@ impl BannerView {
         self.refresh = true;
     }
 
-    /// Si elle est libre, elle dit la ligne que Claude Code a écrite pour elle : personne ne lui
-    /// parle au micro, elle ne répond pas à l'utilisateur et ne parle pas déjà. Sinon la ligne
-    /// attend son tour.
-    fn relay_claude(&mut self) {
-        if self.dictation.is_active() || self.chat.is_busy() {
+    /// Si elle est libre, elle dit la ligne que Claude Code a écrite pour elle : elle est là
+    /// (`here`), personne ne lui parle au micro, elle ne répond pas à l'utilisateur et ne parle
+    /// pas déjà. Sinon la ligne attend son tour.
+    fn relay_claude(&mut self, here: bool) {
+        if !here || self.dictation.is_active() || self.chat.is_busy() {
             return;
         }
         let Some(said) = self.feed.as_mut().and_then(Feed::take_said) else { return };
@@ -379,14 +386,16 @@ impl BannerView {
         self.painted = None;
     }
 
-    /// À chaque pas : met à jour ce qui s'affiche et, si cela a changé, son image.
-    pub fn update(&mut self, frame: u64, scale: f64, renderer: &mut Renderer) {
+    /// À chaque pas : met à jour ce qui s'affiche et, si cela a changé, son image. `here` : elle
+    /// est là, ni en train d'apparaître ni de s'effacer (`Look::is_here`) ; sinon, la ligne de
+    /// Claude Code et le message de l'app qui attendent leur tour attendent encore.
+    pub fn update(&mut self, frame: u64, scale: f64, renderer: &mut Renderer, here: bool) {
         let fresh = self.feed.as_mut().is_some_and(Feed::pump);
         self.chat.pump();
         self.pump_ear();
-        self.relay_claude();
+        self.relay_claude(here);
         // après la ligne de Claude Code : sa parole passe avant un message de l'app
-        self.deliver_announcement();
+        self.deliver_announcement(here);
         self.ticks = self.ticks.wrapping_add(1);
         // sa parole avance « en deux », comme le reste de l'animation
         let speaking = self.chat.is_speaking() && frame / 2 != self.spoken_drawing;

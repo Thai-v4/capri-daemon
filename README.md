@@ -271,7 +271,9 @@ grisée.
 grilles (81 Mo), puis lâchées une fois confiées à la carte graphique. Seuls les dessins montrés y
 vont (un sur deux pour les boucles et le clignement) : 47 Mo de textures. Sur un Mac à puce Apple,
 elles comptent dans la mémoire de l'app (son « empreinte », celle du Moniteur d'activité) : mesuré
-par `footprint`, 253 Mo avec ses planches contre 200 Mo avec son dessin d'avant seulement.
+par `footprint`, 253 Mo avec ses planches contre 200 Mo avec son dessin d'avant seulement. Ses deux
+planches de vie (elle apparaît, elle s'efface) y ajoutent 9,6 Mo de textures, d'après le calcul :
+l'empreinte n'a pas été remesurée depuis.
 
 **Les deux poses à la même échelle : ce qu'on en sait.** Les deux dessins n'ont pas les mêmes
 proportions, et leurs mesures ne s'accordent pas : du cou à l'entrejambe, il faudrait 1,08 ; pour
@@ -283,6 +285,50 @@ projet Capri. À l'œil, à 1,11, elle paraît un peu plus grande assise que deb
 mouvement à 1,11 et regardé les deux comparaisons rendues : assise, elle est dessinée un peu plus
 petite. L'image `cote-a-cote-a-1-11.png`, rendue par les essais de `portraits.rs`, garde la
 comparaison avec 1,11.
+
+## Lui donner vie : elle apparaît, elle s'efface
+
+Demandé le 23 novembre 2026, avant l'installeur, en cinq lots (voir la feuille de route). Le
+premier lui donne une apparition et un départ dessinés :
+
+- **au lancement**, elle se matérialise : un trait, des éclats, puis elle, en 14 dessins tenus
+  deux images chacun (1,2 s), avant sa boucle debout ;
+- **masquée** (⌃⌥C, ou son menu), elle s'efface en 12 dessins (1 s), et sa fenêtre ne se cache
+  qu'ensuite ; **montrée**, elle se rematérialise au même endroit ;
+- montrée pendant qu'elle s'efface, ou masquée pendant qu'elle apparaît, l'animation repart à
+  l'envers depuis le dessin où elle en est ;
+- **assise sur une fenêtre**, elle s'efface de son bord et y réapparaît, par les dessins de sa
+  pose assise ; au nouvel endroit si sa fenêtre a bougé pendant ce temps, debout si elle s'est
+  fermée ;
+- attrapée pendant qu'elle apparaît, elle est debout tout de suite ; pendant qu'elle s'efface,
+  les clics passent à la fenêtre du dessous ;
+- pendant ces animations elle ne flotte pas, et ce qui attend son tour au-dessus de sa tête (la
+  ligne de Claude Code, un message de l'app) attend encore ;
+- « Quitter » reste immédiat.
+
+**Deux dessins différents.** Ces deux planches (`arrive`, `leave`) montrent un dessin plus ancien
+d'elle, de face, un bras tendu, sans jupe ; sa boucle debout la montre de trois quarts, une main
+sur la hanche. Le passage de l'un à l'autre est une **coupe franche**, comme dans le projet
+d'origine : ses pieds et sa hauteur sont alignés (mesurés sur les images : la même ligne de
+pieds, 2 px d'écart en haut des cheveux, la même échelle), pas sa pose. Si cette coupe gêne à
+l'écran, une autre voie reste à écrire : un effet calculé à partir de son nouveau dessin.
+
+**D'où viennent ces planches** : du projet Capri, qui ne nomme pas leur auteur (voir
+`CREDITS.md`). `tools/fetch-assets.sh` les range dans `assets/capri/life/`. Sans elles, tout se
+passe comme avant : elle apparaît et disparaît d'un coup.
+
+**L'app installée les emporte**, donc ce qu'elle contient change : son numéro de format passe de
+1 à 2, et la prochaine version publiée ne s'installera pas depuis le menu d'une Capri 0.2.0. Il
+faudra `tools/install-macos.sh`, et la ligne de son menu le dira.
+
+Écrit et testé sans écran le 23 novembre 2026, images fixes rendues et regardées ; **pas encore
+regardé en mouvement** : la liste est dans « État de validation ».
+
+**Essayé et écarté le même jour : des dessins générés.** Trois essais pour ajouter à sa boucle
+debout un coucou de la main par un générateur d'images : le premier changeait son corps d'un
+dessin à l'autre, les deux suivants gardaient son corps au pixel près mais donnaient une main qui
+clignote, puis un bras trop pauvre. Aucun ne se mêlait à ses dessins sans qu'on le voie ; rien
+n'en est gardé dans le dépôt.
 
 ## Jalon 4 : lui parler
 
@@ -871,7 +917,8 @@ un geste de ta part (voir « Installer une version, sur un geste », plus bas).
   double à chaque échec, jamais plus d'un jour. Chaque lancement en refait une, une minute après.
 - **Ce qu'elle dit** : si une version plus récente existe, une fois, au-dessus de sa tête : « Une
   nouvelle version de moi est sortie : la 0.2.0 », mais à son tour (après ce que tu lui dis, ce
-  qu'elle te répond, et la ligne de Claude Code, et seulement visible) ; puis une ligne apparaît
+  qu'elle te répond, et la ligne de Claude Code, et seulement visible, une fois qu'elle a fini
+  d'apparaître) ; puis une ligne apparaît
   sous la case, dans ses deux menus : sur macOS, « Installer la version 0.2.0 » (voir plus bas) ;
   ailleurs, ou si elle ne s'installe pas depuis l'app, « Version 0.2.0 disponible », qui dit
   pourquoi : elle change ce que contient l'app (ses images : il faudra la réinstaller par
@@ -1288,9 +1335,9 @@ Règle : tout ce qui peut être testé sans écran va dans `capri-core`, `capri-
 
 Vérifié automatiquement :
 
-- formatage, `clippy -D warnings` et 656 tests sur **macOS Apple Silicon** (le 23 novembre 2026 ;
-  655 en version optimisée, un essai de la répétition de la musique n'existant qu'en version de
-  débogage ; plus 15 qui ne
+- formatage, `clippy -D warnings` et 676 tests sur **macOS Apple Silicon** (le 23 novembre 2026 ;
+  675 en version optimisée, un essai de la répétition de la musique n'existant qu'en version de
+  débogage ; plus 16 qui ne
   tournent qu'à la main : ils écrivent des images ou dessinent sur la vraie carte graphique,
   lisent un vrai `settings.json`, touchent au vrai trousseau, créent de vraies voix et un vrai
   moteur audio, sans bruit, lisent la vraie liste des fenêtres, guettent une annonce d'essai
@@ -1492,6 +1539,17 @@ Vérifié automatiquement :
   Capri, pas touchée) ;
   l'arrêt de la préparation pendant un téléchargement, qui ne laisse rien ; `capri update finish`
   lancé hors d'une mise à jour, refusé sans journal ;
+- son apparition et son départ (le 23 novembre 2026) : la suite des dessins tenus en deux, la
+  coupe vers sa boucle, le flottement arrêté puis repris sans saut, le retour sur ses pas quand
+  on la montre pendant qu'elle s'efface, assise comme debout, la fenêtre qui glisse ou se ferme
+  pendant ce temps, les huit garde-robes (avec et sans chaque famille de planches), l'alignement
+  de ses pieds et de sa hauteur mesuré sur les vraies images quand elles sont là, et le masque
+  de clic pris de son arrivée seulement. Une relecture indépendante y a trouvé deux défauts (un
+  tour figé après s'être posée pendant qu'elle s'effaçait ; un saut vers l'ancien bord), tous
+  deux reproduits par un essai, puis corrigés ; 3000 enchaînements de gestes tirés au hasard, par
+  un essai hors du dépôt, ne la laissent jamais coincée invisible ni à moitié effacée. Les essais
+  qui lancent la vraie app avec ses lieux d'essai (mises à jour, musique, liste des fenêtres)
+  passent avec ce nouveau lancement ;
 - `clippy -D warnings` en compilation croisée pour **Windows x64** et **Linux x64** (le code
   compile, il n'est pas exécuté).
 
@@ -1870,7 +1928,9 @@ depuis `Capri.app` reconstruite, ou `RUST_LOG=debug cargo run --release` pour li
 9. **changement de bureau** (⌃→ puis ⌃←) : elle flotte sur l'autre bureau, et au retour elle
    n'est plus posée ;
 10. **⌃⌥C** : posée, cache-la, déplace sa fenêtre, montre-la : elle rejoint la fenêtre aussitôt
-    (ou flotte si la fenêtre a disparu entre-temps) ;
+    (ou flotte si la fenêtre a disparu entre-temps) ; depuis ses planches de vie, elle s'efface
+    de son bord et y réapparaît (ou se matérialise debout) : voir « Elle apparaît et s'efface :
+    à regarder à la main » ;
 11. **le menu** : « S'asseoir sur les fenêtres » est coché, dans le menu de l'icône comme au clic
     droit ; décoche-le : posée, elle repart, et lâchée près d'un bord elle flotte ; les deux menus
     restent d'accord ; quitte et relance Capri : toujours décoché ; recoche-le ;
@@ -1983,6 +2043,39 @@ elles, l'ont été, voir plus haut) :
     artiste ;
 22. **dans `Capri.app`** (et non le binaire seul) : les points 10 et 13 au moins, puisque les
     essais automatiques n'ont lancé que le binaire de débogage.
+
+**Elle apparaît et s'efface : à regarder à la main** (écrit et testé sans écran le 23 novembre
+2026 ; images fixes rendues et regardées ; rien n'a encore été vu en mouvement) :
+
+1. **au lancement** : un trait, des éclats, elle de face, un bras tendu, puis la coupe vers sa
+   boucle debout. Ses pieds restent au même endroit et sa taille ne change pas ; seule sa pose
+   change, d'un coup (ce sont deux dessins différents). Elle ne flotte pas pendant qu'elle
+   apparaît, puis son flottement reprend sans à-coup ;
+2. **⌃⌥C debout** : elle s'efface sur place, et ce qui est écrit au-dessus de sa tête disparaît
+   dès le début. La case « visible » de son menu se décoche tout de suite ; sa fenêtre ne se cache
+   qu'une seconde plus tard ;
+3. **⌃⌥C de nouveau** : elle se rematérialise au même endroit ;
+4. **⌃⌥C deux fois vite**, pendant qu'elle s'efface puis pendant qu'elle apparaît : elle revient
+   sur ses pas, sans saut ;
+5. **attrapée pendant qu'elle apparaît** : debout tout de suite. Attrapée par son bras tendu,
+   elle est tenue un peu à côté du curseur ;
+6. **pendant qu'elle s'efface**, un clic sur elle passe à la fenêtre du dessous ;
+7. **assise sur une fenêtre** : ⌃⌥C puis ⌃⌥C sans toucher à la fenêtre, elle s'efface de son bord
+   puis y réapparaît ; la fenêtre déplacée pendant qu'elle est cachée, elle réapparaît au nouvel
+   endroit ; la fenêtre fermée, elle se matérialise debout ; la fenêtre déplacée pendant qu'elle
+   s'efface ou réapparaît, elle la suit ;
+8. **ce qui attend son tour** : une annonce de mise à jour ou la ligne du miroir arrivée pendant
+   ces animations attend la fin. « Je t'écoute… » (⌃⌥D quand elle est cachée) s'affiche pendant
+   qu'elle apparaît ;
+9. **⌃⌥P quand elle est cachée** : elle apparaît, et le champ s'ouvre sous ses pieds ;
+10. **cachée au milieu d'une phrase** : sa voix se met en pause dès qu'elle commence à s'effacer,
+    et reprend quand on la montre ;
+11. **cachée assise pendant la musique** : au retour, elle se balance une fois arrivée ;
+12. **« Quitter » pendant une de ces animations** : immédiat ;
+13. **au repos**, le processeur ne travaille pas plus qu'avant ; pendant ces animations, environ 12
+    dessins par seconde ;
+14. **le tout début de son apparition** : pendant une demi-seconde, elle prend les clics sur toute
+    la place qu'elle occupera, alors que presque rien n'y est dessiné. Dire si cela gêne.
 
 **L'ouverture de session : à vérifier à la main** (le 12 novembre 2026, une partie du point 1 et
 du point 4, voir « Vérifié à la main sur un vrai Mac », point 23 : la case cochée dans le vrai
@@ -2186,6 +2279,11 @@ Points à surveiller :
    bon : la 0.1.0 installée s'est mise à jour vers la 0.2.0 depuis GitHub et est revenue seule ;
    ce qui se voit rapporté dans l'ensemble, pas étape par étape). Reste aussi : un installeur.
    Pas de notarisation tant que l'app emporte ses images : elle les enverrait chez Apple.
+6. Lui donner vie, avant l'installeur (demandé le 23 novembre 2026), en cinq lots : ~~elle
+   apparaît et s'efface~~ (écrit et testé sans écran le 23 novembre 2026, images fixes rendues et
+   regardées ; reste à regarder en mouvement) ; une intro en plein écran au démarrage, puis elle
+   dit bonjour ; elle va s'asseoir seule sur les fenêtres ; elle marche, pend quand on la tient,
+   sourit ; elle s'allonge, s'endort et se réveille.
 
 ## Licence
 

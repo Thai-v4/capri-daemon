@@ -3,8 +3,10 @@
 #
 # - mochiiwuff/capri-desktop : le dessin debout, les visages, l'introduction (assets\capri\) ;
 # - lachydotmcg/capri-desktop : sa pose assise et sa pose debout, dessinées par l'artiste de ce
-#   projet (assets\capri\perch\, assets\capri\stand\). PolyForm Noncommercial 1.0.0 : usage non
-#   commercial seulement.
+#   projet (assets\capri\perch\, assets\capri\stand\), et les planches de sa vie (elle apparaît,
+#   elle s'efface : assets\capri\life\), dont ce dépôt ne nomme pas l'auteur. PolyForm
+#   Noncommercial 1.0.0 : usage non commercial seulement. Jamais les planches que ce dépôt
+#   crédite à quelqu'un d'autre.
 $ErrorActionPreference = 'Stop'
 $Dest = Join-Path (Split-Path -Parent $PSScriptRoot) 'assets\capri'
 
@@ -54,8 +56,9 @@ Fetch 'mochiiwuff/capri-desktop' 'c011764ca1fdbd191925321e3aaa8af5b84babe8' 'ass
     'intro-wave3.webp' = '66134c6cdd5b502ad0b52fb0f5db33901164f098b33384f222dfe4df54583ed8'
 })
 
-# 2026-11-11 ; seulement la pose assise, créditée à l'artiste du projet
-Fetch 'lachydotmcg/capri-desktop' '6f719c4269b0fa0e841587f072a1b1594eebcb91' 'assets/sprites' (Join-Path $Dest 'perch') ([ordered]@{
+# 2026-11-23 (une seule révision pour ce dépôt ; les images de la pose assise et de la pose debout
+# n'ont pas changé depuis celle du 2026-11-11) ; seulement la pose assise, de l'artiste du projet
+Fetch 'lachydotmcg/capri-desktop' 'b40fc2ed271976545c7a06ef78038a07a38f1dd5' 'assets/sprites' (Join-Path $Dest 'perch') ([ordered]@{
     'perch.png' = '431e418dcb419d92a2893ec026493ce9fd8b6e5942b76c734e53c459ff9df66b'
     'perch_arrive.png' = 'b9091804740d6e71a16292ecd296748e3ef5ba668f30f62c96d5f7613621abd7'
     'perch_blink.png' = 'bb67abb8470fb0e006daba804d120d846805da55431691d05fbb95cd99800233'
@@ -65,10 +68,18 @@ Fetch 'lachydotmcg/capri-desktop' '6f719c4269b0fa0e841587f072a1b1594eebcb91' 'as
 })
 
 # même dépôt, même révision ; seulement sa pose debout, la boucle que le dépôt attribue à l'artiste
-Fetch 'lachydotmcg/capri-desktop' '6f719c4269b0fa0e841587f072a1b1594eebcb91' 'assets/sprites' (Join-Path $Dest 'stand') ([ordered]@{
+Fetch 'lachydotmcg/capri-desktop' 'b40fc2ed271976545c7a06ef78038a07a38f1dd5' 'assets/sprites' (Join-Path $Dest 'stand') ([ordered]@{
     'idle.png' = 'a3657cdd00c8b730b215510a8ed3599b6c646a4b2e953d68399ac8afaf9cd0a1'
     'idle_blink.png' = '16dddd29ff55790654f974298845f43f28d978ea18c21a28727fafb531a9a178'
     'idle_mouth.png' = 'e8c3e5fbdeb1647406da3149e4f24ff129d723e905d4b42585fca89efdcba75f'
+})
+
+# même dépôt, même révision ; les planches de sa vie : elle apparaît, elle s'efface. Le dépôt ne
+# nomme pas leur auteur ; sa licence dit que tout son dessin est de son artiste, et son README ne
+# les range pas parmi les parties faites par d'autres (voir CREDITS.md)
+Fetch 'lachydotmcg/capri-desktop' 'b40fc2ed271976545c7a06ef78038a07a38f1dd5' 'assets/sprites' (Join-Path $Dest 'life') ([ordered]@{
+    'arrive.png' = 'be03a983e65d2de7fc9ef3f992759610431ee5f4a750af580d36dfe607ca51c7'
+    'leave.png' = '40b52533b57ab33c896a050f9968f639dcea8203d61ab717e1e0140d59b18d58'
 })
 
 Write-Host "Images prêtes dans $Dest"

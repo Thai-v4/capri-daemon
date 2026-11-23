@@ -69,6 +69,12 @@ micro ; ce qui se voit est rapporté dans l'ensemble, pas étape par étape. Pas
 en vrai (réseau coupé, relais manqué), une app « ad hoc » mise à jour pour de bon, une identité
 qui n'est plus dans le trousseau.
 
+Avant l'installeur, « lui donner vie », demandé par l'utilisateur le 23 novembre 2026, en cinq
+lots : elle apparaît et s'efface ; une intro en plein écran au démarrage ; elle va s'asseoir
+seule sur les fenêtres ; elle bouge et réagit ; elle se repose. Le premier est écrit et testé
+sans écran le même jour (ses planches `arrive` et `leave`, au lancement et quand on la masque ou
+la montre ; portraits rendus et regardés) ; pas encore regardé en mouvement.
+
 ## Architecture : où va quoi
 
 - `capri-core` : logique pure, **aucune dépendance système ni GPU**. Tout ce qui peut être testé
@@ -84,14 +90,25 @@ qui n'est plus dans le trousseau.
   fenêtre), et dans `sheets::stand` celles de sa pose debout (sa hauteur, ses pieds, son échelle
   face à la pose assise ; la boucle ne flotte pas, le flottement reste au programme), mesurées sur
   les images ; `shown` serre les seuls dessins montrés (un sur deux pour les boucles et le
-  clignement) dans les grilles confiées à la carte graphique.
+  clignement) dans les grilles confiées à la carte graphique. Et dans `sheets::life` les planches
+  de sa vie : des cases de 240 px d'un dessin plus ancien d'elle (de face, un bras tendu), pour
+  l'instant `arrive` et `leave`, à la même échelle que sa pose debout et alignées sur elle par
+  ses pieds et sa hauteur (`STAND_LEFT` : la case de sa boucle commence 73 px plus à droite).
+  Une planche de plus s'y ajoute sans rien refaire (sa doc dit comment).
   Et `look` : **son dessin**, quelle case montrer à chaque image (debout, la boucle et ses
   clignements aux tours de `BLINKS`, sa bouche posée par-dessus quand elle parle ; posée,
   l'arrivée, sa boucle assise, parlante ou en musique, le départ), où (sa ligne d'assise sur le
   bord), ce qui l'attrape (un masque par pose, l'union de sa boucle), ce qu'il lui faut sur un bord
   (`Look::stature`, que `perch` reçoit), et le repli sur son dessin d'avant quand des planches
-  manquent (`Wardrobe`). `body` ne connaît que son image debout, le point posé sur le bord
-  (`Capri::seat`), et combien d'images dure son départ.
+  manquent (`Wardrobe`). Et son apparition et son départ (`Look::enter` au lancement, `appear`,
+  `vanish` ; `is_here`, `is_away`, `is_gone`) : `arrive` puis sa boucle, par une **coupe franche**
+  (ce ne sont pas le même dessin : ni fondu ni interpolation), `leave` avant que la fenêtre ne se
+  cache ; montrée pendant qu'elle s'efface, ou cachée pendant qu'elle apparaît, l'animation est
+  rejouée à l'envers depuis le dessin où elle en est ; assise, `perch_leave` et `perch_arrive` ;
+  sans ses planches de vie, tout est immédiat, comme avant. `body` ne connaît que son image
+  debout, le point posé sur le bord (`Capri::seat`), combien d'images dure son départ, et le tour
+  que partagent son flottement et sa boucle debout (`Capri::tour`, `still`, `unstill` : arrêté
+  pendant qu'elle apparaît ou s'efface, il reprend où il s'était arrêté).
   Et `scale` : **sa taille**, choisie par l'utilisateur, est une échelle `Scale` rapportée à sa
   hauteur **debout** d'origine (300 points pour sa silhouette, `stand::STATURE`, pas pour la case),
   de 40 % à 140 % (borne choisie pour son dessin d'avant, agrandi 2 fois à 140 % sur un écran
@@ -388,7 +405,10 @@ qui n'est plus dans le trousseau.
   (`tools/macos/Info.plist`), les images que lit le code et seulement elles (sa liste `IMAGES`, prise
   dans `assets/` ou dans le dossier de `CAPRI_ASSETS` ; l'essai
   `the_app_bundle_carries_exactly_the_images_the_code_reads` de `assets.rs` vérifie qu'elle suit
-  `assets::SPRITE`, `capri_core::sheets` et `sheets::stand`) dans `Contents/Resources/assets/`, et
+  `assets::SPRITE`, `capri_core::sheets`, `sheets::stand` et `sheets::life` ; une liste qui change
+  change aussi le numéro de `tools/macos/bundle-format`, 2 depuis ses planches de vie, et une
+  version d'un autre numéro ne s'installe pas depuis l'app : il faut `tools/install-macos.sh`)
+  dans `Contents/Resources/assets/`, et
   `CREDITS.md` dans `Contents/Resources/`, et son icône `Contents/Resources/Capri.icns` (nommée par
   `CFBundleIconFile`), fabriquée sur place à partir de `capri-face.png` du même dossier d'images
   (`sips` puis `iconutil`, de 16 à 256 px : l'image mesure 256 px, jamais agrandie ; fichiers de
@@ -569,11 +589,19 @@ une fausse commande `security` placée en tête du `PATH`.
   créditée à l'artiste du projet, jamais une image créditée à quelqu'un d'autre, et ses mentions
   obligatoires recopiées dans `CREDITS.md`. Son chargement est tolérant : sans elles, elle se pose
   debout. Sa pose debout (`assets/capri/stand/`) en vient aussi, aux mêmes conditions (la boucle
-  `idle`, son clignement et sa bouche ; pas l'ancien jeu de cases de 240 px) ; sans elle, elle
-  garde `capri-cutout.png`. **Le repli** : seul `capri-cutout.png` est indispensable ; une planche
-  absente, illisible ou refusée par la carte graphique ne fait jamais planter, sa pose revient à
-  son dessin d'avant (`look::Wardrobe`), et chaque combinaison (debout seule, assise seule, aucune)
-  est testée.
+  `idle`, son clignement et sa bouche) ; sans elle, elle garde `capri-cutout.png`. Les planches de
+  sa vie (`assets/capri/life/`) en viennent aussi : l'ancien jeu de cases de 240 px, dont ce
+  dépôt **ne nomme pas l'auteur**, écarté jusque-là et autorisé par l'utilisateur le 23 novembre
+  2026 (sa licence dit que tout son dessin est de son artiste, et son README ne les range pas
+  parmi les parties faites par d'autres) : `arrive` et `leave` aujourd'hui, et pour les lots
+  suivants `walk`, `sleep`, `wake`, `dangle`, `glitch`, `grin`. `CREDITS.md` dit ce qu'on en sait,
+  sans leur prêter un auteur. **Jamais une image que ce dépôt crédite à quelqu'un d'autre**
+  (`click.png`, `form.png`, l'intro « Peek », les emotes) : une attribution se vérifie dans son
+  README, sa licence et l'historique du fichier, pas de mémoire. Sans ses planches de vie, elle
+  apparaît et disparaît d'un coup. **Le repli** : seul `capri-cutout.png` est indispensable ; une
+  planche absente, illisible ou refusée par la carte graphique ne fait jamais planter, sa pose
+  revient à son dessin d'avant (`look::Wardrobe`), et chaque combinaison (debout, assise, vie :
+  les huit) est testée.
   Dans un worktree sans images, utiliser `CAPRI_ASSETS=/chemin/vers/assets`.
 - **Une `Capri.app` qui contient les images ne se distribue jamais** : ni téléversée, ni publiée,
   ni partagée, ni jointe à une version, ni fabriquée par la CI. Les images ne sont pas à ce projet
@@ -937,6 +965,8 @@ une fausse commande `security` placée en tête du `PATH`.
   l'utilisateur lui dit et ce qu'elle lui répond : arrivée pendant qu'elle parle, elle attend
   qu'elle ait fini (voix comprise) ; seule la plus récente attend, deux minutes au plus, et elle
   est oubliée si sa session repart, si on fait taire Capri, ou si le miroir est désactivé.
+  Pendant qu'elle apparaît, la ligne de Claude et un message de l'app attendent qu'elle soit là
+  (`Look::is_here`) ; pendant qu'elle s'efface, son bandeau s'en va avec elle, comme cachée.
 - **Ce qui s'affiche dans la bulle ou dans la fenêtre de réglages ne renvoie jamais à une commande
   de terminal** (`capri chat …`, `capri voice …`) : le but de la fenêtre est que personne n'ait à
   ouvrir un terminal. La bulle renvoie à « Réglages… » dans son menu, la fenêtre dit quoi faire

@@ -27,6 +27,9 @@ const HEIGHT: f32 = 600.0;
 const DESK: [u8; 4] = [38, 44, 62, 255];
 const WINDOW: [u8; 4] = [236, 238, 242, 255];
 const TITLE: [u8; 4] = [214, 216, 222, 255];
+/// Les repères tracés sur les superpositions : la ligne de ses pieds, le haut de ses cheveux.
+const FEET_MARK: [u8; 4] = [255, 64, 64, 255];
+const TOP_MARK: [u8; 4] = [64, 200, 255, 255];
 
 /// Un pinceau : de quoi peindre des rectangles pleins avec le même rendu qu'elle.
 struct Scene {
@@ -35,6 +38,8 @@ struct Scene {
     desk: ImageId,
     window: ImageId,
     title: ImageId,
+    feet_mark: ImageId,
+    top_mark: ImageId,
     size: (u32, u32),
 }
 
@@ -44,21 +49,24 @@ impl Scene {
         let sprite = assets::load_sprite().expect("son dessin d'avant");
         let stand = assets::stand::load();
         let perch = assets::perch::load();
+        let life = assets::life::load();
         println!(
-            "planches lues en {} ms : debout {}, assise {}",
+            "planches lues en {} ms : debout {}, assise {}, vie {}",
             started.elapsed().as_millis(),
             stand.is_some(),
-            perch.is_some()
+            perch.is_some(),
+            life.is_some()
         );
         let mut offscreen = Offscreen::new(size.0, size.1).expect("une carte graphique");
-        let figure =
-            Figure::new(sprite, stand, perch, height, |image| offscreen.add_image(image)).expect("confiées");
+        let figure = Figure::new(sprite, stand, perch, life, height, |image| offscreen.add_image(image))
+            .expect("confiées");
         println!("mémoire graphique : {:.1} Mo", offscreen.image_bytes() as f64 / 1_000_000.0);
         let mut plain = |color: [u8; 4]| {
             offscreen.add_image(SpriteImage { width: 1, height: 1, rgba: &color }).expect("une couleur")
         };
         let (desk, window, title) = (plain(DESK), plain(WINDOW), plain(TITLE));
-        Scene { offscreen, figure, desk, window, title, size }
+        let (feet_mark, top_mark) = (plain(FEET_MARK), plain(TOP_MARK));
+        Scene { offscreen, figure, desk, window, title, feet_mark, top_mark, size }
     }
 
     fn rect(id: ImageId, rect: Rect) -> (ImageId, SpriteDraw) {
@@ -91,6 +99,13 @@ impl Scene {
         }
         self.offscreen.render(&layers, None).expect("rendue")
     }
+}
+
+/// Elle va jusqu'à l'image `frame`, et ce qu'elle dessine alors.
+fn step(scene: &mut Scene, c: &mut Capri, frame: u64) -> Picture {
+    c.step(0.0, frame);
+    scene.figure.look.update(c, frame, false, false);
+    scene.figure.look.picture(c)
 }
 
 /// Capri telle que l'app la crée, à `feet` (ses pieds debout).
@@ -351,7 +366,8 @@ fn without_her_sheets_or_refused_she_falls_back_to_her_old_drawing() {
     let sprite = assets::load_sprite().expect("son dessin d'avant");
     let cutout = (sprite.width, sprite.height);
     // planches présentes, mais la carte graphique refuse tout ce qui dépasse son dessin d'avant
-    let mut figure = Figure::new(sprite, assets::stand::load(), assets::perch::load(), HEIGHT, |image| {
+    let (stand, perch, life) = (assets::stand::load(), assets::perch::load(), assets::life::load());
+    let mut figure = Figure::new(sprite, stand, perch, life, HEIGHT, |image| {
         if image.width > cutout.0 || image.height > cutout.1 {
             Err(capri_render::RenderError::TooLarge {
                 width: image.width,
@@ -363,7 +379,7 @@ fn without_her_sheets_or_refused_she_falls_back_to_her_old_drawing() {
         }
     })
     .expect("son dessin d'avant suffit");
-    assert!(!figure.look.has_stand() && !figure.look.has_perch());
+    assert!(!figure.look.has_stand() && !figure.look.has_perch() && !figure.look.has_life());
     let mut c = capri(&figure, (900, 900), Vec2::new(450.0, 800.0));
     c.step(0.0, 10);
     figure.look.update(&c, 10, true, true);
@@ -378,9 +394,122 @@ fn without_her_sheets_or_refused_she_falls_back_to_her_old_drawing() {
     let sprite = assets::load_sprite().expect("son dessin d'avant");
     let mut offscreen = Offscreen::new(64, 64).expect("une carte graphique");
     let figure =
-        Figure::new(sprite, None, None, HEIGHT, |image| offscreen.add_image(image)).expect("confiée");
+        Figure::new(sprite, None, None, None, HEIGHT, |image| offscreen.add_image(image)).expect("confiée");
     let layers = figure.layers(&figure.look.picture(&capri(&figure, (900, 900), Vec2::new(450.0, 800.0))));
     assert_eq!(layers.len(), 1);
     assert!(layers[0].1.ghost_strength > 0.0, "son dessin d'avant garde sa copie violette");
     assert_eq!(offscreen.image_bytes(), u64::from(cutout.0) * u64::from(cutout.1) * 4);
+}
+
+/// Ses planches de vie : son arrivée et son départ, image par image, leur début, leur milieu et
+/// leur fin ; et la coupe entre la dernière image de son arrivée et la première de sa boucle (puis
+/// entre sa boucle et la première image de son départ), côte à côte et superposées, avec la
+/// ligne de ses pieds (en rouge) et le haut de ses cheveux dans sa boucle (en bleu).
+#[test]
+#[ignore = "écrit des images PNG dans CAPRI_PORTRAITS_DIR, avec les vraies planches et la vraie carte graphique"]
+fn life_portraits() {
+    use capri_core::sheets::life;
+
+    let dir = directory();
+    let size = (900, 900);
+    let mut scene = Scene::new(size, HEIGHT);
+    assert!(scene.figure.look.has_life(), "il faut les planches de vie et la pose debout");
+    let feet = Vec2::new(450.0, 820.0);
+    let mut c = capri(&scene.figure, size, feet);
+    c.step(0.0, 0);
+    scene.figure.look.enter(&mut c, 0);
+
+    // son arrivée, chaque dessin (un toutes les deux images)
+    let arrive = life::arriving().len();
+    let mut drawings = Vec::new();
+    for frame in (0..arrive).step_by(2) {
+        let picture = step(&mut scene, &mut c, frame);
+        drawings.push((picture, scene.render(None, &[picture])));
+    }
+    let images: Vec<Vec<u8>> = drawings.iter().map(|(_, image)| image.clone()).collect();
+    let (sheet, sheet_size) = contact(&images, size, 7);
+    save(&dir, "vie-arrivee.png", &sheet, sheet_size);
+    let (sheet, sheet_size) = contact(&[images[0].clone(), images[7].clone(), images[13].clone()], size, 3);
+    save(&dir, "vie-arrivee-debut-milieu-fin.png", &sheet, sheet_size);
+    let last_arrive = drawings[13].0;
+
+    // la première image de sa boucle, juste après
+    let first_loop = step(&mut scene, &mut c, arrive);
+    assert!(matches!(first_loop.drawing, Drawing::Stand(_)), "{first_loop:?}");
+    let cut = superposition(&mut scene, last_arrive, first_loop);
+    save(&dir, "vie-superposition-arrivee.png", &cut.0, cut.1);
+
+    // son départ, bien plus tard, au même endroit
+    let before = step(&mut scene, &mut c, 300);
+    scene.figure.look.vanish(&mut c, 300);
+    let leave = life::leaving().len();
+    let mut drawings = Vec::new();
+    for frame in (300..300 + leave).step_by(2) {
+        let picture = step(&mut scene, &mut c, frame);
+        drawings.push((picture, scene.render(None, &[picture])));
+    }
+    let images: Vec<Vec<u8>> = drawings.iter().map(|(_, image)| image.clone()).collect();
+    let (sheet, sheet_size) = contact(&images, size, 6);
+    save(&dir, "vie-depart.png", &sheet, sheet_size);
+    // la fin : le dernier dessin qui montre quelque chose (le dernier de tous est vide)
+    let (sheet, sheet_size) = contact(&[images[0].clone(), images[5].clone(), images[10].clone()], size, 3);
+    save(&dir, "vie-depart-debut-milieu-fin.png", &sheet, sheet_size);
+    let cut = superposition(&mut scene, drawings[0].0, before);
+    save(&dir, "vie-superposition-depart.png", &cut.0, cut.1);
+    step(&mut scene, &mut c, 300 + leave);
+    assert!(scene.figure.look.is_gone());
+    let k = stand::scale(HEIGHT);
+    println!(
+        "vie : {:.3} px d'écran par px de planche ; ses pieds sur la ligne {:.0}, la toile décalée de {:.1} px",
+        k,
+        before.rect.min.y + (life::STAND_LOWEST.1 + 1) as f32 * k,
+        life::STAND_LEFT as f32 * k
+    );
+}
+
+/// `life` (un dessin de ses planches de vie) et `standing` (un dessin de sa boucle debout), au
+/// même endroit : trois cases côte à côte, `life` seul, `standing` seul, puis `standing` à moitié
+/// transparent par-dessus `life` ; sur chacune, la ligne de ses pieds et le haut de ses cheveux
+/// dans sa boucle. Recadrée autour d'elle.
+fn superposition(scene: &mut Scene, life: Picture, standing: Picture) -> (Vec<u8>, (u32, u32)) {
+    use capri_core::sheets::life as sheet;
+
+    let rect = standing.rect;
+    let k = rect.size.y / sheets::CELL_HEIGHT as f32;
+    let feet_y = (rect.min.y + (sheet::STAND_LOWEST.1 + 1) as f32 * k).round();
+    let feet_x = (rect.min.x + sheet::STAND_LOWEST.0 * rect.size.x / stand::CELL_WIDTH as f32).round();
+    let top_y = (rect.min.y + stand::TOP as f32 * k).round();
+    let width = scene.size.0 as f32;
+    let marks = |scene: &Scene| {
+        vec![
+            Scene::rect(scene.feet_mark, Rect::new(Vec2::new(0.0, feet_y), Vec2::new(width, 2.0))),
+            Scene::rect(scene.feet_mark, Rect::new(Vec2::new(feet_x, feet_y - 40.0), Vec2::new(2.0, 80.0))),
+            Scene::rect(scene.top_mark, Rect::new(Vec2::new(0.0, top_y), Vec2::new(width, 2.0))),
+        ]
+    };
+    let mut panels = Vec::new();
+    for pictures in [vec![(life, 1.0)], vec![(standing, 1.0)], vec![(life, 1.0), (standing, 0.5)]] {
+        let (w, h) = scene.size;
+        let mut layers = vec![Scene::rect(scene.desk, Rect::new(Vec2::ZERO, Vec2::new(w as f32, h as f32)))];
+        for (picture, opacity) in pictures {
+            layers.extend(
+                scene
+                    .figure
+                    .layers(&picture)
+                    .into_iter()
+                    .map(|(id, draw)| (id, SpriteDraw { opacity, ..draw })),
+            );
+        }
+        layers.extend(marks(scene));
+        panels.push(scene.offscreen.render(&layers, None).expect("rendue"));
+    }
+    // recadrée : sa case de vie entière, et un peu de marge
+    let frame = sheet::over_stand(rect);
+    let at = ((frame.min.x - 20.0).max(0.0) as u32, (frame.min.y - 20.0).max(0.0) as u32);
+    let crop_size = (
+        ((frame.size.x + 40.0) as u32).min(scene.size.0 - at.0),
+        ((frame.size.y + 40.0) as u32).min(scene.size.1 - at.1),
+    );
+    let cropped: Vec<Vec<u8>> = panels.iter().map(|panel| crop(panel, scene.size.0, at, crop_size)).collect();
+    contact(&cropped, crop_size, 3)
 }

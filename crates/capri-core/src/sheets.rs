@@ -1,6 +1,7 @@
 //! Les planches de sa pose assise : elle s'assoit sur le bord d'une fenêtre, jambes pendantes,
 //! cligne des yeux, parle, se balance sur ta musique, arrive et repart. Celles de sa pose debout,
-//! du même artiste, sont décrites dans [`stand`].
+//! du même artiste, sont décrites dans [`stand`], et celles de sa vie debout hors de sa boucle
+//! (elle se matérialise, elle s'efface) dans [`life`].
 //!
 //! **D'où elles viennent.** Dessinées par l'artiste du projet
 //! [lachydotmcg/capri-desktop](https://github.com/lachydotmcg/capri-desktop) (voir `CREDITS.md`),
@@ -32,6 +33,7 @@
 use crate::anim::Sheet;
 use crate::geom::Vec2;
 
+pub mod life;
 pub mod stand;
 
 /// Le dossier des planches, dans celui des images (`assets/`).

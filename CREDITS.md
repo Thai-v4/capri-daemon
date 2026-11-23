@@ -10,7 +10,7 @@ avec eux.
 ## Les images (`assets/capri/`)
 
 Les images ne sont pas incluses dans ce dépôt : `tools/fetch-assets.sh` (ou `.ps1`) télécharge
-celles de `assets/capri/` (sauf `perch/` et `stand/`, voir plus bas) depuis le dépôt [mochiiwuff/capri-desktop](https://github.com/mochiiwuff/capri-desktop), à la
+celles de `assets/capri/` (sauf `perch/`, `stand/` et `life/`, voir plus bas) depuis le dépôt [mochiiwuff/capri-desktop](https://github.com/mochiiwuff/capri-desktop), à la
 révision `c011764ca1fdbd191925321e3aaa8af5b84babe8`, et vérifie l'empreinte SHA-256 de chacune.
 
 D'après ce dépôt, elles proviennent de captures de la série, d'un détourage réalisé par un fan et
@@ -28,7 +28,9 @@ Les planches de sa pose assise sur une fenêtre (`perch.png`, `perch_blink.png`,
 `perch_music.png`, `perch_arrive.png`, `perch_leave.png`) et celles de sa pose debout (`idle.png`,
 `idle_blink.png`, `idle_mouth.png`) viennent du projet **Capri**
 ([lachydotmcg/capri-desktop](https://github.com/lachydotmcg/capri-desktop)), à la révision
-`6f719c4269b0fa0e841587f072a1b1594eebcb91`. Son README attribue les premières ainsi : « Window perch
+`b40fc2ed271976545c7a06ef78038a07a38f1dd5` (du 23 novembre 2026 ; ces neuf fichiers y sont les
+mêmes, à l'octet près, qu'à la révision `6f719c4` du 11 novembre, d'où elles venaient d'abord).
+Son README attribue les premières ainsi : « Window perch
 and music perch animations: her artist, who prefers to stay private. » Les secondes y sont arrivées
 ensemble, par le commit `cf3fa56` (« she stands in her artist's new loop at 24 fps… »), et sa
 licence dit que « Capri's art and animations are by her artist » ; son README ne les range pas parmi
@@ -37,7 +39,28 @@ les parties faites par d'autres. Merci à cette artiste, et à **Lachy** pour le
 Quand les planches de sa pose debout manquent, elle garde son dessin debout d'avant
 (`capri-cutout.png`, de mochiiwuff/capri-desktop, voir plus haut).
 
-Elles sont sous la licence de ce projet, la
+### Les planches de sa vie (`assets/capri/life/`)
+
+Les planches où elle apparaît et où elle s'efface (`arrive.png`, `leave.png`) viennent du même
+projet, à la même révision. **Ce dépôt ne nomme pas leur auteur.** Elles y sont arrivées par le
+commit `eebe1854` du 27 octobre 2026 (« released 0.7.0 … »), sans crédit, et n'ont pas changé
+depuis. Sa licence dit que « Capri's art and animations are by her artist », et que les parties
+faites par d'autres sont listées dans son README : elles n'y figurent pas. Elles montrent un dessin
+plus ancien de Capri que ses poses debout et assise (de face, un bras tendu), et font partie d'un
+jeu de cases de 240 px dont ce projet n'utilise que ces deux planches pour l'instant.
+
+Jusqu'au 23 novembre 2026, ce projet écartait ce jeu de cases, faute d'auteur nommé. Il les prend
+depuis, par décision de son auteur, aux mêmes conditions que ses poses : la même licence, les
+mêmes mentions obligatoires, le même usage non commercial. Si leur auteur souhaite être nommé, ou
+leur retrait, ouvrez une issue : ce sera fait aussitôt.
+
+**Restent écartées** les images que ce dépôt crédite à quelqu'un d'autre que son artiste : l'effet
+de clic (mixmix312352), l'animation de transformation et les deux emotes (Qewiw), et l'intro
+« Peek », dont les images actuelles sont de Qewiw d'après la demande de fusion qui les a apportées.
+
+### Leur licence
+
+Les planches de ces trois dossiers sont sous la licence de ce projet, la
 [PolyForm Noncommercial 1.0.0](https://polyformproject.org/licenses/noncommercial/1.0.0), dont
 voici les mentions obligatoires, recopiées telles quelles :
 
@@ -50,11 +73,12 @@ Required Notice: Anyone who uses Capri's code, art, animations or any of its oth
 de chacune ; elles ne sont pas dans ce dépôt-ci. Elles ne servent qu'à un usage **non commercial**,
 le seul que cette licence permette, et ce projet ne revendique aucun droit sur elles : elles ne sont
 couvertes par aucune licence de ce projet. Aucune autre image de ce dépôt n'est utilisée (ni celles
-créditées à d'autres auteurs, ni ses autres animations, ni l'ancien jeu de cases de 240 px dont
-l'auteur n'est pas nommé), et aucune ligne de son code n'est reprise : le découpage des planches, la
-place du bord de la fenêtre, sa hauteur et ses pieds ont été mesurés sur les images elles-mêmes
-(`crates/capri-core/src/sheets.rs` et `sheets/stand.rs`) ; seuls leur cadence d'origine, remplacée
-ensuite par la nôtre, et le rapport d'échelle entre ses deux poses ont été lus dans son code.
+créditées à d'autres auteurs, ni ses autres animations), et aucune ligne de son code n'est
+reprise : le découpage des planches, la place du bord de la fenêtre, sa hauteur et ses pieds ont
+été mesurés sur les images elles-mêmes (`crates/capri-core/src/sheets.rs`, `sheets/stand.rs` et
+`sheets/life.rs`) ; seuls leur cadence d'origine, remplacée ensuite par la nôtre, le rapport
+d'échelle entre ses deux poses et le décalage entre ses cases de 240 px et celles de sa pose
+debout ont été lus dans son code.
 
 ### L'icône de l'app
 

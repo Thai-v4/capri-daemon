@@ -6,18 +6,21 @@
 //! qu'elle porte est remplacée par son dessin d'avant (`capri-cutout.png`), comme avant ; seul
 //! son dessin d'avant est indispensable.
 //!
-//! **Ce que ça pèse** : les planches lues et remises en grilles font 81 Mo en mémoire ; elles ne
-//! sont gardées que le temps de faire les masques de clic et de les confier à la carte graphique.
-//! Seuls les dessins montrés y vont (`sheets::shown` : un sur deux pour les boucles et le
-//! clignement, tenus « en deux ») : 47 Mo de textures (RGBA 8 bits, sans mipmaps), qui comptent
-//! dans la mémoire de l'app sur un Mac à puce Apple (mémoire unifiée). Les masques de clic, eux,
-//! restent : un booléen par pixel d'une case de chaque pose, 230 Ko en tout.
+//! **Ce que ça pèse** : les planches lues et remises en grilles font 81 Mo en mémoire, plus 10 Mo
+//! pour celles de sa vie ; elles ne sont gardées que le temps de faire les masques de clic et de
+//! les confier à la carte graphique. Seuls les dessins montrés y vont (`sheets::shown` : un sur
+//! deux pour les boucles et le clignement, tenus « en deux » ; tous pour les suites jouées une
+//! fois) : 47 Mo de textures (RGBA 8 bits, sans mipmaps), plus 9,6 Mo pour son arrivée et son
+//! départ, qui comptent dans la mémoire de l'app sur un Mac à puce Apple (mémoire unifiée). Les
+//! masques de clic, eux, restent : un booléen par pixel d'une case de chaque pose, 320 Ko en
+//! tout.
 
 use capri_core::look::{Drawing, Look, Picture, Wardrobe};
-use capri_core::sheets::{self, stand};
+use capri_core::sheets::{self, life, stand};
 use capri_render::{Crop, GHOST, ImageId, RenderError, SpriteDraw, SpriteImage};
 
 use crate::assets::Sprite;
+use crate::assets::life::LifeSheets;
 use crate::assets::perch::PerchSheets;
 use crate::assets::stand::StandSheets;
 
@@ -31,6 +34,8 @@ struct Images {
     stand: Option<Vec<ImageId>>,
     /// Dans l'ordre de `sheets::Strip::ALL`.
     perch: Option<Vec<ImageId>>,
+    /// Dans l'ordre de `life::Strip::ALL`.
+    life: Option<Vec<ImageId>>,
 }
 
 pub struct Figure {
@@ -41,11 +46,13 @@ pub struct Figure {
 impl Figure {
     /// Confie ses images à `upload` (la carte graphique), fait les masques de clic, puis lâche les
     /// planches. `height` : sa hauteur debout, en pixels de l'overlay. Seul son dessin d'avant est
-    /// indispensable : s'il ne peut être confié, c'est une erreur.
+    /// indispensable : s'il ne peut être confié, c'est une erreur. Ses planches de vie ne servent
+    /// qu'avec sa pose debout, sur laquelle elles s'alignent : sans elle, elles ne sont pas confiées.
     pub fn new(
         sprite: Sprite,
         stand: Option<StandSheets>,
         perch: Option<PerchSheets>,
+        life: Option<LifeSheets>,
         height: f32,
         mut upload: impl FnMut(SpriteImage<'_>) -> Result<ImageId, RenderError>,
     ) -> Result<Self, RenderError> {
@@ -83,12 +90,31 @@ impl Figure {
                 }
             }
         });
+        let life = life.filter(|_| stand.is_some()).and_then(|sheets| {
+            let ids = life::Strip::ALL.iter().map(|&strip| {
+                let shown = life::shown(strip);
+                let (width, height) = shown.grid_size();
+                let packed = shown.pack(&sheets.get(strip).rgba).unwrap_or_default();
+                upload(SpriteImage { width, height, rgba: &packed })
+            });
+            match ids.collect::<Result<Vec<_>, _>>() {
+                Ok(ids) => Some((sheets.mask(), ids)),
+                Err(err) => {
+                    log::warn!(
+                        "planches de vie : la carte graphique les refuse ({err}), elle apparaîtra d'un coup"
+                    );
+                    None
+                }
+            }
+        });
         let (stand_mask, stand_ids) = stand.unzip();
         let (perch_masks, perch_ids) = perch.unzip();
-        let wardrobe = Wardrobe { cutout: sprite.mask, stand: stand_mask, perch: perch_masks };
+        let (life_mask, life_ids) = life.unzip();
+        let wardrobe =
+            Wardrobe { cutout: sprite.mask, stand: stand_mask, perch: perch_masks, life: life_mask };
         Ok(Self {
             look: Look::new(wardrobe, height),
-            images: Images { cutout, stand: stand_ids, perch: perch_ids },
+            images: Images { cutout, stand: stand_ids, perch: perch_ids, life: life_ids },
         })
     }
 
@@ -130,6 +156,12 @@ impl Figure {
             let crop = Crop::pixels(shown.origin(cell.index)?, cell.strip.cell(), shown.grid_size());
             Some(vec![(*id, SpriteDraw { crop, ..plain })])
         };
+        let life_cell = |cell: life::Cell| {
+            let id = self.images.life.as_ref()?.get(position(&life::Strip::ALL, cell.strip))?;
+            let shown = life::shown(cell.strip);
+            let crop = Crop::pixels(shown.origin(cell.index)?, cell.strip.cell(), shown.grid_size());
+            Some(vec![(*id, SpriteDraw { crop, ..plain })])
+        };
         match picture.drawing {
             Drawing::Cutout => cutout(),
             Drawing::Stand(cell) => match stand_cell(cell) {
@@ -137,6 +169,9 @@ impl Figure {
                 None => cutout(),
             },
             Drawing::Perch(cell) => perch_cell(cell).unwrap_or_else(cutout),
+            // sans ces images, `look` ne dessine jamais ses planches de vie ; par prudence, rien
+            // plutôt que son dessin d'avant déformé à leur taille
+            Drawing::Life(cell) => life_cell(cell).unwrap_or_default(),
         }
     }
 }

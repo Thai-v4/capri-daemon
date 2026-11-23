@@ -129,15 +129,16 @@ fn main() -> Result<()> {
     }
     let loaded = Instant::now();
     let sprite = assets::load_sprite()?;
-    // ses planches debout et assise ; sans elles, son dessin d'avant
-    let (stand, perch) = (assets::stand::load(), assets::perch::load());
+    // ses planches debout et assise ; sans elles, son dessin d'avant ; et celles de sa vie (elle
+    // apparaît, elle s'efface) : sans elles, elle apparaît et disparaît d'un coup
+    let (stand, perch, life) = (assets::stand::load(), assets::perch::load(), assets::life::load());
     log::info!("images lues en {} ms", loaded.elapsed().as_millis());
 
     let mut builder = EventLoop::builder();
     capri_platform::configure_event_loop(&mut builder);
     let event_loop = builder.build().context("création de la boucle d'événements")?;
 
-    let mut app = App { images: Some(Images { sprite, stand, perch }), ..App::default() };
+    let mut app = App { images: Some(Images { sprite, stand, perch, life }), ..App::default() };
     #[cfg(any(target_os = "macos", windows))]
     {
         app.journal_file = journal_file;
@@ -153,12 +154,15 @@ struct Images {
     sprite: assets::Sprite,
     stand: Option<assets::stand::StandSheets>,
     perch: Option<assets::perch::PerchSheets>,
+    life: Option<assets::life::LifeSheets>,
 }
 
 #[derive(Default)]
 struct App {
     images: Option<Images>,
     running: Option<Running>,
+    /// On l'a cachée (son menu le dit tout de suite) ; elle s'efface d'abord, et la fenêtre ne se
+    /// cache qu'une fois qu'elle est partie (`Look::is_gone`).
     hidden: bool,
     hotkeys: Option<Hotkeys>,
     #[cfg(any(target_os = "macos", windows))]
@@ -290,7 +294,7 @@ impl ApplicationHandler for App {
         self.handle_install(event_loop);
         self.handle_overlay(event_loop);
         if let Some(r) = self.running.as_mut() {
-            if self.hidden {
+            if r.figure.look.is_gone() {
                 r.banner.listen_only();
                 r.music.tick(Instant::now(), false); // cachée, elle ne se balance pas
             } else if r.step_due() {
@@ -312,15 +316,20 @@ impl ApplicationHandler for App {
         {
             event_loop.exit();
         }
-        let hidden = self.hidden;
-        let wake = self.running.as_mut().map_or_else(|| Instant::now() + pace::REST, |r| r.next_wake(hidden));
+        let wake = self.running.as_mut().map_or_else(
+            || Instant::now() + pace::REST,
+            |r| {
+                let gone = r.figure.look.is_gone();
+                r.next_wake(gone)
+            },
+        );
         event_loop.set_control_flow(ControlFlow::WaitUntil(wake));
     }
 }
 
 impl App {
     fn start(&mut self, event_loop: &ActiveEventLoop) -> Result<Running> {
-        let Images { sprite, stand, perch } = self.images.take().context("démarrage déjà fait")?;
+        let Images { sprite, stand, perch, life } = self.images.take().context("démarrage déjà fait")?;
         let overlay = Overlay::new(event_loop)?;
 
         let (width, height) = overlay.size();
@@ -338,12 +347,14 @@ impl App {
         log::info!("taille : {} %", scale.percent());
         let standing = standing_height(overlay.scale_factor(), scale);
         // ses images confiées à la carte graphique, puis lâchées
-        let figure = figure::Figure::new(sprite, stand, perch, standing, |image| renderer.add_image(image))?;
+        let mut figure =
+            figure::Figure::new(sprite, stand, perch, life, standing, |image| renderer.add_image(image))?;
         let look = &figure.look;
         log::info!(
-            "dessins : debout {}, sur les fenêtres {} ; mémoire graphique : {:.1} Mo",
+            "dessins : debout {}, sur les fenêtres {}, elle apparaît {} ; mémoire graphique : {:.1} Mo",
             if look.has_stand() { "ses planches" } else { "son dessin d'avant" },
             if look.has_perch() { "assise" } else { "debout" },
+            if look.has_life() { "par ses planches" } else { "d'un coup" },
             renderer.image_bytes() as f64 / 1_000_000.0
         );
         let body = figure.look.standing_size();
@@ -352,6 +363,8 @@ impl App {
         let mut capri = Capri::new(body, bounds, start_at);
         capri.set_feet(figure.look.standing_feet());
         capri.set_leave_frames(figure.look.leave_frames());
+        // elle se matérialise, dès l'image 0 : le premier dessin est déjà celui de son arrivée
+        figure.look.enter(&mut capri, 0);
         let perch_enabled = brain_setup::config_dir().and_then(|directory| perch_setup::load(&directory));
         let perch_enabled = perch_enabled.unwrap_or_else(|err| {
             log::warn!("réglage « S'asseoir sur les fenêtres » illisible, elle s'y assoit : {err:#}");
@@ -443,7 +456,6 @@ impl App {
 
     /// Traite ce que l'overlay a rapporté : clics, changements d'écran, redessin.
     fn handle_overlay(&mut self, event_loop: &ActiveEventLoop) {
-        let hidden = self.hidden;
         let Some(r) = self.running.as_mut() else { return };
         for event in r.overlay.drain_events() {
             match event {
@@ -494,7 +506,8 @@ impl App {
                     }
                 }
                 OverlayEvent::RedrawRequested => {
-                    if !hidden {
+                    // partie (la fenêtre cachée), rien à dessiner ; en train de s'effacer, si
+                    if !r.figure.look.is_gone() {
                         r.draw();
                     }
                 }
@@ -1119,19 +1132,19 @@ impl App {
         }
     }
 
+    /// La cache, ou la fait revenir : elle s'efface, ou apparaît (ses planches de vie ; sans
+    /// elles, d'un coup, comme avant). Cachée ou montrée de nouveau pendant ce temps, elle revient
+    /// sur ses pas. Quitter, lui, reste immédiat : la boucle s'arrête sans rien jouer.
     fn toggle_hidden(&mut self) {
         let Some(r) = self.running.as_mut() else { return };
         self.hidden = !self.hidden;
-        if self.hidden {
-            r.overlay.hide_input();
-        }
         r.overlay.set_click_through(true);
         r.click_through = true;
-        r.overlay.set_shown(!self.hidden);
-        if !self.hidden {
-            r.drawn = None; // redessiner en revenant
-            r.last_step = Instant::now();
-            r.perch.wake(); // sa fenêtre a pu bouger pendant ce temps
+        if self.hidden {
+            r.overlay.hide_input();
+            r.vanish();
+        } else {
+            r.come_back();
         }
         #[cfg(any(target_os = "macos", windows))]
         if let Some(menus) = &self.menus {
@@ -1157,6 +1170,34 @@ impl Running {
         self.figure.look.is_over(&self.capri, cursor)
     }
 
+    /// On la cache : elle s'efface, là où elle est dessinée ; la fenêtre se cache une fois
+    /// qu'elle est partie (`tick`), ou tout de suite sans ses planches de vie, comme avant.
+    fn vanish(&mut self) {
+        self.figure.look.vanish(&mut self.capri, self.frame);
+        if self.figure.look.is_gone() {
+            self.overlay.set_shown(false);
+        }
+    }
+
+    /// On la montre. Partie : la fenêtre se montre, sa fenêtre à elle est relue tout de suite
+    /// (elle a pu bouger ou se fermer pendant ce temps), et elle apparaît, assise si elle y est
+    /// encore posée, debout sinon. En train de s'effacer : elle revient sur ses pas.
+    fn come_back(&mut self) {
+        if self.figure.look.is_gone() {
+            let now = Instant::now();
+            self.overlay.set_shown(true);
+            self.drawn = None; // redessiner en revenant
+            self.last_step = now;
+            self.frame = frame_at(now - self.start);
+            self.capri.step(0.0, self.frame);
+            self.perch.wake();
+            let (seconds, period) = (self.seconds(), pace::refresh_period(self.refresh).as_secs_f64());
+            let stature = self.figure.look.stature();
+            self.perch.tick(&mut self.capri, &self.overlay, seconds, period, stature);
+        }
+        self.figure.look.appear(&mut self.capri, self.frame);
+    }
+
     fn tick(&mut self) {
         let now = Instant::now();
         let dt = (now - self.last_step).as_secs_f32().min(0.1);
@@ -1170,7 +1211,14 @@ impl Running {
         }
         self.frame = frame_at(now - self.start);
         self.capri.step(dt, self.frame);
-        self.banner.update(self.frame, self.overlay.scale_factor(), &mut self.renderer);
+        // en train de s'effacer, comme cachée : elle suit Claude Code sans rien dire ; en train
+        // d'apparaître, ce qui attend son tour attend encore
+        if self.figure.look.is_away() {
+            self.banner.listen_only();
+        } else {
+            let here = self.figure.look.is_here();
+            self.banner.update(self.frame, self.overlay.scale_factor(), &mut self.renderer, here);
+        }
         // sa fenêtre est lue le plus tard possible avant de dessiner : le dessin la montre plus fraîche
         let (seconds, period) = (self.seconds(), pace::refresh_period(self.refresh).as_secs_f64());
         let stature = self.figure.look.stature();
@@ -1178,6 +1226,11 @@ impl Running {
         let talking = self.banner.is_talking();
         let music = self.music.tick(now, self.figure.look.wants_music(&self.capri));
         self.figure.look.update(&self.capri, self.frame, talking, music);
+        // partie : la fenêtre se cache, et plus rien ne se dessine jusqu'à son retour
+        if self.figure.look.is_gone() {
+            self.overlay.set_shown(false);
+            return;
+        }
 
         // La souris traverse la fenêtre partout, sauf sur elle ou tant qu'on la tient.
         let over = self.cursor.is_some_and(|c| self.is_over(c));
@@ -1276,7 +1329,12 @@ impl Running {
         let (width, height) = self.overlay.size();
         let bounds = Rect::new(Vec2::ZERO, Vec2::new(width as f32, height as f32));
         let shown = self.figure.look.shown(&self.capri);
-        let banner = self.banner.draw(self.frame, shown, bounds, self.overlay.scale_factor());
+        // en train de s'effacer, son bandeau s'en va avec elle
+        let banner = if self.figure.look.is_away() {
+            None
+        } else {
+            self.banner.draw(self.frame, shown, bounds, self.overlay.scale_factor())
+        };
         (self.figure.look.picture(&self.capri), banner)
     }
 

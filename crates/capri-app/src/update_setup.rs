@@ -197,7 +197,7 @@ mod tests {
     fn what_runs_here_is_this_version_with_this_bundle_format() {
         let here = installed();
         assert_eq!(here.version.to_string(), env!("CARGO_PKG_VERSION"));
-        assert_eq!(here.bundle, 1);
+        assert_eq!(here.bundle, 2);
         assert_eq!(here.target, update::TARGET);
     }
 
@@ -220,6 +220,21 @@ mod tests {
             "capri/stand/idle_blink.png",
             "capri/stand/idle_mouth.png",
         ];
+        /// Au format 2, ses planches de vie en plus (elle apparaît, elle s'efface).
+        const FORMAT_2: [&str; 12] = [
+            "capri/capri-cutout.png",
+            "capri/perch/perch.png",
+            "capri/perch/perch_blink.png",
+            "capri/perch/perch_talk.png",
+            "capri/perch/perch_music.png",
+            "capri/perch/perch_arrive.png",
+            "capri/perch/perch_leave.png",
+            "capri/stand/idle.png",
+            "capri/stand/idle_blink.png",
+            "capri/stand/idle_mouth.png",
+            "capri/life/arrive.png",
+            "capri/life/leave.png",
+        ];
         let script = include_str!("../../../tools/bundle-macos.sh");
         let mut listed: Vec<&str> = script
             .lines()
@@ -233,6 +248,7 @@ mod tests {
         let format = update::bundle_format(BUNDLE_FORMAT).expect("un entier");
         let mut expected = match format {
             1 => FORMAT_1.to_vec(),
+            2 => FORMAT_2.to_vec(),
             other => panic!("format {other} : écris sa liste d'images dans cet essai"),
         };
         expected.sort_unstable();

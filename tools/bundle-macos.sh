@@ -49,8 +49,9 @@ if [ -d "$ASSETS" ]; then ASSETS="$(cd "$ASSETS" && pwd -P)"; fi
 cd "$ROOT"
 
 # Les images que lit le code : son dessin d'avant, indispensable (assets.rs : SPRITE), sa pose
-# assise (capri_core::sheets) et sa pose debout (capri_core::sheets::stand). Les autres images
-# que télécharge tools/fetch-assets.sh ne servent pas : elles restent hors de l'app.
+# assise (capri_core::sheets), sa pose debout (capri_core::sheets::stand) et les planches de sa
+# vie (capri_core::sheets::life). Les autres images que télécharge tools/fetch-assets.sh ne
+# servent pas : elles restent hors de l'app.
 IMAGES=(
   capri/capri-cutout.png
   capri/perch/perch.png
@@ -62,6 +63,8 @@ IMAGES=(
   capri/stand/idle.png
   capri/stand/idle_blink.png
   capri/stand/idle_mouth.png
+  capri/life/arrive.png
+  capri/life/leave.png
 )
 
 # Avant de compiler : toutes les images sont-elles là ?

@@ -38,10 +38,11 @@ pub struct Pose {
 /// (négatif : plus haut). Pas une sinusoïde qui glisse : des poses clés, comme en anime.
 ///
 /// Un tour dure 60 images (2,5 s), comme la boucle de sa pose debout (`sheets::stand`), dont les
-/// cheveux montent et retombent sans qu'elle bouge. Les deux tournent sur la même image
-/// d'animation : elle est au plus bas (images 24 à 29) quand ses cheveux sont le plus bas (dessins
-/// 24 à 30, poussés vers le bas quand elle remonte), et au plus haut (images 54 à 59) quand ils
-/// sont relevés (dessins 54 à 8).
+/// cheveux montent et retombent sans qu'elle bouge. Les deux tournent sur le même tour
+/// ([`Capri::tour`]) : elle est au plus bas (images 24 à 29 du tour) quand ses cheveux sont le plus
+/// bas (dessins 24 à 30, poussés vers le bas quand elle remonte), et au plus haut (images 54 à 59)
+/// quand ils sont relevés (dessins 54 à 8). Le tour s'arrête le temps qu'elle apparaisse ou
+/// s'efface : elle ne flotte pas pendant ce temps-là.
 const FLOAT: [(f32, u32); 10] = [
     (-0.0172, 6),
     (-0.0124, 6),
@@ -75,6 +76,21 @@ const LANDING: [((f32, f32), u32); 2] = [((1.14, 0.84), 3), ((0.95, 1.06), 2)];
 /// Elle quitte un bord : étirée vers le haut (2 images), puis elle flotte de nouveau.
 const LIFTING: [((f32, f32), u32); 1] = [((0.93, 1.08), 2)];
 
+/// Son tour : celui de son flottement, que partage la boucle de sa pose debout (`look`). Il peut
+/// s'arrêter un moment, puis reprendre là où il s'était arrêté : à l'image `frame`, il en est à
+/// `at + (frame - from)`, et reste à `at` avant `from`. Sans arrêt, il suit l'image d'animation.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Tour {
+    at: u64,
+    from: u64,
+}
+
+impl Tour {
+    fn at(self, frame: u64) -> u64 {
+        self.at + frame.saturating_sub(self.from)
+    }
+}
+
 /// Un geste joué une fois, à partir d'une image donnée.
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Gesture {
@@ -106,6 +122,8 @@ pub struct Capri {
     /// Combien d'images dure son départ d'un bord avant qu'elle flotte de nouveau, debout (le
     /// temps que s'efface sa pose assise, s'il y en a une ; 0 sinon).
     leave_frames: u64,
+    /// Son tour, qui s'arrête le temps qu'elle apparaisse ou s'efface ([`Capri::still`]).
+    tour: Tour,
 }
 
 impl Capri {
@@ -123,6 +141,7 @@ impl Capri {
             feet: Vec2::new(0.5, 1.0),
             samples: VecDeque::new(),
             leave_frames: 0,
+            tour: Tour { at: 0, from: 0 },
         };
         capri.clamp();
         capri
@@ -184,6 +203,30 @@ impl Capri {
         self.leave_frames = frames;
     }
 
+    /// Où en est son tour à l'image courante (60 images par tour) : son flottement, et la boucle
+    /// de sa pose debout que `look` dessine, qui partagent ce tour.
+    pub fn tour(&self) -> u64 {
+        self.tour.at(self.frame)
+    }
+
+    /// Elle cesse de flotter, à la hauteur où elle est, jusqu'à l'image `until` (`None` : jusqu'à
+    /// ce qu'on la reprenne) ; puis son tour reprend là où il s'était arrêté, sans saut. Appelée
+    /// alors qu'elle ne flotte déjà plus, elle garde cette hauteur-là et change seulement la fin.
+    /// Un geste qui attendait son tour (l'étirement d'après un départ de son bord) est oublié : elle
+    /// apparaît ou s'efface à sa place.
+    pub fn still(&mut self, until: Option<u64>) {
+        let at = self.tour();
+        self.tour = Tour { at, from: until.unwrap_or(u64::MAX).max(self.frame) };
+        if self.gesture.is_some_and(|(start, _)| start > self.frame) {
+            self.gesture = None;
+        }
+    }
+
+    /// Son tour reprend tout de suite, là où il s'était arrêté.
+    pub fn unstill(&mut self) {
+        self.still(Some(self.frame));
+    }
+
     /// Elle se pose sur un bord, en `perch.feet`, avec un écrasement à l'atterrissage.
     pub fn land(&mut self, perch: Perch) {
         self.place_feet(perch.feet);
@@ -233,8 +276,10 @@ impl Capri {
         self.grab(cursor, t);
     }
 
-    /// On l'attrape avec le curseur en `cursor` à l'instant `t` (secondes).
+    /// On l'attrape avec le curseur en `cursor` à l'instant `t` (secondes). Si son tour était
+    /// arrêté (elle apparaissait), il reprend.
     pub fn grab(&mut self, cursor: Vec2, t: f64) {
+        self.unstill();
         self.stance = Stance::Held { grab: cursor - self.pos };
         self.gesture = None;
         self.samples.clear();
@@ -311,7 +356,7 @@ impl Capri {
         let mut ghost = Vec2::new(4.0, 3.0) * unit;
 
         match self.stance {
-            Stance::Floating => offset.y = self.float.at(frame) * self.size.y,
+            Stance::Floating => offset.y = self.float.at(self.tour()) * self.size.y,
             // posée : immobile, seul son trait continue de bouillir
             Stance::Held { .. } | Stance::Perched { .. } => {}
             Stance::Thrown { vel } => {
@@ -573,6 +618,57 @@ mod tests {
         c.set_size(Vec2::new(64.0, 120.0));
         assert_eq!(c.feet(), Vec2::new(1760.0, 600.0));
         assert_eq!(c.size(), Vec2::new(64.0, 120.0));
+    }
+
+    #[test]
+    fn her_tour_stands_still_then_resumes_where_it_stopped_without_a_jump() {
+        let mut c = capri();
+        let at = |c: &mut Capri, frame: u64| {
+            c.step(0.0, frame);
+            (c.tour(), c.pose().rect)
+        };
+        // sans arrêt, son tour suit l'image d'animation
+        assert_eq!(at(&mut c, 10).0, 10);
+        // arrêtée à l'image 10 jusqu'à l'image 40 : ni flottement, ni tour qui avance
+        let (tour, still) = at(&mut c, 10);
+        c.still(Some(40));
+        for frame in 10..40 {
+            assert_eq!(at(&mut c, frame), (tour, still), "image {frame}");
+        }
+        // puis il reprend là où il s'était arrêté : à l'image 40, le dessin de l'image 10
+        assert_eq!(at(&mut c, 40), (10, still));
+        assert_eq!(at(&mut c, 41).0, 11);
+        // le flottement suit le tour, pas l'image : 6 images plus tard, le dessin suivant
+        assert_ne!(at(&mut c, 46).1, still);
+
+        // arrêtée sans fin, puis une fin fixée plus tard : la même hauteur jusque-là
+        let (tour, still) = at(&mut c, 100);
+        c.still(None);
+        assert_eq!(at(&mut c, 500), (tour, still));
+        c.still(Some(530));
+        assert_eq!(at(&mut c, 529), (tour, still));
+        assert_eq!(at(&mut c, 531).0, tour + 1);
+
+        // l'étirement qui attendait la fin d'un départ de son bord est oublié ; pas celui en cours
+        c.set_leave_frames(24);
+        c.land(perch_at(900.0, 700.0));
+        c.take_off();
+        c.still(Some(560));
+        for frame in 532..570 {
+            assert_eq!(at(&mut c, frame).1.size, Vec2::new(160.0, 300.0), "image {frame}");
+        }
+        c.step(0.0, 600);
+        c.land(perch_at(900.0, 700.0));
+        c.take_off();
+        c.step(0.0, 624);
+        c.still(None);
+        assert!(c.pose().rect.size.y > 300.0, "l'étirement déjà commencé continue");
+
+        // on l'attrape alors qu'elle est arrêtée : son tour reprend tout de suite
+        let tour = c.tour();
+        c.grab(Vec2::new(850.0, 500.0), 0.0);
+        c.release(0.01);
+        assert_eq!(at(&mut c, 700).0, tour + 76);
     }
 
     #[test]

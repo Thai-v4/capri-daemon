@@ -274,6 +274,96 @@ pub mod stand {
     }
 }
 
+/// Les planches de sa vie (`assets/capri/life/`, voir CREDITS.md et `capri_core::sheets::life`) :
+/// elle se matérialise, elle s'efface. Du même artiste que ses poses.
+pub mod life {
+    use std::path::Path;
+
+    use capri_core::AlphaMask;
+    use capri_core::sheets::life::{self, Strip};
+
+    /// Une planche remise en grille (`life::repack`) : RGBA 8 bits non prémultiplié, de taille
+    /// `strip.grid_size()` (`width` de large) ; la case `i` a son coin haut gauche en
+    /// `strip.cell_origin(i)`.
+    pub struct LifeStrip {
+        pub strip: Strip,
+        pub width: u32,
+        pub rgba: Vec<u8>,
+    }
+
+    /// Toutes les planches de sa vie, chacune à la bonne taille.
+    pub struct LifeSheets {
+        /// Dans l'ordre de `Strip::ALL`.
+        strips: Vec<LifeStrip>,
+    }
+
+    impl LifeSheets {
+        pub fn get(&self, strip: Strip) -> &LifeStrip {
+            // `load_from` les range toutes, dans l'ordre : la recherche trouve toujours
+            self.strips.iter().find(|grid| grid.strip == strip).unwrap_or(&self.strips[0])
+        }
+
+        /// Le masque de clic de son arrivée : l'union de ses dessins (quand elle s'efface, rien ne
+        /// l'attrape).
+        pub fn mask(&self) -> AlphaMask {
+            let grid = self.get(Strip::Arrive);
+            let cells = (0..Strip::Arrive.count())
+                .map(|index| (grid.rgba.as_slice(), grid.width, Strip::Arrive.cell_origin(index)));
+            super::union_mask(Strip::Arrive.cell(), cells)
+        }
+    }
+
+    /// **Tolérant** : s'il en manque une, si l'une est illisible ou n'a pas la taille attendue,
+    /// rend `None` (une ligne dans le journal, sans rien d'autre que le nom du fichier et des
+    /// nombres), et elle apparaît et disparaît d'un coup, comme avant. Environ 10 Mo en mémoire
+    /// une fois lues : à lâcher dès qu'elles sont confiées au GPU.
+    pub fn load() -> Option<LifeSheets> {
+        load_from(&super::assets_dir()?)
+    }
+
+    pub(super) fn load_from(dir: &Path) -> Option<LifeSheets> {
+        let folder = dir.join(life::DIR);
+        let mut strips = Vec::with_capacity(Strip::ALL.len());
+        for strip in Strip::ALL {
+            let path = folder.join(strip.file());
+            if !path.is_file() {
+                log::info!("planches de vie : {} absente, elle apparaîtra d'un coup", strip.file());
+                return None;
+            }
+            let image = match image::open(&path) {
+                Ok(image) => image.to_rgba8(),
+                Err(err) => {
+                    log::warn!(
+                        "planches de vie : {} illisible ({err}), elle apparaîtra d'un coup",
+                        strip.file()
+                    );
+                    return None;
+                }
+            };
+            let (width, height) = image.dimensions();
+            match life::repack(strip, width, height, image.as_raw()) {
+                Ok(rgba) => {
+                    let width = strip.grid_size().0;
+                    strips.push(LifeStrip { strip, width, rgba });
+                }
+                Err(wrong) => {
+                    log::warn!(
+                        "planches de vie : {} mesure {} × {} au lieu de {} × {}, elle apparaîtra d'un coup",
+                        strip.file(),
+                        wrong.found.0,
+                        wrong.found.1,
+                        wrong.expected.0,
+                        wrong.expected.1
+                    );
+                    return None;
+                }
+            }
+        }
+        log::info!("planches de vie : {} planches", strips.len());
+        Some(LifeSheets { strips })
+    }
+}
+
 fn assets_dir() -> Option<PathBuf> {
     let executable = std::env::current_exe().ok();
     let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets");
@@ -477,7 +567,7 @@ mod tests {
         /// seulement elles : sa liste `IMAGES` suit le code.
         #[test]
         fn the_app_bundle_carries_exactly_the_images_the_code_reads() {
-            use capri_core::sheets::{self, stand};
+            use capri_core::sheets::{self, life, stand};
 
             let script = include_str!("../../../tools/bundle-macos.sh");
             let mut listed: Vec<&str> = script
@@ -491,6 +581,7 @@ mod tests {
             let mut read = vec![SPRITE.to_owned()];
             read.extend(sheets::Strip::ALL.iter().map(|strip| format!("{}/{}", sheets::DIR, strip.file())));
             read.extend(stand::Strip::ALL.iter().map(|strip| format!("{}/{}", stand::DIR, strip.file())));
+            read.extend(life::Strip::ALL.iter().map(|strip| format!("{}/{}", life::DIR, strip.file())));
             listed.sort_unstable();
             read.sort_unstable();
             assert_eq!(listed, read);
@@ -750,6 +841,192 @@ mod tests {
                     }
                 }
             }
+        }
+    }
+
+    mod alive {
+        use std::path::Path;
+
+        use capri_core::sheets::life::{self, CELL_WIDTH, Strip};
+        use capri_core::sheets::stand;
+
+        use super::super::life as loader;
+        use super::super::stand as stand_loader;
+        use super::directory;
+
+        fn write(dir: &Path, strip: Strip, (width, height): (u32, u32)) {
+            std::fs::create_dir_all(dir.join(life::DIR)).unwrap();
+            let mut image = image::RgbaImage::new(width, height);
+            image.put_pixel(0, 0, image::Rgba([0, 0, 255, 255]));
+            image.save(dir.join(life::DIR).join(strip.file())).unwrap();
+        }
+
+        #[test]
+        fn without_every_sheet_she_comes_and_goes_at_once() {
+            let dir = directory("vie-incompletes");
+            assert!(loader::load_from(&dir).is_none(), "aucune planche");
+            write(&dir, Strip::Arrive, Strip::Arrive.strip_size());
+            assert!(loader::load_from(&dir).is_none(), "il manque le départ");
+            write(&dir, Strip::Leave, (220, 420));
+            assert!(loader::load_from(&dir).is_none(), "une planche de la mauvaise taille");
+            std::fs::write(dir.join(life::DIR).join(Strip::Leave.file()), b"pas une image").unwrap();
+            assert!(loader::load_from(&dir).is_none(), "une planche illisible");
+            let _ = std::fs::remove_dir_all(&dir);
+        }
+
+        /// Une planche transparente de la taille donnée, un pixel plein à chacun des points
+        /// `marks` (en pixels de la bande).
+        fn write_marked(dir: &Path, strip: Strip, (width, height): (u32, u32), marks: &[(u32, u32)]) {
+            std::fs::create_dir_all(dir.join(life::DIR)).unwrap();
+            let mut image = image::RgbaImage::new(width, height);
+            for &(x, y) in marks {
+                image.put_pixel(x, y, image::Rgba([0, 0, 255, 255]));
+            }
+            image.save(dir.join(life::DIR).join(strip.file())).unwrap();
+        }
+
+        #[test]
+        fn complete_sheets_are_put_in_grids_and_only_her_arrival_catches_her() {
+            // des marques à des places différentes dans les deux planches : dans l'arrivée, le coin
+            // de sa première case et le milieu de sa dernière ; dans le départ, deux autres points
+            let last = (Strip::Arrive.count() - 1) * CELL_WIDTH;
+            let arrive = [(0, 0), (last + 120, 200)];
+            let leave = [(200, 300), (5 * CELL_WIDTH + 60, 100)];
+            let dir = directory("vie-completes");
+            write_marked(&dir, Strip::Arrive, Strip::Arrive.strip_size(), &arrive);
+            write_marked(&dir, Strip::Leave, Strip::Leave.strip_size(), &leave);
+            let sheets = loader::load_from(&dir).expect("toutes les planches");
+            for (strip, (x, y)) in [(Strip::Arrive, arrive[0]), (Strip::Leave, leave[0])] {
+                let grid = sheets.get(strip);
+                assert_eq!(grid.strip, strip);
+                let (width, height) = strip.grid_size();
+                assert_eq!(grid.width, width);
+                assert_eq!(grid.rgba.len(), (width * height * 4) as usize);
+                let at = ((y * width + x) * 4) as usize;
+                assert_eq!(
+                    grid.rgba[at..at + 4],
+                    [0, 0, 255, 255],
+                    "{strip:?} : la première case reste en haut à gauche"
+                );
+            }
+            // le masque : l'union de toutes les cases de son arrivée, et seulement d'elle
+            let mask = sheets.mask();
+            assert_eq!(mask.size(), (CELL_WIDTH, 384));
+            let uv = |x: u32, y: u32| {
+                capri_core::Vec2::new((x % CELL_WIDTH) as f32 / CELL_WIDTH as f32, y as f32 / 384.0)
+            };
+            for (x, y) in arrive {
+                assert!(mask.hit(uv(x, y)), "la marque de l'arrivée en ({x}, {y})");
+            }
+            for (x, y) in leave {
+                assert!(!mask.hit(uv(x, y)), "la marque du départ en ({x}, {y}) ne l'attrape pas");
+            }
+            assert!(!mask.hit(capri_core::Vec2::new(0.5, 0.5)), "rien ailleurs");
+            let _ = std::fs::remove_dir_all(&dir);
+        }
+
+        /// Les colonnes pleines (alpha > 96) de la dernière ligne qui en a : le point le plus bas
+        /// de sa silhouette, (milieu, ligne).
+        fn lowest(pixels: &[u8], width: u32) -> (f32, u32) {
+            let full = |x: u32, y: u32| pixels[((y * width + x) * 4 + 3) as usize] > 96;
+            let row = (0..384).rev().find(|&y| (0..width).any(|x| full(x, y))).expect("une silhouette");
+            let columns: Vec<u32> = (0..width).filter(|&x| full(x, row)).collect();
+            let (first, last) = (columns[0], columns[columns.len() - 1]);
+            ((first + last + 1) as f32 / 2.0, row)
+        }
+
+        /// Les lignes dessinées (alpha > 0), de la première à la dernière.
+        fn rows(pixels: &[u8], width: u32) -> (u32, u32) {
+            let drawn = |y: u32| (0..width).any(|x| pixels[((y * width + x) * 4 + 3) as usize] > 0);
+            let top = (0..384).find(|&y| drawn(y)).expect("une silhouette");
+            let bottom = (0..384).rev().find(|&y| drawn(y)).expect("une silhouette");
+            (top, bottom)
+        }
+
+        /// Le centre du masque vert de ses yeux, lignes 90 à 139 (voir `life::EYES`).
+        fn eyes(pixels: &[u8], width: u32) -> (f32, f32) {
+            let (mut sx, mut sy, mut n) = (0.0, 0.0, 0.0);
+            for y in 90..140 {
+                for x in 0..width {
+                    let p = &pixels[((y * width + x) * 4) as usize..][..4];
+                    if p[3] > 200 && p[1] > 150 && p[0] < 140 && p[2] < 190 {
+                        (sx, sy, n) = (sx + x as f32, sy + y as f32, n + 1.0);
+                    }
+                }
+            }
+            (sx / n, sy / n)
+        }
+
+        /// Les vraies planches, si `tools/fetch-assets.sh` les a téléchargées (rien n'est
+        /// téléchargé ici) : les mesures de `capri_core::sheets::life` doivent leur correspondre,
+        /// et la case de sa boucle debout, décalée de `life::STAND_LEFT`, doit mettre ses pieds sur
+        /// ceux de la fin de son arrivée, à la même hauteur.
+        #[test]
+        fn the_real_life_sheets_match_their_measures_when_present() {
+            let Some(dir) = super::super::assets_dir() else { return };
+            let present = |folder: &str, file: &str| dir.join(folder).join(file).is_file();
+            if !Strip::ALL.iter().all(|strip| present(life::DIR, strip.file()))
+                || !stand::Strip::ALL.iter().all(|strip| present(stand::DIR, strip.file()))
+            {
+                return;
+            }
+            let sheets = loader::load_from(&dir).expect("les vraies planches ont la taille décrite");
+            let standing = stand_loader::load_from(&dir).expect("les vraies planches debout");
+            let cell =
+                |strip: Strip, index: u32| life::cell_pixels(strip, &sheets.get(strip).rgba, index).unwrap();
+            let loop_cell = |index: u32| {
+                stand::cell_pixels(stand::Strip::Stand, &standing.get(stand::Strip::Stand).rgba, index)
+                    .unwrap()
+            };
+            let last = Strip::Arrive.count() - 1;
+            let end = cell(Strip::Arrive, last);
+            assert_eq!(
+                end,
+                cell(Strip::Arrive, last - 1),
+                "les deux derniers dessins de l'arrivée sont les mêmes"
+            );
+
+            // ses pieds : le point le plus bas, sur la même ligne, au demi-pixel près une fois décalé
+            let (x, row) = lowest(&end, CELL_WIDTH);
+            assert_eq!((x, row), life::LOWEST);
+            for index in [0, 58] {
+                let (sx, srow) = lowest(&loop_cell(index), stand::CELL_WIDTH);
+                assert_eq!((sx, srow), life::STAND_LOWEST, "dessin {index} de la boucle");
+            }
+            for index in (0..stand::Strip::Stand.count()).step_by(2) {
+                let (sx, srow) = lowest(&loop_cell(index), stand::CELL_WIDTH);
+                assert_eq!(srow, row, "dessin {index} : ses pieds sur la même ligne");
+                assert!((sx + life::STAND_LEFT as f32 - x).abs() <= 1.0, "dessin {index} : {sx}");
+            }
+            // sa hauteur : la même dernière ligne, le haut de ses cheveux à 2 px près
+            assert_eq!(rows(&end, CELL_WIDTH), (life::TOP, life::BOTTOM - 1));
+            assert_eq!(rows(&loop_cell(0), stand::CELL_WIDTH), (stand::TOP, stand::BOTTOM - 1));
+            // ses yeux le confirment
+            let (ex, ey) = eyes(&end, CELL_WIDTH);
+            let (sx, sy) = eyes(&loop_cell(0), stand::CELL_WIDTH);
+            assert!((ex - life::EYES.0).abs() < 0.1 && (ey - life::EYES.1).abs() < 0.1, "({ex}, {ey})");
+            assert!(
+                (sx - life::STAND_EYES.0).abs() < 0.1 && (sy - life::STAND_EYES.1).abs() < 0.1,
+                "({sx}, {sy})"
+            );
+
+            // le début de l'arrivée et la fin du départ : un trait, puis plus rien
+            let (top, bottom) = rows(&cell(Strip::Arrive, 0), CELL_WIDTH);
+            assert!(bottom - top < 16, "un trait : lignes {top} à {bottom}");
+            let leave_last = cell(Strip::Leave, Strip::Leave.count() - 1);
+            assert!(
+                leave_last.as_chunks::<4>().0.iter().all(|p| p[3] == 0),
+                "le dernier dessin du départ est vide"
+            );
+            // le départ commence là où l'arrivée finit : ses yeux au même endroit, au pixel près
+            let (lx, ly) = eyes(&cell(Strip::Leave, 0), CELL_WIDTH);
+            assert!((lx - ex).abs() < 1.0 && (ly - ey).abs() < 1.0, "({lx}, {ly})");
+
+            // le masque de son arrivée l'attrape sur elle, pas dans le coin
+            let mask = sheets.mask();
+            let uv = |x: f32, y: f32| capri_core::Vec2::new(x / CELL_WIDTH as f32, y / 384.0);
+            assert!(mask.hit(uv(life::EYES.0, life::EYES.1)), "son visage");
+            assert!(!mask.hit(uv(2.0, 380.0)), "le coin de la case");
         }
     }
 }
