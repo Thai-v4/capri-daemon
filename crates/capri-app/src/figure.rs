@@ -20,7 +20,13 @@
 //! clignements glitchés 1,2 et 0,7), qui comptent dans la mémoire de l'app sur un Mac à puce Apple
 //! (mémoire unifiée). Les masques de clic, eux, restent : un booléen par pixel d'une case de chaque
 //! pose et de chaque planche de vie, 690 Ko en tout.
+//!
+//! **Elle se rassemble** (une intro, `capri_core::intro::act`) : rien de plus sur la carte
+//! graphique, des parts de la planche de son arrivée déjà confiée, une bande de lignes chacune,
+//! étirées vers les bords de l'écran (huit dessins de plus pendant 0,75 s).
 
+use capri_core::Rect;
+use capri_core::intro::act;
 use capri_core::look::{Drawing, Look, Moves, Picture, Wardrobe};
 use capri_core::sheets::{self, Shown, life, stand};
 use capri_render::{Crop, GHOST, ImageId, RenderError, SpriteDraw, SpriteImage};
@@ -182,8 +188,9 @@ impl Figure {
         Ok(Self { look: Look::new(wardrobe, height), images })
     }
 
-    /// Ce qu'il faut dessiner pour `picture`, dans l'ordre : elle, puis sa bouche par-dessus.
-    pub fn layers(&self, picture: &Picture) -> Vec<(ImageId, SpriteDraw)> {
+    /// Ce qu'il faut dessiner pour `picture`, dans l'ordre : elle, puis sa bouche par-dessus ;
+    /// quand elle se rassemble (une intro), ses bandes, étirées vers les bords de l'écran `screen`.
+    pub fn layers(&self, picture: &Picture, screen: Rect) -> Vec<(ImageId, SpriteDraw)> {
         let rect = picture.rect;
         let plain = SpriteDraw {
             min: [rect.min.x, rect.min.y],
@@ -236,6 +243,27 @@ impl Figure {
             // sans ces images, `look` ne dessine jamais ses planches de vie ; par prudence, rien
             // plutôt que son dessin d'avant déformé à leur taille
             Drawing::Life(cell) => life_cell(cell).unwrap_or_default(),
+            // des parts de son arrivée : une bande de lignes de sa case, chacune étirée
+            Drawing::Gather(key) => {
+                let strip = life::Strip::Arrive;
+                let Some(id) = image_of(&self.images.life, strip) else { return Vec::new() };
+                let (index, _) = act::GATHER[usize::from(key).min(act::GATHER.len() - 1)];
+                let shown = life::shown(strip);
+                let Some((x, y)) = shown.origin(index) else { return Vec::new() };
+                act::bands(rect, key, screen)
+                    .iter()
+                    .map(|band| {
+                        let crop = Crop::pixels(
+                            (x, y + band.rows.0),
+                            (life::CELL_WIDTH, band.rows.1),
+                            shown.grid_size(),
+                        );
+                        let min = [band.rect.min.x, band.rect.min.y];
+                        let size = [band.rect.size.x, band.rect.size.y];
+                        (id, SpriteDraw { min, size, crop, ..plain })
+                    })
+                    .collect()
+            }
         }
     }
 }

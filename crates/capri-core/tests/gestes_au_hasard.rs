@@ -28,6 +28,12 @@
 //!   finit ; une vie sur trois la laisse aller au bout (rien ne la dérange en marchant), et elle
 //!   arrive là où elle allait ou au bord de l'écran ; elle ne s'arrête en chemin que si on lui
 //!   parle ;
+//! - une vie peut commencer par n'importe quelle intro (`capri_core::intro::LIST`), et « Voir une
+//!   intro » fait partie des gestes, comme dans l'app : refusée seulement quand quelque chose la
+//!   retient, sans rien changer ; une intro qu'elle joue finit toujours, à temps, coupée net si on la
+//!   cache, matérialisée à sa place si on lui parle, tenue si on l'attrape ; jouée jusqu'au bout,
+//!   elle est à sa place ; hors d'une intro, elle est toujours dans l'écran ; ce qui est dessiné
+//!   pendant une intro est l'intro en cours ;
 //! - la même graine donne la même vie.
 //!
 //! Rapide (quelques secondes en version de débogage), sans écran ni bruit.
@@ -36,6 +42,7 @@ use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
 use capri_core::input::{Hand, Let};
+use capri_core::intro::{self, Act, End, Entry, Play};
 use capri_core::look::{Drawing, Gesture, LONGEST_GESTURE, Look, Moves, PerchMasks, Wardrobe};
 use capri_core::perch::{self, Seen, Stature};
 use capri_core::roam::{
@@ -52,6 +59,9 @@ const STEPS: usize = 4000;
 const SEEDS: u64 = 100;
 /// Montrée, elle est de nouveau là en moins de ça (en images) ; cachée, partie en moins de ça.
 const SETTLED_WITHIN: u64 = 150;
+/// Une intro qu'elle joue dure au plus ça, en pas de la boucle (chacun avance son corps d'un
+/// vingt-quatrième de seconde) : se matérialiser (28 images), puis marcher 4 s, et un peu de marge.
+const PERFORM_LONGEST: u64 = 28 + 4 * 24 + 4;
 
 fn full(width: u32, height: u32) -> AlphaMask {
     AlphaMask::from_rgba(width, height, &vec![255; (width * height * 4) as usize], 96, 0)
@@ -101,6 +111,52 @@ fn edges(capri: &Capri) -> Vec<Vec2> {
         touching.push(Vec2::new(0.0, 1.0));
     }
     touching
+}
+
+/// Combien son image debout dépasse de l'écran, au plus d'un côté (0 : entièrement dedans).
+fn outside(capri: &Capri) -> f32 {
+    let (min, max) = (capri.position(), capri.position() + capri.size());
+    [SCREEN.min.x - min.x, SCREEN.min.y - min.y, max.x - SCREEN.max().x, max.y - SCREEN.max().y]
+        .into_iter()
+        .fold(0.0, f32::max)
+}
+
+/// Les bords de l'écran au-delà desquels dépasse son image debout, de coin haut gauche `at` et de
+/// taille `size` : leur normale vers l'extérieur.
+fn beyond(at: Vec2, size: Vec2) -> Vec<Vec2> {
+    let (min, max) = (at, at + size);
+    let mut out = Vec::new();
+    if min.x < SCREEN.min.x - 0.5 {
+        out.push(Vec2::new(-1.0, 0.0));
+    }
+    if min.y < SCREEN.min.y - 0.5 {
+        out.push(Vec2::new(0.0, -1.0));
+    }
+    if max.x > SCREEN.max().x + 0.5 {
+        out.push(Vec2::new(1.0, 0.0));
+    }
+    if max.y > SCREEN.max().y + 0.5 {
+        out.push(Vec2::new(0.0, 1.0));
+    }
+    out
+}
+
+/// Un vrai curseur est dans l'écran.
+fn on_screen(cursor: Vec2) -> Vec2 {
+    Vec2::new(
+        cursor.x.clamp(SCREEN.min.x + 1.0, SCREEN.max().x - 1.0),
+        cursor.y.clamp(SCREEN.min.y + 1.0, SCREEN.max().y - 1.0),
+    )
+}
+
+/// Le chemin du curseur depuis l'appui jusqu'à la prise (ce que la prise rejoue).
+fn trail_length(grab: &capri_core::input::Grab) -> f32 {
+    let mut last = grab.at;
+    grab.trail.iter().fold(0.0, |length, &(_, cursor)| {
+        let step = (cursor - last).length();
+        last = cursor;
+        length + step
+    })
 }
 
 /// Le seuil d'une prise, en pixels (`CLICK_SLOP` sur un écran Retina).
@@ -213,6 +269,40 @@ struct Tally {
     grabs_by_release: usize,
     stuck: usize,
     unstuck: usize,
+    /// Ses intros jouées par elle : commencées (par intro), jouées jusqu'au bout, coupées (on la
+    /// cache, on lui parle, on l'attrape) ; « Voir une intro » demandé, servi, refusé, et revenue
+    /// sur ses pas avant l'intro.
+    performed: [usize; 3],
+    played: usize,
+    cut_hidden: usize,
+    cut_talked: usize,
+    cut_grabbed: usize,
+    cut_resized: usize,
+    encores: usize,
+    encores_started: usize,
+    encores_refused: usize,
+    encores_turned_back: usize,
+    /// Des prises sans saut alors qu'elle dépassait de l'écran, des pas tenue en partie dehors où sa
+    /// mèche s'est rapprochée, des pas hors d'une intro en partie dehors, des pas de marche entamés
+    /// au-delà du bord droit.
+    grabbed_outside: usize,
+    gliding_outside: usize,
+    outside: usize,
+    walked_in: usize,
+}
+
+/// Une intro est-elle possible avec ses planches (ses intros en images le sont toujours ici : leurs
+/// images, la boucle ne les voit pas) ?
+fn possible(entry: &Entry, look: &Look, capri: &Capri) -> bool {
+    match entry.play {
+        Play::Film(_) | Play::Plain => true,
+        Play::Act(act) => look.can_perform(act, capri),
+    }
+}
+
+/// L'indice d'une intro jouée par elle, pour le décompte.
+fn act_index(act: Act) -> usize {
+    Act::ALL.iter().position(|&each| each == act).unwrap_or(0)
 }
 
 /// Une vie : `seed` pour ses gestes et sa vie. Rend une empreinte de ce qui s'est passé, ou ce
@@ -238,15 +328,40 @@ fn live(seed: u64, dressed: (bool, bool, bool, u8), tally: &mut Tally) -> Result
     let (mut hidden, mut talking, mut music) = (false, false, false);
     let mut frame = 0u64;
     capri.step(0.0, frame);
-    // une vie sur cinq commence cachée pendant l'intro du lancement : partie d'un coup, sans
-    // s'être jamais montrée (`Running::end_intro`, `Look::hide_unseen`) ; les autres, l'intro
-    // jouée ou pas, commencent par se matérialiser
-    if seed % 5 == 4 {
-        look.hide_unseen(frame);
-        hidden = true;
-    } else {
-        look.enter(&mut capri, frame);
+    // une vie commence par une intro, chacune à son tour selon la graine (« rien » si ses planches
+    // ne la permettent pas) ; une sur cinq est coupée en la cachant : partie d'un coup, sans
+    // s'être jamais montrée (`Running::end_intro`, `Look::hide_unseen`, `Look::vanish`). Une intro
+    // en images se joue sans elle : ensuite, elle se matérialise
+    let opening = &intro::LIST[(seed / 5) as usize % intro::LIST.len()];
+    let opening = if possible(opening, &look, &capri) { opening } else { intro::plain() };
+    let mut shown_last = Some(opening.key);
+    // l'intro qu'elle joue : laquelle, depuis combien de pas, sa place, et si sa taille a changé
+    // entre-temps
+    let mut performing: Option<(Act, u64, Vec2, bool)> = None;
+    // combien elle dépassait de l'écran au pas précédent (hors d'une intro qu'elle joue)
+    let mut last_out: Option<f32> = None;
+    match opening.play {
+        Play::Act(act) => {
+            let place = capri_place(&capri);
+            if !look.perform(&mut capri, act, frame) {
+                return Err(format!("l'intro {act:?} refusée au lancement"));
+            }
+            tally.performed[act_index(act)] += 1;
+            performing = Some((act, 0, place, false));
+        }
+        Play::Film(_) | Play::Plain if seed % 5 == 4 => {}
+        Play::Film(_) | Play::Plain => look.enter(&mut capri, frame),
     }
+    if seed % 5 == 4 {
+        if look.is_performing() {
+            look.vanish(&mut capri, frame);
+        } else {
+            look.hide_unseen(&mut capri, frame);
+        }
+        hidden = true;
+    }
+    // « Voir une intro » demandé : celle qui se jouera une fois effacée
+    let mut encore: Option<&'static Entry> = None;
     // depuis quand elle n'est pas là, montrée ; depuis quand on l'a cachée
     let mut away_since: Option<u64> = None;
     let mut toggled_at = 0u64;
@@ -312,6 +427,18 @@ fn live(seed: u64, dressed: (bool, bool, bool, u8), tally: &mut Tally) -> Result
         let calm = calm_life && look.is_walking(&capri);
         if !calm && dice.chance(120) {
             talking = !talking;
+            // on lui parle (`App::talk`, `Running::cut_intro`) : l'intro qu'elle joue s'arrête et
+            // elle se matérialise ; en train de s'effacer pour une intro, elle revient sur ses pas
+            if talking && look.is_performing() {
+                look.cut_performance(&mut capri, frame);
+                story.push(format!("{frame} : on lui parle pendant son intro"));
+            }
+            if talking && encore.is_some() && look.is_bowing_out() {
+                look.turn_back(&mut capri, frame);
+                encore = None;
+                tally.encores_turned_back += 1;
+                story.push(format!("{frame} : on lui parle avant son intro"));
+            }
         }
         if dice.chance(150) {
             music = !music;
@@ -373,6 +500,7 @@ fn live(seed: u64, dressed: (bool, bool, bool, u8), tally: &mut Tally) -> Result
         if !calm && !capri.is_held() && dice.chance(300) {
             look.set_height(HEIGHTS[dice.below(HEIGHTS.len())]);
             capri.set_size(look.standing_size());
+
             let stature = look.stature();
             let was = capri.perched().is_some();
             ride(&mut capri, &desk, stature);
@@ -388,14 +516,47 @@ fn live(seed: u64, dressed: (bool, bool, bool, u8), tally: &mut Tally) -> Result
             }
             story.push(format!("{frame} : taille"));
         }
-        // « Changer de place » (cachée, l'app n'en fait rien)
-        if !hidden && !calm && dice.chance(80) {
+        // « Changer de place » (cachée, ou pendant une intro, l'app n'en fait rien)
+        if !hidden && !calm && !look.is_performing() && dice.chance(80) {
             roamer.ask();
             asked = true;
             story.push(format!("{frame} : changer de place"));
         }
         // on se parle (`Running::tick` : `Look::set_conversing`, avant son pas)
         look.set_conversing(talking);
+        // « Voir une intro » (`App::see_intro` ; cachée, ou une intro en cours, l'app n'en fait rien)
+        if !hidden && !calm && encore.is_none() && !look.is_performing() && dice.chance(250) {
+            let entry = intro::next(shown_last, |entry| possible(entry, &look, &capri));
+            let (here, walking, held) = (look.is_here(), look.is_walking(&capri), carried(&capri));
+            let before = (look.is_here(), look.is_traveling(), look.gesture().is_some(), capri.position());
+            tally.encores += 1;
+            match look.bow_out(&mut capri, frame) {
+                Ok(()) => {
+                    if !here || talking || walking || held {
+                        return fail(format!("image {frame} : « Voir une intro » servi, retenue"), &story);
+                    }
+                    shown_last = Some(entry.key);
+                    encore = Some(entry);
+                    away_since = None;
+                    story.push(format!("{frame} : voir l'intro {}", entry.key));
+                }
+                Err(hold) => {
+                    tally.encores_refused += 1;
+                    let fair = match hold {
+                        Hold::Carried => held,
+                        Hold::Away => !here,
+                        Hold::Talking => talking,
+                        Hold::Walking => walking,
+                        Hold::Music => false,
+                    };
+                    let after =
+                        (look.is_here(), look.is_traveling(), look.gesture().is_some(), capri.position());
+                    if !fair || after != before {
+                        return fail(format!("image {frame} : « Voir une intro » refusé : {hold:?}"), &story);
+                    }
+                }
+            }
+        }
         // Claude Code finit son tour (`Running::tick`, `BannerView::take_turn_end`)
         if dice.chance(150) {
             tally.turn_ends += 1;
@@ -409,7 +570,8 @@ fn live(seed: u64, dressed: (bool, bool, bool, u8), tally: &mut Tally) -> Result
         // même passage. Restée tenue sans bouton (son relâchement perdu), un clic la lâche
         if !hidden && !calm && pressing.is_none() && (!capri.is_held() || stuck) && dice.chance(40) {
             let picture = look.picture(&capri);
-            let cursor = picture.rect.min + picture.rect.size * 0.5;
+            // sur la part d'elle qui se voit (une intro peut la mettre en partie hors de l'écran)
+            let cursor = on_screen(picture.rect.min + picture.rect.size * 0.5);
             if look.is_over(&capri, cursor) {
                 hand.press(cursor, now);
                 desk.cursor = Some(cursor);
@@ -418,7 +580,7 @@ fn live(seed: u64, dressed: (bool, bool, bool, u8), tally: &mut Tally) -> Result
                 let quick = dice.chance(6);
                 pressing = Some((if quick { now } else { now + f64::from(dice.between(0.0, 0.5)) }, drift));
                 if quick {
-                    desk.cursor = Some(cursor + Vec2::new(30.0, -10.0));
+                    desk.cursor = Some(on_screen(cursor + Vec2::new(30.0, -10.0)));
                 }
                 story.push(format!("{frame} : un appui"));
             }
@@ -426,7 +588,7 @@ fn live(seed: u64, dressed: (bool, bool, bool, u8), tally: &mut Tally) -> Result
         // l'appui en cours : le curseur bouge un peu, ou pas ; relâché à son heure
         if let Some((release_at, drift)) = pressing {
             if now < release_at {
-                desk.cursor = desk.cursor.map(|c| c + drift);
+                desk.cursor = desk.cursor.map(|c| on_screen(c + drift));
             } else {
                 pressing = None;
                 let held = capri.is_held();
@@ -465,8 +627,12 @@ fn live(seed: u64, dressed: (bool, bool, bool, u8), tally: &mut Tally) -> Result
                         // un glissé plus court qu'un pas : prise maintenant, lâchée à la fin du pas
                         tally.grabs_by_release += 1;
                         stuck = false;
+                        let (seated, before) = (look.is_seated(&capri), capri.position());
                         if look.hold(&mut capri, &grab) {
                             story.push(format!("{frame} : prise et lâchée au même passage"));
+                            if let Err(what) = no_jump(&capri, &grab, seated, before, tally) {
+                                return fail(format!("image {frame} : {what}"), &story);
+                            }
                         }
                     }
                 }
@@ -491,14 +657,18 @@ fn live(seed: u64, dressed: (bool, bool, bool, u8), tally: &mut Tally) -> Result
                 _ => capri.feet() + Vec2::new(dice.between(-80.0, 80.0), dice.between(-80.0, 80.0)),
             };
             let feet = capri.feet() - capri.position();
-            desk.cursor = Some(target - feet + grab);
+            desk.cursor = Some(on_screen(target - feet + grab));
             if dice.chance(8) {
                 let fast = dice.chance(2);
                 if fast {
-                    let away = desk.cursor.map(|c| c + Vec2::new(900.0, -300.0));
+                    let away = desk.cursor.map(|c| on_screen(c + Vec2::new(900.0, -300.0)));
                     if let Some(c) = away {
+                        let out = outside(&capri);
                         capri.drag_to(c, now + 0.03);
                         desk.cursor = Some(c);
+                        if outside(&capri) > out.max(0.0) + 0.01 {
+                            return fail(format!("image {frame} : tenue, plus hors de l'écran"), &story);
+                        }
                     }
                 }
                 if dice.chance(3) {
@@ -520,6 +690,20 @@ fn live(seed: u64, dressed: (bool, bool, bool, u8), tally: &mut Tally) -> Result
                 &story,
             );
         }
+        // cachée pendant qu'elle s'effaçait pour une intro : pas d'intro
+        if look.is_hidden() {
+            encore = None;
+        }
+        if let Some(end) = look.take_performed() {
+            if let Err(what) = performed(end, &mut performing, &look, &capri, hidden, tally) {
+                return fail(format!("image {frame} : {what}"), &story);
+            }
+            if !end.hides() {
+                roamer.came_back(now, &capri);
+                asked = false;
+            }
+            away_since = None;
+        }
 
         // --- le pas (`Running::tick`) : la boucle n'en fait pas quand elle est partie ---
         if look.is_gone() {
@@ -534,8 +718,12 @@ fn live(seed: u64, dressed: (bool, bool, bool, u8), tally: &mut Tally) -> Result
             tally.grabbed_in_gesture += usize::from(look.gesture().is_some());
             tally.grabbed_walking += usize::from(look.is_walking(&capri));
             stuck = false;
+            let (seated, before) = (look.is_seated(&capri), capri.position());
             if look.hold(&mut capri, &grab) {
                 story.push(format!("{frame} : attrapée"));
+                if let Err(what) = no_jump(&capri, &grab, seated, before, tally) {
+                    return fail(format!("image {frame} : {what}"), &story);
+                }
                 // le curseur que son corps connaît : le dernier relevé depuis l'appui
                 last_cursor = grab.trail.last().map(|&(_, cursor)| cursor).or(Some(grab.at));
             }
@@ -553,7 +741,15 @@ fn live(seed: u64, dressed: (bool, bool, bool, u8), tally: &mut Tally) -> Result
             && !hand.is_letting_go()
             && let Some(cursor) = desk.cursor
         {
+            let out = outside(&capri);
             capri.drag_to(cursor, now);
+            // l'écran ne la laisse jamais sortir davantage (prise en partie dehors : pas plus loin)
+            if outside(&capri) > out.max(0.0) + 0.01 {
+                return fail(
+                    format!("image {frame} : tenue, plus hors de l'écran ({out} → {})", outside(&capri)),
+                    &story,
+                );
+            }
             if dangling
                 && let Some(before) = cursor_before
                 && (cursor - before).length() > 0.5
@@ -570,6 +766,22 @@ fn live(seed: u64, dressed: (bool, bool, bool, u8), tally: &mut Tally) -> Result
                     }
                 }
                 let now_gap = look.grip(&capri).map(|grip| (grip - cursor).length());
+                // en partie hors de l'écran (prise pendant une intro) : le curseur va franchement vers
+                // l'intérieur, elle le suit (son glissé vers sa mèche en prend au plus la moitié)
+                for n in beyond(from, capri.size()) {
+                    let inward = -(way.x * n.x + way.y * n.y);
+                    if inward > way.length() * 0.75 + 0.5 {
+                        tally.gliding_outside += 1;
+                        let followed =
+                            -((capri.position() - from).x * n.x + (capri.position() - from).y * n.y);
+                        if followed <= 0.0 {
+                            return fail(
+                                format!("image {frame} : dehors, elle ne suit pas le curseur vers l'écran"),
+                                &story,
+                            );
+                        }
+                    }
+                }
                 if touching.is_empty()
                     && edges(&capri).is_empty()
                     && let (Some(g0), Some(g1)) = (gap, now_gap)
@@ -589,7 +801,31 @@ fn live(seed: u64, dressed: (bool, bool, bool, u8), tally: &mut Tally) -> Result
         }
         last_cursor = desk.cursor;
         let feet_before = capri.feet().x;
+        let (stance_before, position_before) = (capri.stance(), capri.position());
         capri.step(1.0 / 24.0, frame);
+        // son corps ne va jamais plus vite que ce qui la porte : sa marche, sa chute, son retour
+        // dans l'écran ; immobile sinon (hors prise et lancer, qui suivent la main)
+        let moved = capri.position() - position_before;
+        let most = match stance_before {
+            Stance::Walking { speed, .. } => speed / 24.0,
+            Stance::Falling { from, to, t } => {
+                let next = intro::act::fall_at(from, to, t + 1.0 / 24.0);
+                (next - intro::act::fall_at(from, to, t)).abs()
+            }
+            Stance::Floating => capri_core::body::RETURN * capri.size().y / 24.0,
+            Stance::Perched { .. } => 0.0,
+            Stance::Held { .. } | Stance::Thrown { .. } => f32::INFINITY,
+        };
+        if moved.length() > most + 0.01 {
+            return fail(
+                format!("image {frame} : un saut de {:?} en {stance_before:?} ({most} au plus)", moved),
+                &story,
+            );
+        }
+        tally.walked_in += usize::from(
+            matches!(stance_before, Stance::Walking { .. })
+                && position_before.x + capri.size().x > SCREEN.max().x,
+        );
         let stature = look.stature();
         // `perch_view::tick` : lâchée doucement, ou au bout d'un lancer, elle se pose peut-être
         let now_moving = carried(&capri);
@@ -612,6 +848,34 @@ fn live(seed: u64, dressed: (bool, bool, bool, u8), tally: &mut Tally) -> Result
         }
         if look.gesture() == Some(Gesture::Rise) && acting != Some(Gesture::Rise) {
             tally.rises += 1;
+        }
+        // une intro qu'elle joue : finie ou pas (`Running::tick`, `Running::end_intro`)
+        if let Some(end) = look.take_performed() {
+            if let Err(what) = performed(end, &mut performing, &look, &capri, hidden, tally) {
+                return fail(format!("image {frame} : {what}"), &story);
+            }
+            story.push(format!("{frame} : son intro finie : {end:?}"));
+            roamer.came_back(now, &capri);
+            asked = false;
+            away_since = None;
+        }
+        if let Some((act, steps, _, _)) = performing.as_mut() {
+            *steps += 1;
+            if *steps > PERFORM_LONGEST || !look.is_performing() {
+                return fail(format!("image {frame} : son intro {act:?} dure depuis {steps} pas"), &story);
+            }
+            let drawn = look.picture(&capri).drawing;
+            let fits = match (look.performing(), drawn) {
+                (Some(Act::Fall), Drawing::Life(cell)) => cell.strip == life::Strip::Dangle,
+                (Some(Act::Walk), Drawing::Life(cell)) => {
+                    matches!(cell.strip, life::Strip::Walk | life::Strip::Arrive)
+                }
+                (Some(Act::Gather), Drawing::Gather(_)) => true,
+                _ => false,
+            };
+            if !fits || look.performing() != Some(*act) || capri.perched().is_some() {
+                return fail(format!("image {frame} : son intro {act:?}, et {drawn:?}"), &story);
+            }
         }
         // sa marche : jamais à reculons, toujours vers où elle regarde
         if look.is_walking(&capri) || walk.is_some() {
@@ -804,6 +1068,32 @@ fn live(seed: u64, dressed: (bool, bool, bool, u8), tally: &mut Tally) -> Result
                 }
             }
         }
+        // effacée pour « Voir une intro » : l'intro se joue (une intro en images, ou « rien » : elle
+        // revient tout de suite, l'intro jouée sans elle)
+        if let Some(entry) = encore.filter(|_| look.is_offstage()) {
+            encore = None;
+            tally.encores_started += 1;
+            away_since = None;
+            match entry.play {
+                Play::Act(act) => {
+                    let place = capri_place(&capri);
+                    if !look.perform(&mut capri, act, frame) {
+                        return fail(
+                            format!("image {frame} : l'intro {act:?} refusée une fois effacée"),
+                            &story,
+                        );
+                    }
+                    tally.performed[act_index(act)] += 1;
+                    performing = Some((act, 0, place, false));
+                }
+                Play::Film(_) | Play::Plain => {
+                    look.enter(&mut capri, frame);
+                    roamer.came_back(now, &capri);
+                    asked = false;
+                }
+            }
+            story.push(format!("{frame} : l'intro {} commence", entry.key));
+        }
         if look.is_between() {
             return fail(format!("image {frame} : effacée entre deux places, et pas déplacée"), &story);
         }
@@ -874,8 +1164,8 @@ fn live(seed: u64, dressed: (bool, bool, bool, u8), tally: &mut Tally) -> Result
             }
             tally.walks_arrived += usize::from(arrived);
         }
-        // jamais coincée
-        if !hidden && !look.is_here() {
+        // jamais coincée (une intro qu'elle joue est bornée plus haut)
+        if !hidden && !look.is_here() && !look.is_performing() {
             let since = *away_since.get_or_insert(frame);
             if frame - since > SETTLED_WITHIN && frame - toggled_at > SETTLED_WITHIN {
                 return fail(format!("image {frame} : montrée, mais pas là depuis l'image {since}"), &story);
@@ -922,12 +1212,118 @@ fn live(seed: u64, dressed: (bool, bool, bool, u8), tally: &mut Tally) -> Result
                 _ => {}
             }
         }
+        // hors d'une intro qu'elle joue, jamais plus hors de l'écran qu'au pas précédent ; et lâchée en
+        // partie dehors, elle revient dedans à chaque pas
+        let out = outside(&capri);
+        if look.is_performing() {
+            last_out = None;
+        } else {
+            if let Some(last) = last_out
+                && out > last + 0.01
+            {
+                return fail(format!("image {frame} : plus hors de l'écran ({last} → {out})"), &story);
+            }
+            if out > 0.5 {
+                tally.outside += 1;
+                if capri.stance() == Stance::Floating && last_out.is_some_and(|last| out >= last) {
+                    return fail(format!("image {frame} : lâchée dehors, elle n'y revient pas"), &story);
+                }
+            }
+            last_out = Some(out);
+        }
         // son empreinte : où elle est, ce qu'on dessine
         let picture = look.picture(&capri);
         (picture.rect.min.x as i64, picture.rect.min.y as i64, capri.perched().map(|spot| spot.window))
             .hash(&mut print);
     }
     Ok(print.finish())
+}
+
+/// À la prise, son corps ne saute pas : debout, il ne bouge que de ce que la prise rejoue du
+/// curseur (son glissé vers sa mèche compris), même en partie hors de l'écran ; assise, elle se
+/// lève sous le curseur (ailleurs).
+fn no_jump(
+    capri: &Capri,
+    grab: &capri_core::input::Grab,
+    seated: bool,
+    before: Vec2,
+    tally: &mut Tally,
+) -> Result<(), String> {
+    if seated {
+        return Ok(());
+    }
+    let moved = (capri.position() - before).length();
+    if moved > 1.5 * trail_length(grab) + 1.0 {
+        return Err(format!("un saut de {moved} px à la prise (curseur : {} px)", trail_length(grab)));
+    }
+    tally.grabbed_outside += usize::from(outside(capri) > 0.5);
+    Ok(())
+}
+
+/// Sa place pour une intro qu'elle joue, telle que `Look::perform` la prend (ses pieds, debout).
+fn capri_place(capri: &Capri) -> Vec2 {
+    let mut probe = capri.clone();
+    probe.set_at(probe.feet());
+    probe.feet()
+}
+
+/// Une intro qu'elle jouait a fini par `end` : ce qui doit tenir alors.
+fn performed(
+    end: End,
+    performing: &mut Option<(Act, u64, Vec2, bool)>,
+    look: &Look,
+    capri: &Capri,
+    hidden: bool,
+    tally: &mut Tally,
+) -> Result<(), String> {
+    let Some((act, _, place, _)) = performing.take() else {
+        return Err(format!("une intro finie sans intro : {end:?}"));
+    };
+    if look.is_performing() {
+        return Err(format!("{act:?} finie et toujours jouée"));
+    }
+    match end {
+        End::Played { .. } => {
+            tally.played += 1;
+            // jouée jusqu'au bout : à sa place (une autre taille l'aurait coupée)
+            if (capri.feet() - place).length() > 1.0 {
+                return Err(format!("{act:?} jouée, et en {:?} au lieu de {place:?}", capri.feet()));
+            }
+        }
+        End::Cut { why: intro::Cut::Hidden, .. } => {
+            tally.cut_hidden += 1;
+            if !hidden || !look.is_gone() {
+                return Err(format!("{act:?} coupée en la cachant, et pas cachée"));
+            }
+        }
+        End::Cut { why: intro::Cut::Talked, .. } => {
+            tally.cut_talked += 1;
+            // matérialisée à sa place
+            if (capri.feet() - place).length() > 1.0 || capri.stance() != Stance::Floating {
+                return Err(format!("{act:?} coupée en lui parlant, et en {:?}", capri.feet()));
+            }
+        }
+        End::Cut { why: intro::Cut::Resized, .. } => {
+            tally.cut_resized += 1;
+            // à sa place, à sa nouvelle taille (dans l'écran), sans se relever
+            let mut probe = capri.clone();
+            probe.set_at(place);
+            if (capri.feet() - probe.feet()).length() > 1.0 || capri.stance() != Stance::Floating {
+                return Err(format!("{act:?} coupée par sa taille, et en {:?}", capri.feet()));
+            }
+            if look.gesture().is_some() {
+                return Err(format!("{act:?} coupée par sa taille, et {:?}", look.gesture()));
+            }
+        }
+        End::Cut { why: intro::Cut::Grabbed, .. } => {
+            tally.cut_grabbed += 1;
+            if !capri.is_held() && !matches!(capri.stance(), Stance::Thrown { .. }) {
+                return Err(format!("{act:?} coupée en l'attrapant, et pas tenue : {:?}", capri.stance()));
+            }
+        }
+        other => return Err(format!("{act:?} : une fin d'intro en images, {other:?}")),
+    }
+    Ok(())
 }
 
 /// Le curseur serait-il sur elle, le point posé en `at`, la place `reach` autour, avec la marge de
@@ -1019,6 +1415,24 @@ fn random_gestures_never_leave_her_stuck_hidden_or_off_her_edge() {
         total.walks_arrived += tally.walks_arrived;
         total.stuck += tally.stuck;
         total.unstuck += tally.unstuck;
+        for (sum, count) in total.performed.iter_mut().zip(tally.performed) {
+            *sum += count;
+        }
+        total.played += tally.played;
+        total.cut_hidden += tally.cut_hidden;
+        total.cut_talked += tally.cut_talked;
+        total.cut_grabbed += tally.cut_grabbed;
+        total.cut_resized += tally.cut_resized;
+        total.encores += tally.encores;
+        total.encores_started += tally.encores_started;
+        total.encores_refused += tally.encores_refused;
+        total.encores_turned_back += tally.encores_turned_back;
+        total.grabbed_outside += tally.grabbed_outside;
+        total.gliding_outside += tally.gliding_outside;
+        total.outside += tally.outside;
+        total.walked_in += tally.walked_in;
+        // « Voir une intro », servi et refusé, dans chaque garde-robe
+        assert!(tally.encores_started > 30 && tally.encores_refused > 10, "{wardrobe:?} : {tally:?}");
     }
     println!("en tout : {total:?}");
     assert!(failures.is_empty(), "{} vies en échec sur {}", failures.len(), SEEDS as usize * WARDROBES.len());
@@ -1041,6 +1455,21 @@ fn random_gestures_never_leave_her_stuck_hidden_or_off_her_edge() {
         "{total:?}"
     );
     assert!(total.stuck > 20 && total.unstuck > 10, "{total:?}");
+    // chacune de ses intros jouées, jusqu'au bout, et coupée de chaque façon
+    assert!(total.performed.iter().all(|&count| count > 20), "{total:?}");
+    assert!(
+        total.played > 50 && total.cut_hidden > 3 && total.cut_talked > 3 && total.cut_grabbed > 3,
+        "{total:?}"
+    );
+    assert!(total.encores_turned_back > 3 && total.cut_resized > 3, "{total:?}");
+    // prise en partie hors de l'écran sans saut, tenue dehors, revenue dedans ; entrée en marchant
+    assert!(
+        total.grabbed_outside > 10
+            && total.gliding_outside > 3
+            && total.outside > 10
+            && total.walked_in > 100,
+        "{total:?}"
+    );
 }
 
 #[test]

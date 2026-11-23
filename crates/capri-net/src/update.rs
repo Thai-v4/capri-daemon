@@ -543,7 +543,12 @@ mod tests {
         let secure = Route::new(true, &["127.0.0.1"], address.port(), 3).expect("une règle");
         let url = format!("https://{address}/latest.json");
         let expected = if crate::TLS { Failure::Insecure } else { Failure::NoTls };
-        assert_eq!(fetch(&secure, &url, QUICK), Err(expected));
+        // pas les délais courts des autres essais : sur une machine chargée, le TLS du système
+        // met parfois plus d'une seconde à engager sa négociation, et l'essai concluait alors à
+        // un délai dépassé au lieu d'une connexion pas sûre (vu le 23 novembre 2026). Le serveur
+        // répond tout de suite : un délai long n'allonge pas l'essai.
+        let patient = Limits { connect: Duration::from_secs(10), per_call: Duration::from_secs(10) };
+        assert_eq!(fetch(&secure, &url, patient), Err(expected));
         // la règle de GitHub, sous Linux : refusée avant toute connexion
         if !crate::TLS {
             assert_eq!(fetch(&Route::github(), &manifest_url(), QUICK), Err(Failure::NoTls));

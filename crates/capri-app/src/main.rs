@@ -3,9 +3,11 @@
 //! (jalon 3), et on peut lui parler : elle répond dans une bulle, avec le modèle qu'on lui a donné,
 //! local ou chez un fournisseur (jalon 4). Elle vit sa vie : de temps en temps, elle s'efface là où
 //! elle est et apparaît ailleurs, de préférence assise sur une autre fenêtre (`roam_view`).
-//! Au lancement, avant qu'elle n'apparaisse, une intro prend l'écran (`intro_view`), puis elle se
-//! matérialise à sa place et dit bonjour ; « Intro au démarrage » de son menu la retire
-//! (`intro_setup`). Elle bouge et réagit (`capri_core::look`) : tenue, elle pend ; lâchée, elle se
+//! Au lancement, avant qu'elle n'apparaisse, une intro tirée au sort (`capri_core::intro`) : en
+//! images, elle prend l'écran (`intro_view`), ou elle la joue elle-même (elle tombe du ciel, arrive
+//! en marchant, se rassemble), ou rien ; puis elle est à sa place et dit bonjour ; « Intro au
+//! démarrage » de son menu la retire (`intro_setup`), « Voir une intro » les montre l'une après
+//! l'autre. Elle bouge et réagit (`capri_core::look`) : tenue, elle pend ; lâchée, elle se
 //! relève ; un clic sur elle (un appui bref, relâché sans la déplacer : `capri_core::input::Hand`)
 //! la fait sourire, ou lui donne un éclat assise ; elle sourit quand Claude Code finit son tour ;
 //! elle marche d'une place à l'autre en bas de l'écran.
@@ -88,7 +90,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result};
 use banner_view::BannerView;
 use capri_core::input::{CLICK_SLOP, Hand, Let};
-use capri_core::intro::{Cut, End};
+use capri_core::intro::{self, Cut, End, Entry, Play};
 use capri_core::look::{Gesture, Look, Picture};
 use capri_core::{
     Button, Capri, Press, Rect, Scale, Stance, Vec2, frame_at, interpret_press, pace, place_input,
@@ -253,9 +255,14 @@ struct Running {
     music: music_view::MusicView,
     /// Vivre sa vie : changer d'elle-même de place, et sur un geste.
     roam: roam_view::RoamView,
-    /// L'intro du lancement, tant qu'elle se joue : elle prend l'écran, et Capri n'est pas encore
-    /// là. Une fois finie ou coupée, tout ce qu'elle tenait est lâché.
-    intro: Option<intro_view::IntroView>,
+    /// L'intro, tant qu'elle se joue (au lancement, ou sur « Voir une intro ») : en images, elle
+    /// prend l'écran, et Capri n'est pas encore là ; jouée par elle, rien au-dessus de sa tête. Une
+    /// fois finie ou coupée, tout ce qu'elle tenait est lâché.
+    intro: Option<Showing>,
+    /// « Voir une intro » : l'intro qui se jouera une fois qu'elle se sera effacée.
+    encore: Option<&'static Entry>,
+    /// La dernière intro montrée (son nom court) : « Voir une intro » montre la suivante.
+    intro_seen: Option<&'static str>,
     /// Image d'animation courante.
     frame: u64,
     /// Ce qui est à l'écran.
@@ -284,6 +291,25 @@ struct Running {
     /// Le geste qu'elle jouait au pas précédent, et depuis quand, pour n'écrire au journal que
     /// ceux qui commencent.
     gesture: Option<(Gesture, u64)>,
+}
+
+/// Une intro en cours.
+struct Showing {
+    entry: &'static Entry,
+    /// Celle du lancement : son bonjour l'attend. Sur « Voir une intro », pas de bonjour.
+    at_launch: bool,
+    /// Ses images et leur thread, pour une intro en images qui a pu commencer.
+    film: Option<intro_view::IntroView>,
+}
+
+/// Cette intro est-elle possible : ses images toutes là (sans les lire), ou ses planches, et
+/// assez de place d'où elle est (`capri`) ?
+fn intro_possible(entry: &Entry, look: &Look, capri: &Capri) -> bool {
+    match entry.play {
+        Play::Film(film) => assets::intro::present(film),
+        Play::Act(act) => look.can_perform(act, capri),
+        Play::Plain => true,
+    }
 }
 
 impl ApplicationHandler for App {
@@ -397,27 +423,30 @@ impl App {
         let mut capri = Capri::new(body, bounds, start_at);
         capri.set_feet(figure.look.standing_feet());
         capri.set_leave_frames(figure.look.leave_frames());
-        // l'intro d'abord, au lancement seulement, case cochée et jamais pendant un essai : elle
-        // se matérialisera quand l'intro finira ; sans intro, elle se matérialise dès l'image 0 (le
-        // premier dessin est déjà celui de son arrivée)
-        let intro_enabled = brain_setup::config_dir().and_then(|directory| intro_setup::load(&directory));
-        let intro_enabled = intro_enabled.unwrap_or_else(|err| {
-            log::warn!("réglage « Intro au démarrage » illisible, elle la joue : {err:#}");
-            true
-        });
+        // l'intro d'abord, au lancement seulement, case cochée et jamais pendant un essai : tirée
+        // au sort parmi celles que ses images permettent, jamais la même que la dernière fois ; elle
+        // sera là quand l'intro finira ; sans intro, elle se matérialise dès l'image 0 (le premier
+        // dessin est déjà celui de son arrivée)
         let testing = intro_setup::testing(|name| std::env::var_os(name));
-        let intro = if intro_enabled && !testing { start_intro() } else { None };
-        if intro.is_none() {
+        // la graine de sa vie : ses trajets, son intro, et son bonjour, attendu dès qu'elle commence
+        let seed = life_seed();
+        let directory = brain_setup::config_dir()
+            .inspect_err(|err| log::warn!("intro : pas de dossier de réglages : {err:#}"))
+            .ok();
+        let intro_settings = intro_setup::opening(directory.as_deref(), testing, |last| {
+            let look = &figure.look;
+            intro::draw(seed, |entry| intro_possible(entry, look, &capri), last)
+        });
+        let opening = intro_settings.entry;
+        if opening.is_none() {
             figure.look.enter(&mut capri, 0);
         }
         #[cfg(any(target_os = "macos", windows))]
         {
-            self.intro_enabled = intro_enabled;
+            self.intro_enabled = intro_settings.enabled;
         }
-        // la graine de sa vie : ses trajets, et son bonjour, attendu dès que l'intro commence
-        let seed = life_seed();
         let mut banner = BannerView::new();
-        if intro.is_some() {
+        if opening.is_some() {
             banner.expect_greeting(capri_chat::greeting::pick(seed));
         }
         let perch_enabled = brain_setup::config_dir().and_then(|directory| perch_setup::load(&directory));
@@ -471,7 +500,7 @@ impl App {
                 menus.set_music_enabled(music_enabled);
                 menus.set_roam_enabled(roam_enabled);
                 menus.set_login_registered(registered);
-                menus.set_intro_enabled(intro_enabled);
+                menus.set_intro_enabled(intro_settings.enabled);
                 menus.set_updates_enabled(self.updates_enabled);
                 menus.set_size(scale);
             }
@@ -502,7 +531,7 @@ impl App {
         log::info!("écran : {refresh:?} Hz");
 
         let now = Instant::now();
-        Ok(Running {
+        let mut running = Running {
             overlay,
             renderer,
             capri,
@@ -515,7 +544,9 @@ impl App {
             perch: perch_view::PerchView::new(perch_enabled),
             music,
             roam: roam_view::RoamView::new(roam_enabled, rehearsing, seed),
-            intro,
+            intro: None,
+            encore: None,
+            intro_seen: None,
             frame: 0,
             drawn: None,
             awaiting_present: true,
@@ -527,7 +558,11 @@ impl App {
             unsaved_scale: None,
             hand: Hand::new(),
             gesture: None,
-        })
+        };
+        if let Some(entry) = opening {
+            running.begin_intro(entry, true);
+        }
+        Ok(running)
     }
 
     /// Traite ce que l'overlay a rapporté : clics, changements d'écran, redessin.
@@ -665,6 +700,7 @@ impl App {
                     menu::Action::ToggleMusic => self.toggle_music(),
                     menu::Action::ToggleRoam => self.toggle_roam(),
                     menu::Action::Wander => self.wander(),
+                    menu::Action::SeeIntro => self.see_intro(),
                     menu::Action::Larger => self.choose_size(Scale::larger),
                     menu::Action::Smaller => self.choose_size(Scale::smaller),
                     menu::Action::OriginalSize => self.choose_size(|_| Scale::ORIGINAL),
@@ -1022,22 +1058,26 @@ impl App {
     #[cfg(any(target_os = "macos", windows))]
     fn toggle_intro(&mut self) {
         let enabled = !self.intro_enabled;
-        let (text, tone) =
-            match brain_setup::config_dir().and_then(|directory| intro_setup::save(&directory, enabled)) {
-                Ok(_) => {
-                    self.intro_enabled = enabled;
-                    let text = if enabled {
-                        "Au prochain lancement, je ferai mon entrée"
-                    } else {
-                        "Au prochain lancement, j'apparaîtrai sans intro"
-                    };
-                    (text, capri_claude::Tone::Done)
-                }
-                Err(err) => {
-                    log::error!("réglage « Intro au démarrage » : {err:#}");
-                    ("Je n'ai pas pu retenir ce choix, détails dans le journal", capri_claude::Tone::Failed)
-                }
-            };
+        let saved = brain_setup::config_dir().and_then(|directory| {
+            // la dernière intro jouée reste retenue ; un fichier illisible est réécrit sans elle
+            let settings = intro_setup::load(&directory).unwrap_or_default();
+            intro_setup::save(&directory, &intro_setup::IntroSettings { enabled, ..settings })
+        });
+        let (text, tone) = match saved {
+            Ok(_) => {
+                self.intro_enabled = enabled;
+                let text = if enabled {
+                    "Au prochain lancement, je ferai mon entrée"
+                } else {
+                    "Au prochain lancement, j'apparaîtrai sans intro"
+                };
+                (text, capri_claude::Tone::Done)
+            }
+            Err(err) => {
+                log::error!("réglage « Intro au démarrage » : {err:#}");
+                ("Je n'ai pas pu retenir ce choix, détails dans le journal", capri_claude::Tone::Failed)
+            }
+        };
         self.with_banner(|banner| banner.notify(text, tone));
         if let Some(menus) = &self.menus {
             menus.set_intro_enabled(self.intro_enabled);
@@ -1055,6 +1095,41 @@ impl App {
         // pendant l'intro, elle n'est pas encore là : rien ne change
         if let Some(r) = self.running.as_mut().filter(|r| r.intro.is_none()) {
             r.roam.ask();
+        }
+    }
+
+    /// « Voir une intro » : la suivante de la liste (`capri_core::intro::next`), tout de suite :
+    /// elle s'efface, l'intro se joue, elle revient, sans bonjour. Refusée pendant qu'on se parle,
+    /// qu'on la tient, qu'elle marche ou change de place, qu'elle apparaît ou s'efface, et pendant
+    /// une intro ; cachée, rien. Rien ne change alors ; « on se parle » le dit, comme « Changer de
+    /// place ».
+    #[cfg(any(target_os = "macos", windows))]
+    fn see_intro(&mut self) {
+        if self.hidden {
+            log::debug!("« Voir une intro » : elle est cachée, rien ne change");
+            return;
+        }
+        let Some(r) = self.running.as_mut() else { return };
+        if r.intro.is_some() || r.encore.is_some() {
+            log::debug!("« Voir une intro » : une intro est déjà en cours");
+            return;
+        }
+        let conversing = r.banner.is_engaged() || r.overlay.input_is_open();
+        r.figure.look.set_conversing(conversing);
+        let look = &r.figure.look;
+        let entry = intro::next(r.intro_seen, |entry| intro_possible(entry, look, &r.capri));
+        let answer = r.figure.look.bow_out(&mut r.capri, r.frame);
+        let encore = intro_view::encore(answer, entry);
+        log::debug!("{}", encore.log);
+        if encore.accepted {
+            r.encore = Some(entry);
+            r.overlay.request_redraw();
+        }
+        if encore.forget_greeting {
+            r.banner.forget_greeting();
+        }
+        if let Some(text) = encore.say {
+            r.banner.notify(text, capri_claude::Tone::Done);
         }
     }
 
@@ -1352,15 +1427,22 @@ impl Running {
     /// Le curseur est-il sur elle (au pixel près, d'après la pose dessinée, avec une petite
     /// marge) ?
     fn is_over(&self, cursor: Vec2) -> bool {
-        // pendant l'intro, elle n'est pas encore là : rien ne s'attrape
-        self.intro.is_none() && self.figure.look.is_over(&self.capri, cursor)
+        // pendant une intro en images, elle n'est pas encore là : rien ne s'attrape
+        self.film().is_none() && self.figure.look.is_over(&self.capri, cursor)
+    }
+
+    /// L'intro en images en cours, s'il y en a une.
+    fn film(&self) -> Option<&intro_view::IntroView> {
+        self.intro.as_ref().and_then(|showing| showing.film.as_ref())
     }
 
     /// On la cache : elle s'efface, là où elle est dessinée ; la fenêtre se cache une fois
     /// qu'elle est partie (`tick`), ou tout de suite sans ses planches de vie, comme avant.
     fn vanish(&mut self) {
         self.banner.forget_greeting();
-        // pendant l'intro : elle s'arrête net, et Capri, qui n'était pas encore là, est cachée
+        // pendant une intro : elle s'arrête net, et Capri est cachée ; en train de s'effacer pour
+        // une intro, elle finit de s'effacer et n'ira pas plus loin
+        self.encore = None;
         if self.intro.is_some() {
             return self.cut_intro(Cut::Hidden);
         }
@@ -1412,16 +1494,17 @@ impl Running {
         }
         self.frame = frame_at(now - self.start);
         self.capri.step(dt, self.frame);
-        if self.intro.is_some() {
+        if self.film().is_some() {
             return self.intro_tick(now);
         }
-        // en train de s'effacer, comme cachée : elle suit Claude Code sans rien dire ; en train
-        // d'apparaître, ce qui attend son tour attend encore
-        if self.figure.look.is_away() {
+        // en train de s'effacer, comme cachée, ou pendant une intro qu'elle joue : elle suit Claude
+        // Code sans rien dire ; en train d'apparaître, ce qui attend son tour attend encore
+        if self.figure.look.is_away() || self.intro.is_some() {
             self.banner.listen_only();
         } else {
-            let here = self.figure.look.is_here();
-            self.banner.update(self.frame, self.overlay.scale_factor(), &mut self.renderer, here);
+            let look = &self.figure.look;
+            let (here, still) = (look.is_here(), look.gesture().is_none());
+            self.banner.update(self.frame, self.overlay.scale_factor(), &mut self.renderer, here, still);
         }
         // sa fenêtre est lue le plus tard possible avant de dessiner : le dessin la montre plus fraîche
         let (seconds, period) = (self.seconds(), pace::refresh_period(self.refresh).as_secs_f64());
@@ -1432,13 +1515,29 @@ impl Running {
         // on se parle : son geste s'arrête, et aucun ne commence
         let conversing = self.banner.is_engaged() || self.overlay.input_is_open();
         self.figure.look.set_conversing(conversing);
+        // son bonjour d'abord : tant qu'il attend, aucun geste d'elle-même
+        self.figure.look.set_greeting_due(self.banner.greeting_due());
         self.figure.look.update(&mut self.capri, self.frame, talking, music);
+        // une intro qu'elle joue : finie (jouée, ou coupée parce qu'on l'attrape) ; elle dit
+        // toujours comment, mais si elle ne le disait pas, l'intro ne resterait pas ouverte
+        if let Some(end) = self.figure.look.take_performed() {
+            self.end_intro(end);
+        } else if self.intro.as_ref().is_some_and(|showing| showing.film.is_none())
+            && !self.figure.look.is_performing()
+        {
+            self.end_intro(End::Played { shown: 0 });
+        }
         // Claude Code a fini son tour : debout et libre, elle sourit (une fois par minute au plus)
         if self.banner.take_turn_end() && self.figure.look.cheer(&mut self.capri, self.frame) {
             log::debug!("Claude Code a fini son tour : elle sourit");
         }
         // sa vie : elle part d'elle-même ailleurs, ou y apparaît, effacée d'ici
         self.roam_step(seconds);
+        // « Voir une intro » : effacée, l'intro se joue
+        if let Some(entry) = self.encore.filter(|_| self.figure.look.is_offstage()) {
+            self.encore = None;
+            self.begin_intro(entry, false);
+        }
         // une prise faite au relâchement même : lâchée maintenant, chacun l'ayant vue tenue à ce pas
         // (la veille de sa fenêtre, sa vie, son dessin) ; au pas suivant, elle se pose, se relève,
         // ou reste là où on l'a mise
@@ -1471,14 +1570,15 @@ impl Running {
         }
     }
 
-    /// Un pas pendant l'intro : elle seule à l'écran, et rien ne s'attrape. Capri n'est pas encore
-    /// là : rien au-dessus de sa tête (son bandeau suit Claude Code sans rien dessiner), ni sa
-    /// fenêtre suivie, ni sa vie, ni la musique.
+    /// Un pas pendant une intro en images : elle seule à l'écran, et rien ne s'attrape. Capri n'est
+    /// pas encore là : rien au-dessus de sa tête (son bandeau suit Claude Code sans rien dessiner),
+    /// ni sa fenêtre suivie, ni sa vie, ni la musique.
     fn intro_tick(&mut self, now: Instant) {
         self.banner.listen_only();
         self.music.tick(now, false);
-        let Some(view) = self.intro.as_mut() else { return };
-        if let Some(end) = view.step(self.frame, &mut self.renderer) {
+        let frame = self.frame;
+        let Some(view) = self.intro.as_mut().and_then(|showing| showing.film.as_mut()) else { return };
+        if let Some(end) = view.step(frame, &mut self.renderer) {
             return self.end_intro(end);
         }
         if self.drawn != Some(self.scene()) {
@@ -1486,38 +1586,106 @@ impl Running {
         }
     }
 
-    /// L'intro est coupée (`why`), si elle se joue encore.
+    /// Une intro commence, à l'image courante : au lancement (`at_launch` : son bonjour l'attend),
+    /// ou effacée pour « Voir une intro ». En images, son thread est lancé (sans ses images, pas
+    /// d'intro) ; jouée par elle, elle la joue ; « rien » : elle se matérialise, et c'est fini.
+    fn begin_intro(&mut self, entry: &'static Entry, at_launch: bool) {
+        self.intro_seen = Some(entry.key);
+        self.intro = Some(Showing { entry, at_launch, film: None });
+        self.drawn = None;
+        self.overlay.request_redraw();
+        match entry.play {
+            Play::Film(film) => {
+                let started = match assets::intro::sequence(film) {
+                    Some(sequence) => intro_view::IntroView::start(sequence, self.frame),
+                    None => Err(End::Missing(intro::Missing::Absent { found: 0 })),
+                };
+                match started {
+                    Ok(view) => {
+                        if let Some(showing) = self.intro.as_mut() {
+                            showing.film = Some(view);
+                        }
+                    }
+                    Err(end) => self.end_intro(end),
+                }
+            }
+            Play::Act(act) => {
+                if !self.figure.look.perform(&mut self.capri, act, self.frame) {
+                    // ses planches lui manquent (ce qui l'a fait tirer l'a vérifié) : elle apparaît
+                    self.figure.look.enter(&mut self.capri, self.frame);
+                    self.end_intro(End::Missing(intro::Missing::Absent { found: 0 }));
+                }
+            }
+            Play::Plain => {
+                self.figure.look.enter(&mut self.capri, self.frame);
+                self.end_intro(End::Played { shown: 0 });
+            }
+        }
+    }
+
+    /// L'intro est coupée (`why`), si elle se joue encore ; on lui parle pendant qu'elle s'efface
+    /// pour une intro qui n'a pas commencé : elle revient sur ses pas, sans intro.
     fn cut_intro(&mut self, why: Cut) {
-        if let Some(view) = self.intro.as_mut() {
+        if why == Cut::Talked && self.encore.take().is_some() {
+            self.figure.look.turn_back(&mut self.capri, self.frame);
+        }
+        let Some(showing) = self.intro.as_mut() else { return };
+        if let Some(view) = showing.film.as_mut() {
             let end = view.cut(why);
+            return self.end_intro(end);
+        }
+        match why {
+            Cut::Talked => self.figure.look.cut_performance(&mut self.capri, self.frame),
+            Cut::Hidden => self.figure.look.vanish(&mut self.capri, self.frame),
+            // une prise, une nouvelle taille : son dessin les voit lui-même, à son pas suivant
+            Cut::Grabbed | Cut::Resized => {}
+        }
+        if let Some(end) = self.figure.look.take_performed() {
             self.end_intro(end);
         }
     }
 
     /// L'intro est finie (`end`) : tout ce qu'elle tenait est lâché, et sa ligne écrite au journal.
-    /// Coupée en la cachant, Capri est cachée d'un coup ; sinon elle se matérialise à sa place, et
-    /// dit bonjour si l'intro s'est jouée.
+    /// Coupée en la cachant, Capri est cachée ; sinon elle est là (après une intro en images, elle
+    /// se matérialise à sa place), et, au lancement, dit bonjour si l'intro s'est jouée.
     fn end_intro(&mut self, end: End) {
-        let Some(view) = self.intro.take() else { return };
-        log::info!("{}", view.close(end, &mut self.renderer));
+        let Some(showing) = self.intro.take() else { return };
+        let film = match showing.entry.play {
+            Play::Film(film) => Some(film),
+            Play::Act(_) | Play::Plain => None,
+        };
+        let closing = intro_view::closing(end, film.is_some());
+        let had_canvas = showing.film.is_some();
+        let line = match showing.film {
+            Some(view) => view.close(end, showing.entry.name, &mut self.renderer),
+            None => intro_view::journal_line(showing.entry.name, film, end, None),
+        };
+        log::info!("{line}");
         self.drawn = None;
         // son bonjour, s'il est encore attendu, attend qu'elle soit là et libre ; ou il n'y en a pas
-        self.banner.intro_over(end.greets());
-        if end.hides() {
+        if showing.at_launch {
+            self.banner.intro_over(end.greets());
+        }
+        if closing.blank {
             // une image vide avant de cacher la fenêtre : rien de l'intro n'y reste, qu'elle
             // montrerait un instant quand on la montre de nouveau
             let overlay = &self.overlay;
             self.renderer.render(&[], None, || overlay.pre_present_notify());
         }
-        // la toile lâchée est rendue tout de suite, même si plus rien ne se dessine ensuite (cachée,
-        // ou l'écran verrouillé) : wgpu ne le ferait qu'à la prochaine soumission
-        self.renderer.settle();
+        if had_canvas {
+            // la toile lâchée est rendue tout de suite, même si plus rien ne se dessine ensuite
+            // (cachée, ou l'écran verrouillé) : wgpu ne le ferait qu'à la prochaine soumission
+            self.renderer.settle();
+        }
         if end.hides() {
-            self.figure.look.hide_unseen(self.frame);
+            self.figure.look.hide_unseen(&mut self.capri, self.frame);
             self.overlay.set_shown(false);
             return;
         }
-        self.figure.look.enter(&mut self.capri, self.frame);
+        // après ses images, elle se matérialise ; une intro qu'elle joue l'a déjà fait
+        if closing.enter {
+            self.figure.look.enter(&mut self.capri, self.frame);
+        }
         let seconds = self.seconds();
         self.roam.came_back(seconds, &self.capri);
         self.overlay.request_redraw();
@@ -1593,7 +1761,7 @@ impl Running {
         let now = Instant::now();
         let carried = matches!(
             self.capri.stance(),
-            Stance::Held { .. } | Stance::Thrown { .. } | Stance::Walking { .. }
+            Stance::Held { .. } | Stance::Thrown { .. } | Stance::Walking { .. } | Stance::Falling { .. }
         );
         let hurried = !hidden && (carried || self.perch.hurried(&self.capri, self.seconds()));
         self.by_screen = self.overlay.follow_refresh(hurried);
@@ -1626,13 +1794,13 @@ impl Running {
     /// que le texte reste lisible).
     fn scene(&self) -> Scene {
         let (width, height) = self.overlay.size();
-        if let Some(view) = &self.intro {
+        if let Some(view) = self.film() {
             return Scene::Intro(view.picture(Vec2::new(width as f32, height as f32)));
         }
         let bounds = Rect::new(Vec2::ZERO, Vec2::new(width as f32, height as f32));
         let shown = self.figure.look.shown(&self.capri);
-        // en train de s'effacer, son bandeau s'en va avec elle
-        let banner = if self.figure.look.is_away() {
+        // en train de s'effacer, son bandeau s'en va avec elle ; pendant une intro qu'elle joue, rien
+        let banner = if self.figure.look.is_away() || self.intro.is_some() {
             None
         } else {
             self.banner.draw(self.frame, shown, bounds, self.overlay.scale_factor())
@@ -1642,8 +1810,10 @@ impl Running {
 
     fn draw(&mut self) {
         let scene = self.scene();
+        let (width, height) = self.overlay.size();
+        let screen = Rect::new(Vec2::ZERO, Vec2::new(width as f32, height as f32));
         let (layers, banner) = match scene {
-            Scene::Her(picture, banner) => (self.figure.layers(&picture), banner),
+            Scene::Her(picture, banner) => (self.figure.layers(&picture, screen), banner),
             Scene::Intro(shown) => {
                 (shown.map(|(id, _, rect)| vec![intro_view::layer(id, rect)]).unwrap_or_default(), None)
             }
@@ -1693,17 +1863,6 @@ fn moves_of(look: &Look) -> String {
     ];
     let present: Vec<&str> = named.iter().filter(|(here, _)| *here).map(|&(_, name)| name).collect();
     if present.is_empty() { "aucun".to_owned() } else { present.join(", ") }
-}
-
-/// L'intro du lancement, si ses images sont là (sinon une ligne au journal, et pas d'intro).
-fn start_intro() -> Option<intro_view::IntroView> {
-    let started = match assets::intro::sequence() {
-        Some(sequence) => intro_view::IntroView::start(sequence, 0),
-        None => Err(End::Missing(capri_core::intro::Missing::Absent { found: 0 })),
-    };
-    started
-        .inspect_err(|&end| log::info!("{}", intro_view::journal_line(end, capri_core::intro::COUNT, None)))
-        .ok()
 }
 
 /// Le bouton de winit, dans le vocabulaire de `capri-core`.

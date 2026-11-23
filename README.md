@@ -329,39 +329,66 @@ faudra `tools/install-macos.sh`, et la ligne de son menu le dira.
 Écrit et testé sans écran le 23 novembre 2026, images fixes rendues et regardées ; regardé par l'utilisateur le soir même, la Capri du dépôt lancée avec ses vrais réglages : vu et jugé bon dans l'ensemble, pas point par point
 (la liste est dans « État de validation »).
 
-### Son intro au démarrage, puis son bonjour
+### Ses intros au démarrage, puis son bonjour
 
-Le deuxième lot. Au lancement, avant d'apparaître à sa place, elle vient voir ton écran de tout
-près :
+Le deuxième lot, puis le sixième. Au lancement, avant de prendre sa place, elle joue une intro,
+**tirée au sort** parmi six, jamais deux lancements de suite la même :
 
-- **l'intro** : 22 images en plein écran (« Up close », du projet Capri), 12 dessins par seconde,
-  1,8 s. Elle surgit, regarde autour d'elle, colle son visage à la vitre avec un grand sourire,
-  puis repart. L'image remplit l'écran, calée en bas ; ce qui dépasse sur les côtés est coupé ;
-- **elle ne gêne pas** : tes clics passent au travers, et elle ne prend pas le focus ;
-- **ensuite** elle se matérialise à sa place, puis dit une courte phrase de bonjour dans sa
-  bulle, sa bouche qui bouge, et sa voix si elle est activée. Dix phrases écrites pour elle,
-  tirées au sort ; aucune ne vient de la série, aucun modèle n'est appelé, et la phrase n'entre
-  pas dans votre conversation. Si tu lui parles avant, elle l'oublie ;
-- **ce qui la coupe** : ⌃⌥C l'arrête net, et elle est masquée ; ⌃⌥P ou ⌃⌥D l'arrêtent, et elle se
-  matérialise tout de suite, sans bonjour ; « Quitter » reste immédiat ;
-- **une seule fois** : au lancement seulement, jamais quand tu la montres après l'avoir masquée ;
-- **son menu** : la case **« Intro au démarrage »**, cochée par défaut et retenue d'un lancement
-  à l'autre (`intro.json`, dans son dossier). Décochée : ni intro ni bonjour, elle se matérialise
-  simplement ;
-- **sans ces images**, ou s'il en manque une : pas d'intro, pas d'erreur.
+| Intro | Ce qu'on voit | Durée |
+|---|---|---|
+| De tout près (« Up close ») | 22 images en plein écran, du projet Capri : elle surgit, regarde autour d'elle, colle son visage à la vitre avec un grand sourire, puis repart | 1,8 s |
+| Le coucou | 9 images en plein écran, de mochiiwuff : elle attrape l'écran, fait coucou de la main, parle, sourit. **Un autre style de dessin** (des captures de la série et du fan art) | 3 s |
+| Elle tombe du ciel | elle entre par le haut de l'écran en pendant, tombe de plus en plus vite jusqu'à sa place, puis se relève | 2,1 s |
+| Elle arrive en marchant | elle entre par le bord droit et marche jusqu'à sa place ; si c'est trop loin, elle se matérialise d'abord moins loin, entière dans l'écran | 1 à 4 s de marche |
+| Elle se rassemble | les premiers dessins de son apparition, découpés en bandes étirées d'un bord à l'autre de l'écran, se resserrent en elle | 1,2 s |
+| Rien | elle se matérialise simplement à sa place | 1,2 s |
 
-**Ce que ça pèse.** Les 22 images pèseraient 182 Mo si elles étaient toutes chargées. Elles sont
-décodées une à une pendant qu'elles défilent, sur un thread à part, et peintes sur une seule
-toile de la carte graphique : 24,9 Mo au pire d'après le calcul, +20,4 Mo au plus haut mesurés par
-`footprint` le 23 novembre 2026. L'intro finie, la toile est rendue tout de suite, même si plus
-rien ne se dessine (fenêtre masquée, écran verrouillé), et le thread a disparu ; il reste +3,6 à
-+3,9 Mo, une réserve que gardent Metal et wgpu, stable d'une lecture à l'autre. Décoder une image
-prend 1,4 ms en moyenne, pour 83 ms disponibles. Si rien ne s'affiche pendant l'intro (écran
-verrouillé au lancement), les images ne s'accumulent pas : une seule copie attend à la fois.
+Les trois du milieu sont écrites par nous, avec ses propres dessins ; « rien » est tirée
+rarement (une fois sur dix-sept). Une intro dont il manque une image ou une planche n'est
+simplement pas tirée ; sans aucune image, il reste « rien ».
 
-Écrit et testé sans écran le 23 novembre 2026 ; images fixes rendues et regardées ; regardé par l'utilisateur le soir même, la Capri du dépôt lancée avec ses vrais réglages : vu et jugé bon dans l'ensemble, pas point par point
-(son journal : « intro : jouée, 22 images sur 22 montrées, la première prête en 47 ms » ; la liste
-est dans « État de validation »).
+- **les deux en images remplissent l'écran**, calées en bas, les côtés coupés s'ils dépassent ;
+  tes clics passent au travers, et rien ne prend le focus ;
+- **dans les trois jouées par elle**, tu peux l'attraper : elle pend à ton curseur, sans saut,
+  même prise alors qu'elle est encore en partie hors de l'écran, et l'intro s'arrête là. Lâchée
+  encore dehors, elle revient d'elle-même dans l'écran ;
+- **ensuite** elle dit une courte phrase de bonjour dans sa bulle, sa bouche qui bouge, et sa
+  voix si elle est activée. Dix phrases écrites pour elle, tirées au sort ; aucune ne vient de la
+  série, aucun modèle n'est appelé, et la phrase n'entre pas dans votre conversation. Si tu lui
+  parles avant, que tu la fais taire ou que tu l'attrapes pendant l'intro, elle l'oublie ;
+- **ce qui coupe une intro** : ⌃⌥C l'arrête net, et elle est masquée ; ⌃⌥P ou ⌃⌥D l'arrêtent, et
+  elle est là tout de suite, sans bonjour ; changer sa taille pendant une intro qu'elle joue
+  aussi ; « Quitter » reste immédiat ;
+- **son menu** : la case **« Intro au démarrage »**, cochée par défaut (décochée : ni intro ni
+  bonjour, elle se matérialise simplement), et **« Voir une intro »**, qui joue tout de suite la
+  suivante de la liste, dans l'ordre, sans bonjour : elle s'efface, l'intro se joue, elle
+  revient. Refusée pendant qu'on se parle, qu'on la tient ou qu'elle est en chemin ;
+- **ce qu'elle retient** : dans `intro.json` (son dossier), la case et le nom de la dernière
+  intro jouée, rien d'autre ; jamais écrit pendant un essai. Un fichier illisible n'est pas
+  réécrit au lancement : elle joue une intro, ne retient pas laquelle, et son journal le dit ;
+- **tant que son bonjour attend**, elle ne sourit pas pour Claude Code et n'a pas d'éclat
+  d'elle-même ; « Voir une intro » lui fait oublier un bonjour en attente.
+
+**Le coucou est facile à retirer** si l'écart de style gêne : c'est une ligne de la liste des
+intros (`capri_core::intro::LIST`), son fichier, et ses neuf images dans la liste de
+`tools/bundle-macos.sh`. Ses images sont en WebP : elles sont décodées par la fonction `webp` du
+crate `image`, en Rust pur (rien qui compile du C).
+
+**Ce que ça pèse.** Les 22 images de « de tout près » pèseraient 182 Mo si elles étaient toutes
+chargées. Les images d'une intro sont décodées une à une pendant qu'elles défilent, sur un thread
+à part, et peintes sur une seule toile de la carte graphique. Mesuré par `footprint` le 23
+novembre 2026 : +22 à +28 Mo au plus haut pour « de tout près », +28 Mo pour le coucou la
+première fois. L'intro finie, la toile est rendue tout de suite, même si plus rien ne se dessine
+(fenêtre masquée, écran verrouillé), et le thread a disparu ; il reste quelques Mo dans la réserve
+de l'allocateur (jusqu'à 10,9 Mo après le premier coucou), qui ne grandissent pas quand on la
+rejoue. Décoder une image prend 1,4 ms pour « de tout près » et 11 ms pour le coucou, en version
+optimisée (en version de débogage, 360 ms : le coucou y saute des images). Les intros jouées par
+elle ne chargent rien de plus.
+
+Écrit et testé sans écran le 23 novembre 2026. « De tout près » a été regardée par l'utilisateur
+le soir même, la Capri du dépôt lancée avec ses vrais réglages (son journal : « intro : jouée, 22
+images sur 22 montrées, la première prête en 47 ms ») ; **les cinq autres et « Voir une intro »
+n'ont pas encore été vues en mouvement** : la liste est dans « État de validation ».
 
 ### Elle vit sa vie : elle va s'asseoir seule sur tes fenêtres
 
@@ -1259,9 +1286,9 @@ Le script, dans l'ordre (rien de tout cela ne demande `sudo`) :
    session** : d'ici là, l'inscription mène encore à l'ancienne app, qui n'existe plus.
 
 Ce que l'app emporte : les deux programmes (`capri`, `capri-hook`), les images que lit le code
-(`capri-cutout.png`, les planches de `perch/`, de `stand/` et de `life/`, et les 22 images de
-`intro/` ; pas les autres images que télécharge `fetch-assets.sh`, qui ne servent pas) dans
-`Contents/Resources/assets/`, et
+(`capri-cutout.png`, les planches de `perch/`, de `stand/` et de `life/`, les 22 images de
+`intro/` et les neuf du coucou, `intro-*.webp` ; pas les autres images que télécharge
+`fetch-assets.sh`, qui ne servent pas) dans `Contents/Resources/assets/`, et
 `CREDITS.md`, qui porte les mentions que leurs licences exigent. `bundle-macos.sh` prend les
 images dans `assets/`, ou dans le dossier que désigne `CAPRI_ASSETS` (celui qui contient
 `capri/`), et s'arrête s'il en manque une, en disant de lancer `tools/fetch-assets.sh` : il ne
@@ -1477,9 +1504,9 @@ Règle : tout ce qui peut être testé sans écran va dans `capri-core`, `capri-
 
 Vérifié automatiquement :
 
-- formatage, `clippy -D warnings` et 769 tests sur **macOS Apple Silicon** (le 23 novembre 2026 ;
-  768 en version optimisée, un essai de la répétition de la musique n'existant qu'en version de
-  débogage ; plus 22 qui ne
+- formatage, `clippy -D warnings` et 802 tests sur **macOS Apple Silicon** (le 24 novembre 2026 ;
+  801 en version optimisée, un essai de la répétition de la musique n'existant qu'en version de
+  débogage ; plus 23 qui ne
   tournent qu'à la main : ils écrivent des images ou dessinent sur la vraie carte graphique,
   lisent un vrai `settings.json`, touchent au vrai trousseau, créent de vraies voix et un vrai
   moteur audio, sans bruit, lisent la vraie liste des fenêtres, guettent une annonce d'essai
@@ -1722,9 +1749,20 @@ Vérifié automatiquement :
   session principale de Claude Code, chaque planche facultative à part (256 combinaisons), et
   l'essai de gestes au hasard étendu (900 vies). Une relecture indépendante y a trouvé sept
   points, dont trois régressions de la prise à la souris, tous reproduits puis corrigés ;
-- un essai ancien de `capri-net` échouait une fois sur trois sur une machine chargée (son faux
-  serveur n'attendait le client qu'une demi-seconde) : corrigé le 23 novembre 2026, il passe 25
-  fois sur 25 ;
+- ses intros tirées au sort (le 23 et le 24 novembre 2026) : le tirage (jamais la dernière quand
+  une autre est possible, seulement celles que ses images permettent), la feuille d'exposition
+  de chaque intro en images, la chute, l'entrée en marchant (à sa vitesse, sans saut, toujours
+  matérialisée entière dans l'écran) et les bandes qui se rassemblent, chaque coupure (masquée,
+  on lui parle, attrapée, sa taille change), « Voir une intro » et ses refus, le bonjour (oublié
+  quand il le faut, jamais après « Voir une intro »), `intro.json` (retenu, jamais réécrit
+  illisible), et l'essai de gestes au hasard, où une vie commence par n'importe quelle intro
+  (900 vies). Sur la vraie carte graphique, à la main : les deux intros en images jouées en
+  entier, deux fois chacune. Une relecture indépendante n'y a trouvé aucun état coincé, mais sept
+  points, dont un saut de toute sa hauteur quand on l'attrapait en pleine chute, tous corrigés ;
+- deux essais anciens de `capri-net` échouaient parfois sur une machine chargée (des délais trop
+  courts pour le TLS du système : un faux serveur qui n'attendait le client qu'une demi-seconde,
+  un appel borné à une seconde) : corrigés le 23 novembre 2026, ils passent 25 et 20 fois de
+  suite ;
 - `clippy -D warnings` en compilation croisée pour **Windows x64** et **Linux x64** (le code
   compile, il n'est pas exécuté).
 
@@ -2277,6 +2315,29 @@ d'après son journal, et aucun de ces points n'a été confirmé un par un). Il 
 10. **dans le Moniteur d'activité** : sa mémoire revient au même niveau après l'intro ;
 11. **« La faire taire » pendant l'intro** : l'intro continue, et elle ne dit pas bonjour ensuite ;
 12. **les dix phrases de bonjour** : dire si le ton lui va, et lesquelles retirer.
+
+**Ses intros tirées au sort : à regarder à la main** (écrit et testé sans écran le 23 novembre
+2026 ; seule « de tout près » a été vue en mouvement). « Voir une intro », dans son menu, les
+joue l'une après l'autre sans relancer :
+
+1. **relancer plusieurs fois** : jamais la même intro deux fois de suite, et son journal la nomme
+   (« intro : jouée (…) ») ;
+2. **le coucou** : l'écart de style avec ses autres dessins (c'est le point à trancher : on le
+   retire s'il est trop grand), sa cadence, son cadrage ;
+3. **elle tombe du ciel** : la vitesse de la chute, l'arrivée sans saut, puis elle se relève, et
+   son bonjour ne vient qu'après ;
+4. **elle arrive en marchant** : l'entrée par le bord droit, ses pieds qui glissent ; et de loin
+   (déplace-la à gauche de l'écran, puis « Voir une intro »), elle se matérialise d'abord ;
+5. **elle se rassemble** : l'effet des bandes, d'éventuelles coutures entre elles ;
+6. **tes clics passent au travers** pendant les deux intros en images et pendant les bandes ;
+   pendant la chute ou la marche, tu peux l'attraper, et elle pend ;
+7. **pour chaque intro** : ⌃⌥C (coupée net et masquée, puis de retour à sa place), ⌃⌥P et ⌃⌥D
+   (là tout de suite, sans bonjour), « Quitter » (immédiat), « La faire taire » (pas de bonjour) ;
+8. **« Voir une intro »**, dans ses deux menus : elles défilent dans l'ordre, sans bonjour ;
+   refusée pendant qu'on se parle ; depuis un bord de fenêtre, elle finit debout ;
+9. **changer d'écran** pendant une chute ou une marche : rien ne casse ;
+10. **le processeur** : la boucle se presse pendant une chute ou une marche, puis revient au
+    repos.
 
 **Elle vit sa vie : à regarder à la main** (écrit et testé sans écran le 23 novembre 2026 ;
 regardé par l'utilisateur le soir même, dans l'ensemble : aucun de ces points n'a été confirmé un

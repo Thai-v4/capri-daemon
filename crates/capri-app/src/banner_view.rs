@@ -332,10 +332,17 @@ impl BannerView {
     }
 
     /// L'intro est finie ; `greets` : elle s'est jouée. Son bonjour, s'il est encore attendu, est
-    /// dit dès qu'elle est là et libre (avant la ligne de Claude Code qui attendrait).
+    /// dit dès qu'elle est là et libre, sans geste en cours (avant la ligne de Claude Code qui
+    /// attendrait) : tombée du ciel, elle se relève d'abord.
     pub fn intro_over(&mut self, greets: bool) {
         self.hello.intro_over(greets);
         self.refresh = true;
+    }
+
+    /// Son bonjour est-il attendu, ou en attente d'être dit ? Elle ne commence alors aucun geste
+    /// d'elle-même (`Look::set_greeting_due`).
+    pub fn greeting_due(&self) -> bool {
+        self.hello.is_due()
     }
 
     /// Oublie son bonjour, s'il n'a pas encore été dit (pendant l'intro comme après).
@@ -444,13 +451,14 @@ impl BannerView {
 
     /// À chaque pas : met à jour ce qui s'affiche et, si cela a changé, son image. `here` : elle
     /// est là, ni en train d'apparaître ni de s'effacer (`Look::is_here`) ; sinon, la ligne de
-    /// Claude Code et le message de l'app qui attendent leur tour attendent encore.
-    pub fn update(&mut self, frame: u64, scale: f64, renderer: &mut Renderer, here: bool) {
+    /// Claude Code et le message de l'app qui attendent leur tour attendent encore. `still` : aucun
+    /// geste ne se joue (`Look::gesture`) ; sinon son bonjour attend encore (il couperait le geste).
+    pub fn update(&mut self, frame: u64, scale: f64, renderer: &mut Renderer, here: bool, still: bool) {
         let fresh = self.feed.as_mut().is_some_and(Feed::pump);
         self.chat.pump();
         self.pump_ear();
         // son bonjour d'abord : il vient d'avant la ligne de Claude Code qui attendrait
-        self.deliver_greeting(here);
+        self.deliver_greeting(here && still);
         self.relay_claude(here);
         // après la ligne de Claude Code : sa parole passe avant un message de l'app
         self.deliver_announcement(here);

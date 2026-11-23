@@ -84,7 +84,10 @@ l'intro jouée, 22 images sur 22 ; six changements de place d'elle-même, assise
 existait, debout sinon ; l'écoute au micro refusée hors de son app, comme prévu). Le quatrième
 (elle pend quand on la tient, se relève, sourit à un clic bref et quand Claude Code finit son
 tour, marche vers la gauche, et varie par des éclats et des clignements à glitch) est écrit et
-testé sans écran le même jour ; pas encore regardé en mouvement. Des dessins
+testé sans écran le même jour ; pas encore regardé en mouvement. Le sixième, ajouté à la
+demande de l'utilisateur (plusieurs intros tirées au sort, comme dans le projet Capri : six, dont
+le coucou de mochiiwuff et trois écrites par nous ; « Voir une intro » dans son menu), est écrit
+et testé sans écran le même jour ; pas regardé en mouvement non plus. Des dessins
 générés par un outil d'images ont été essayés le même jour pour un coucou de la main, trois
 fois, et écartés : aucun ne se mêlait à ses dessins.
 
@@ -155,13 +158,22 @@ fois, et écartés : aucun ne se mêlait à ses dessins.
   cachée, en train d'apparaître, le curseur sur elle) ; et `Roamer`, qui pilote le tout dans
   l'ordre de la boucle, derrière un trait `World` (l'écran, le curseur, les fenêtres déjà triées)
   et une horloge passée en paramètre. Il ne sait rien du système.
-  Et `intro` : **son intro du lancement**, 22 images de 1920 × 1080 px en plein écran
-  (`COUNT`, `SIZE`, `file`), chacune tenue deux images (`HOLD`) ; où et à quelle taille dans
-  l'overlay (`place` : elle remplit l'écran, centrée, calée en bas, ce qui dépasse sur les côtés
-  ou en haut étant coupé) ; et son déroulé (`Intro` : `due`, `wants`, `shown`, `step` ; ce qui la
-  coupe, `Cut` ; comment elle finit, `End`, qui dit s'il faut la cacher ou lui faire dire
-  bonjour ; la première image a `START_WAIT` pour arriver, sinon pas d'intro). `Look::hide_unseen`
-  la cache avant qu'elle ne soit apparue.
+  Et `intro` : **ses intros du lancement**, tirées au sort. La liste est écrite à un seul endroit
+  (`LIST`, des `Entry` : un nom court, un nom pour le journal, un poids, et ce qui se joue,
+  `Play::{Film, Act, Plain}`) ; le tirage (`draw` : parmi celles que ses images permettent, avec
+  des poids, jamais la dernière jouée quand une autre est possible ; `next`, dans l'ordre, pour
+  « Voir une intro »). Une intro en images est un `Film` : ses images et sa feuille d'exposition
+  (`UP_CLOSE`, 22 images de 1920 × 1080 px tenues en deux ; `coucou::FILM`, les neuf gros plans
+  de mochiiwuff dans un enchaînement à nous) ; où et à quelle taille dans l'overlay (`place` :
+  elle remplit l'écran, centrée, calée en bas, ce qui dépasse étant coupé) ; son déroulé
+  (`Intro` : `due`, `wants`, `shown`, `step` ; ce qui la coupe, `Cut` ; comment elle finit,
+  `End`, qui dit s'il faut la cacher ou lui faire dire bonjour ; la première image a
+  `START_WAIT` pour arriver). Une intro jouée par elle est un `Act` (`intro::act` : elle tombe du
+  ciel, `Fall` ; elle arrive en marchant, `Walk` ; elle se rassemble, `Gather`, ses premiers
+  dessins d'apparition en bandes étirées sur l'écran qui se resserrent), que `look` exécute
+  (`perform`, `is_performing`, `cut_performance` ; `bow_out` pour « Voir une intro » ;
+  `Drawing::Gather`) avec `body` (`Stance::Falling`, `Capri::set_beyond`, qui la pose hors de
+  l'écran le temps d'y entrer). `Look::hide_unseen` la cache avant qu'elle ne soit apparue.
   Et `scale` : **sa taille**, choisie par l'utilisateur, est une échelle `Scale` rapportée à sa
   hauteur **debout** d'origine (300 points pour sa silhouette, `stand::STATURE`, pas pour la case),
   de 40 % à 140 % (borne choisie pour son dessin d'avant, agrandi 2 fois à 140 % sur un écran
@@ -281,7 +293,8 @@ fois, et écartés : aucun ne se mêlait à ses dessins.
   système). Ses images sont confiées une fois (`Renderer::add_image`, qui compte ce qu'elles
   pèsent) ; chaque dessin en prend une part (`Crop` : une case de grille), lue à un demi-texel des
   bords de la case. Une **toile** (`add_canvas`, `paint_canvas`) est une image repeinte sur place,
-  pour l'intro : une seule texture pour ses 22 images ; `remove_image` lâche une image, et
+  pour les intros en images : une seule texture pour toutes leurs images ; `remove_image` lâche
+  une image, et
   `image_bytes` diminue d'autant. Ce que wgpu ne dit pas d'emblée, vérifié dans ses sources
   (version 30) et mesuré : une copie vers une texture attend la soumission suivante, donc
   `paint_canvas` soumet à vide après chaque copie (sinon elles s'accumulent quand rien n'est
@@ -418,12 +431,15 @@ fois, et écartés : aucun ne se mêlait à ses dessins.
   demande de changer de place et qu'elle ne le peut pas. `roam_setup` lit et écrit `roam.json`
   (la case « Vivre sa vie » de son menu, cochée par défaut ; la ligne « Changer de place » la
   fait partir sur un geste, case cochée ou non).
-  `intro_view` joue l'intro du lancement (`capri_core::intro` décide) : un thread « capri-intro »
+  `intro_view` joue une intro en images (`capri_core::intro` décide laquelle et sa feuille ; les
+  intros jouées par elle passent par `look`) : un thread « capri-intro »
   décode une image à la fois, à la demande (`assets::intro`, qui ne lit d'abord que les en-têtes),
   la boucle la peint sur une seule toile de la carte graphique et ne bloque jamais sur un
   décodage (une image en retard : le dessin précédent est tenu) ; l'intro finie ou coupée, le
   thread s'arrête et tout est lâché. `intro_setup` lit et écrit `intro.json` (la case « Intro au
-  démarrage », cochée par défaut) et dit si un essai est en cours (`testing`). Son bonjour
+  démarrage », cochée par défaut, et le nom de la dernière intro jouée ; jamais écrit pendant un
+  essai, ni au lancement s'il est illisible) et dit si un essai est en cours (`testing`). La
+  ligne « Voir une intro » de ses menus joue la suivante tout de suite, sans bonjour. Son bonjour
   (`capri_chat::greeting`, des phrases écrites par nous, tirées avec la graine de sa vie ; et
   `Hello`, qui dit s'il est attendu, en attente ou passé : attendu dès que l'intro commence,
   oublié si on lui parle, la fait taire, repart de zéro ou la cache, pendant l'intro comme après)
@@ -486,7 +502,8 @@ fois, et écartés : aucun ne se mêlait à ses dessins.
   (`tools/macos/Info.plist`), les images que lit le code et seulement elles (sa liste `IMAGES`, prise
   dans `assets/` ou dans le dossier de `CAPRI_ASSETS` ; l'essai
   `the_app_bundle_carries_exactly_the_images_the_code_reads` de `assets.rs` vérifie qu'elle suit
-  `assets::SPRITE`, `capri_core::sheets`, `sheets::stand`, `sheets::life` et `capri_core::intro` ;
+  `assets::SPRITE`, `capri_core::sheets`, `sheets::stand`, `sheets::life` et `capri_core::intro`
+  (ses films, dont les neuf WebP du coucou) ;
   une liste qui change change aussi le numéro de `tools/macos/bundle-format`, 2 depuis ses
   planches de vie, sauf tant qu'aucune version n'a été publiée à ce numéro : les images de l'intro
   s'y sont ajoutées sans le changer ; une version d'un autre numéro ne s'installe pas depuis
@@ -620,7 +637,10 @@ Les deux clippy croisés tiennent parce qu'aucune dépendance ne compile de C (s
 wayland-backend tire `cc`, mais ne s'en sert qu'avec sa fonction `log`, qui n'est pas active) :
 pas de rustls (son fournisseur par défaut dans ureq, ring, compile du C, et son script de
 construction échoue vers Windows depuis un Mac), pas d'OpenSSL. Ne pas en ajouter sans revérifier
-les trois.
+les trois. Le décodeur WebP des images du coucou est la fonction `webp` du crate `image`
+(`image-webp` et `quick-error`, en Rust pur, sans script de construction : vérifié dans leurs
+sources et par les trois clippy le 23 novembre 2026) ; une image y est vérifiée par son en-tête
+avant d'être décodée, hors du thread principal.
 Tout comportement visible (transparence, clics, animation) se vérifie à la main : dire
 précisément quoi vérifier plutôt que de l'affirmer.
 Après un changement de `tools/bundle-macos.sh` ou de `tools/install-macos.sh` (bash 3.2, celui de
@@ -665,7 +685,7 @@ une fausse commande `security` placée en tête du `PATH`.
   images d'animation).
 - Elle tourne toute la journée : ne redessiner que quand la pose ou la position change, rester
   léger en CPU et en batterie. Au repos, la boucle se réveille à 60 Hz (`pace::REST`) ; pressée
-  seulement (tenue, en vol, en marche, ou sa fenêtre qui bouge ou un bouton de la souris enfoncé,
+  seulement (tenue, en vol, en marche, en chute, ou sa fenêtre qui bouge ou un bouton de la souris enfoncé,
   plus une demi-seconde), elle suit l'écran : `Overlay::follow_refresh` (sur macOS 14 et suivants, un
   `CADisplayLink` de la vue, en pause le reste du temps ; ailleurs, refus, et un `pace::Clock` à
   la fréquence de `Overlay::refresh_rate`), et seuls les réveils de l'écran
@@ -691,9 +711,13 @@ une fausse commande `security` placée en tête du `PATH`.
   sans leur prêter un auteur. **Jamais une image que ce dépôt crédite à quelqu'un d'autre**
   (`click.png`, `form.png`, l'intro « Peek », les emotes) : une attribution se vérifie dans son
   README, sa licence et l'historique du fichier, pas de mémoire. Sans ses planches de vie, elle
-  apparaît et disparaît d'un coup. Les 22 images de son intro (`assets/capri/intro/`, l'intro
-  « Up close » de ce dépôt) en viennent aussi, sans auteur nommé non plus, par la même décision ;
-  sans elles, ou s'il en manque une, pas d'intro. **Le repli** : seul `capri-cutout.png` est indispensable ; une
+  apparaît et disparaît d'un coup. Les 22 images de son intro « de tout près » (`assets/capri/intro/`,
+  l'intro « Up close » de ce dépôt) en viennent aussi, sans auteur nommé non plus, par la même
+  décision. Les neuf gros plans de l'intro de mochiiwuff (`intro-*.webp`, téléchargés depuis le
+  début) servent au « coucou » : un autre style de dessin, gardé à l'essai, **facile à retirer**
+  (une ligne de `intro::LIST`, son fichier, ses neuf lignes dans `tools/bundle-macos.sh`). Une
+  intro dont il manque une image ou une planche n'est pas tirée ; sans aucune, elle se
+  matérialise simplement. **Le repli** : seul `capri-cutout.png` est indispensable ; une
   planche absente, illisible ou refusée par la carte graphique ne fait jamais planter, sa pose
   revient à son dessin d'avant (`look::Wardrobe`), et chaque combinaison (debout, assise, vie :
   les huit) est testée ; chacune des sept planches de ses gestes est facultative à part (sans
@@ -1099,17 +1123,27 @@ une fausse commande `security` placée en tête du `PATH`.
   Pendant l'intro, rien n'apparaît au-dessus de sa tête (elle n'est pas encore là). Son bonjour
   est une prise de parole à elle, dite avant la ligne de Claude ; il est oublié si on lui parle,
   si on la fait taire ou si on la cache avant.
-- **Son intro et son bonjour.** L'intro ne se joue qu'**au lancement**, une fois, jamais quand on
-  la montre après l'avoir cachée ; elle laisse passer tous les clics et ne prend jamais le focus.
-  La masquer la coupe net (et elle est cachée) ; lui parler la coupe (et elle se matérialise) ;
-  quitter reste immédiat. Jamais ses 22 images à la fois, ni en mémoire ni sur la carte
-  graphique (elles pèseraient 182 Mo) : une toile, et une image décodée à la fois, hors du thread
-  principal ; l'intro finie, ni thread, ni réveil, ni mémoire de plus. Son bonjour ne se dit
-  qu'après une intro jouée jusqu'au bout : une phrase de `capri_chat::greeting`, **écrite par
-  nous, jamais une citation de la série**, sans aucun appel à un modèle, hors de la conversation
-  envoyée à son cerveau, et jamais écrite dans le journal (c'est ce qu'elle dit). La case « Intro
-  au démarrage » coupe les deux. Le journal n'en dit qu'une ligne : « intro : jouée… »,
-  « intro : coupée… » ou « intro : pas d'images… », avec des nombres.
+- **Ses intros et son bonjour.** Une intro ne se joue qu'**au lancement**, une fois (tirée au
+  sort, jamais deux lancements de suite la même), ou **sur un geste**, « Voir une intro » dans
+  son menu ; jamais quand on la montre après l'avoir cachée. Elle ne prend jamais le focus. Une
+  intro en images laisse passer tous les clics ; dans une intro qu'elle joue elle-même, on peut
+  l'attraper, ce qui la coupe (elle est tenue, sans saut, même prise hors de l'écran). La masquer
+  coupe net (elle est cachée, une image vide présentée avant de cacher la fenêtre) ; lui parler
+  ou changer sa taille coupe (elle est à sa place tout de suite) ; quitter reste immédiat. Hors
+  d'une intro, elle n'est jamais hors de l'écran. Jamais toutes les images d'une intro à la fois,
+  ni en mémoire ni sur la carte graphique (les 22 de « de tout près » pèseraient 182 Mo) : une
+  toile, et une image décodée à la fois, hors du thread principal ; l'intro finie, ni thread, ni
+  réveil, ni mémoire de plus. Les intros écrites par nous le sont de zéro, avec ses propres
+  dessins : **rien des intros dessinées en code par d'autres projets** (« Door », « Hijack »,
+  « Shatter », « Wake » du projet Capri), ni de « Peek », créditée à un autre auteur. Son bonjour
+  ne se dit qu'après une intro **du lancement** jouée jusqu'au bout, jamais après « Voir une
+  intro » : une phrase de `capri_chat::greeting`, **écrite par nous, jamais une citation de la
+  série**, sans aucun appel à un modèle, hors de la conversation envoyée à son cerveau, et
+  jamais écrite dans le journal (c'est ce qu'elle dit) ; tant qu'il attend, elle ne commence
+  aucun geste d'elle-même. La case « Intro au démarrage » coupe les deux. `intro.json` ne retient
+  que la case et le nom de la dernière intro. Le journal n'en dit qu'une ligne par intro, avec
+  son nom à nous et des nombres (« intro : jouée (…) », « intro : coupée… », « intro : pas
+  d'images… », « intro : pas de planches… »).
 - **Ce qui s'affiche dans la bulle ou dans la fenêtre de réglages ne renvoie jamais à une commande
   de terminal** (`capri chat …`, `capri voice …`) : le but de la fenêtre est que personne n'ait à
   ouvrir un terminal. La bulle renvoie à « Réglages… » dans son menu, la fenêtre dit quoi faire

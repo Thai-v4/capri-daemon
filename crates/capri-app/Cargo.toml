@@ -22,7 +22,7 @@ capri-platform = { path = "../capri-platform" }
 capri-render = { path = "../capri-render" }
 env_logger = "0.11"
 global-hotkey = "0.10.0"
-image = { version = "0.25.10", default-features = false, features = ["png"] }
+image = { version = "0.25.10", default-features = false, features = ["png", "webp"] }
 log = "0.4"
 raw-window-handle = "0.6.2"
 # perch.json, le réglage « S'asseoir sur les fenêtres » (déjà tiré par capri-chat)

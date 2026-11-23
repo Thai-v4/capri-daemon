@@ -74,6 +74,12 @@ impl Hello {
         *self = Hello::Done;
     }
 
+    /// Un bonjour est-il attendu (l'intro se joue) ou en attente d'être dit ? Elle ne commence alors
+    /// aucun geste d'elle-même (`capri_core::look::Look::set_greeting_due`).
+    pub fn is_due(&self) -> bool {
+        !matches!(self, Hello::Done)
+    }
+
     /// Le bonjour à dire maintenant, si elle est libre (`free` : là, personne ne lui parle, elle ne
     /// parle pas) ; rendu une fois, il est dit.
     pub fn take(&mut self, free: bool) -> Option<&'static str> {
@@ -130,6 +136,20 @@ mod tests {
         let mut hello = Hello::default();
         hello.intro_over(true);
         assert_eq!(hello.take(true), None, "sans intro, sans bonjour");
+    }
+
+    #[test]
+    fn a_greeting_is_due_from_the_intro_until_it_is_said_or_forgotten() {
+        let mut hello = Hello::expect(GREETINGS[3]);
+        assert!(hello.is_due(), "pendant l'intro");
+        hello.intro_over(true);
+        assert!(hello.is_due(), "elle attend son tour");
+        hello.take(true);
+        assert!(!hello.is_due(), "dit");
+        let mut hello = Hello::expect(GREETINGS[3]);
+        hello.intro_over(true);
+        hello.forget();
+        assert!(!hello.is_due() && !Hello::default().is_due());
     }
 
     #[test]

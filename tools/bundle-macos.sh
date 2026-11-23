@@ -95,6 +95,15 @@ IMAGES=(
   capri/intro/20.png
   capri/intro/21.png
   capri/intro/22.png
+  capri/intro-grab.webp
+  capri/intro-smear.webp
+  capri/intro-wave1.webp
+  capri/intro-wave2.webp
+  capri/intro-wave3.webp
+  capri/intro-mouth1.webp
+  capri/intro-mouth2.webp
+  capri/intro-mouth3.webp
+  capri/intro-happy.webp
 )
 
 # Avant de compiler : toutes les images sont-elles là ?

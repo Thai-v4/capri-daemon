@@ -41,6 +41,8 @@ pub enum Action {
     ToggleLogin,
     /// Jouer l'intro au lancement (et dire bonjour après), ou plus.
     ToggleIntro,
+    /// « Voir une intro » : la suivante de la liste, tout de suite, sans bonjour.
+    SeeIntro,
     /// Lui permettre de regarder chaque jour s'il existe une version plus récente, ou le lui
     /// interdire.
     ToggleUpdates,
@@ -340,6 +342,7 @@ fn build_menu() -> Built {
     );
     // cochée par défaut ; le réglage retenu décide au lancement
     let intro = CheckMenuItem::new("Intro au démarrage", true, true, None);
+    let see_intro = MenuItem::new("Voir une intro", true, None);
     // cochée par défaut ; le réglage retenu décide au lancement
     let updates = CheckMenuItem::new("Chercher les mises à jour", true, true, None);
     let update_line = MenuItem::new("Version disponible", true, None);
@@ -352,7 +355,7 @@ fn build_menu() -> Built {
     let (first, second, third) = (separator(), separator(), separator());
     if let Err(err) = menu.append_items(&[
         &title, &first, &talk, &listen, &hush, &forget, &voice, &second, &toggle, &wander, &perch, &music,
-        &roam, &size, &hook, &login, &intro, &updates, &settings, &journal, &third, &quit,
+        &roam, &size, &hook, &login, &intro, &see_intro, &updates, &settings, &journal, &third, &quit,
     ]) {
         log::warn!("menu incomplet : {err}");
     }
@@ -364,6 +367,7 @@ fn build_menu() -> Built {
         (Action::ToggleVoice, voice),
         (Action::ToggleVisible, toggle),
         (Action::Wander, wander),
+        (Action::SeeIntro, see_intro),
         (Action::Larger, larger),
         (Action::Smaller, smaller),
         (Action::OriginalSize, original),

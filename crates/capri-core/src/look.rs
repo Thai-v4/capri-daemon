@@ -43,6 +43,18 @@
 //! Cachée pendant l'intro du lancement ([`crate::intro`]), avant d'être jamais apparue, elle est
 //! partie d'un coup ([`Look::hide_unseen`]) ; montrée, elle se matérialise comme au lancement.
 //!
+//! **Ses intros jouées par elle** ([`crate::intro::act`], [`Look::perform`]) : à son entrée en
+//! scène, ou effacée pour « Voir une intro » ([`Look::bow_out`], [`Look::is_offstage`] : comme
+//! pour changer de place, la fenêtre reste montrée), elle tombe du ciel (sa planche en l'air, son
+//! corps qui tombe, puis elle se relève comme lâchée), arrive en marchant (de hors de l'écran, ou
+//! matérialisée plus près, puis sa marche), ou se rassemble (ses bandes, [`Drawing::Gather`], puis
+//! la fin de son arrivée). Tant qu'elle la joue, elle n'est pas là ([`Look::is_here`]) mais rien
+//! ne lui échappe : l'attraper la coupe (elle est tenue), la cacher la coupe net (elle est cachée,
+//! à sa place), lui parler aussi ([`Look::cut_performance`] : elle se matérialise à sa place), et
+//! une autre taille de même (son menu, la molette, la densité de l'écran). Comment elle a fini :
+//! [`Look::take_performed`]. Après l'intro du lancement, tant que son bonjour attend, elle ne
+//! commence aucun geste d'elle-même ([`Look::set_greeting_due`]).
+//!
 //! **Changer de place** ([`crate::roam`]) : elle s'efface où elle est, de la même façon
 //! ([`Look::travel`]), mais elle n'est pas cachée : la fenêtre reste montrée. Une fois effacée
 //! ([`Look::is_between`]), on la déplace, puis elle apparaît là-bas ([`Look::arrive`]), assise si
@@ -97,8 +109,10 @@ use crate::anim::Sheet;
 use crate::body::{Capri, Stance};
 use crate::geom::{Rect, Vec2};
 use crate::input::Grab;
+use crate::intro::{self, Act, End, act};
 use crate::mask::AlphaMask;
 use crate::perch::{FOOT, Reach, Stature};
+use crate::roam::Hold;
 use crate::sheets::{self, life, stand};
 
 /// Un tour de sa boucle, debout comme assise : 60 images, 2,5 s.
@@ -180,6 +194,9 @@ pub enum Drawing {
     /// Une case de ses planches de vie (elle apparaît, elle s'efface), sur la toile de sa boucle
     /// debout.
     Life(life::Cell),
+    /// Elle se rassemble (une intro) : la pose clé n° `key` de `intro::act::GATHER`, ses bandes
+    /// étirées vers les bords de l'écran (`intro::act::bands`), sa toile en `rect`.
+    Gather(u8),
 }
 
 /// Ce qu'on dessine à une image donnée.
@@ -307,6 +324,9 @@ enum Exit {
     /// Elle change de place : la fenêtre reste montrée ; une fois effacée, on la déplace, puis
     /// elle apparaît là-bas ([`Look::arrive`]).
     Trip,
+    /// « Voir une intro » : la fenêtre reste montrée ; une fois effacée ([`Look::is_offstage`]),
+    /// une intro se joue, puis elle revient.
+    Encore,
 }
 
 /// Est-elle là ?
@@ -321,6 +341,33 @@ enum Presence {
     /// Partie, après la suite qui l'a effacée (aucune, sans ses planches de vie) : plus rien à
     /// montrer.
     Gone(Option<Run>, Exit),
+    /// Elle joue une intro (voir [`Look::perform`]).
+    Entering(Entrance),
+}
+
+/// Une intro qu'elle joue elle-même (`crate::intro::act`) : laquelle, depuis quelle image, sa place
+/// (ses pieds, là où elle finit), et où elle en est.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Entrance {
+    act: Act,
+    since: u64,
+    place: Vec2,
+    /// Sa hauteur debout quand elle l'a commencée : une autre taille la coupe.
+    height: f32,
+    stage: Stage,
+}
+
+/// Où en est une intro qu'elle joue.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Stage {
+    /// Elle tombe du ciel, en pendant (`Stance::Falling`).
+    Falling,
+    /// Elle se matérialise là où sa marche commence.
+    Appearing(Run),
+    /// Elle marche jusqu'à sa place, depuis l'image `since`.
+    Walking { since: u64 },
+    /// Ses bandes se resserrent en elle.
+    Gathering,
 }
 
 /// Où en est sa pose assise.
@@ -384,6 +431,10 @@ pub struct Look {
     walking: Option<u64>,
     /// La dernière fois qu'elle a souri parce que Claude Code finissait son tour.
     cheered: Option<u64>,
+    /// Comment a fini la dernière intro jouée par elle, pas encore relevé ([`Look::take_performed`]).
+    performed: Option<End>,
+    /// Son bonjour attend d'être dit : pas de geste d'elle-même ([`Look::set_greeting_due`]).
+    greeting_due: bool,
     sheets: Sheets,
 }
 
@@ -406,6 +457,8 @@ impl Look {
             carried: None,
             walking: None,
             cheered: None,
+            performed: None,
+            greeting_due: false,
             sheets: Sheets {
                 standing: stand::standing(false),
                 standing_blink: stand::standing(true),
@@ -439,6 +492,11 @@ impl Look {
     /// elle est posée.
     pub fn enter(&mut self, capri: &mut Capri, frame: u64) {
         self.frame = self.frame.max(frame);
+        // une intro qu'elle jouait s'arrête là, comme quand on lui parle
+        if let Presence::Entering(entrance) = self.presence {
+            self.finish(entrance, Some(intro::Cut::Talked), frame);
+        }
+        self.leave_stage(capri);
         self.presence = self.entrance(capri, frame);
     }
 
@@ -453,13 +511,13 @@ impl Look {
         }
     }
 
-    /// En chemin vers une autre place (on lui parle pendant qu'elle s'efface pour partir), elle
-    /// revient sur ses pas à l'image `frame`, comme montrée pendant qu'elle s'efface : la même
-    /// suite, à l'envers, là où elle était ; effacée, elle y réapparaît. Sans effet si elle n'est
-    /// pas en chemin.
+    /// En chemin vers une autre place (on lui parle pendant qu'elle s'efface pour partir), ou en
+    /// train de s'effacer pour une intro (on lui parle avant qu'elle ne commence), elle revient sur
+    /// ses pas à l'image `frame`, comme montrée pendant qu'elle s'efface : la même suite, à
+    /// l'envers, là où elle était ; effacée, elle y réapparaît. Sans effet sinon.
     pub fn turn_back(&mut self, capri: &mut Capri, frame: u64) {
         self.frame = self.frame.max(frame);
-        if self.is_traveling() {
+        if self.is_traveling() || self.is_bowing_out() {
             self.reverse(capri, frame);
         }
     }
@@ -468,7 +526,7 @@ impl Look {
     /// dessin où elle en est ; partie, elle réapparaît.
     fn reverse(&mut self, capri: &mut Capri, frame: u64) {
         self.presence = match self.presence {
-            Presence::Here | Presence::Appearing(_) => return,
+            Presence::Here | Presence::Appearing(_) | Presence::Entering(_) => return,
             Presence::Gone(..) => self.entrance(capri, frame),
             // elle s'effaçait de son bord, qu'elle a quitté depuis : elle se matérialise debout
             Presence::Vanishing(run, _) if run.seat().is_some() && capri.seat().is_none() => {
@@ -495,8 +553,14 @@ impl Look {
         }
         self.presence = match self.presence {
             Presence::Vanishing(_, Exit::Hidden) | Presence::Gone(_, Exit::Hidden) => return,
-            Presence::Vanishing(run, Exit::Trip) => Presence::Vanishing(run, Exit::Hidden),
-            Presence::Gone(run, Exit::Trip) => Presence::Gone(run, Exit::Hidden),
+            Presence::Vanishing(run, Exit::Trip | Exit::Encore) => Presence::Vanishing(run, Exit::Hidden),
+            Presence::Gone(run, Exit::Trip | Exit::Encore) => Presence::Gone(run, Exit::Hidden),
+            // une intro qu'elle joue : coupée net, et elle est cachée
+            Presence::Entering(entrance) => {
+                self.finish(entrance, Some(intro::Cut::Hidden), frame);
+                self.leave_stage(capri);
+                Presence::Gone(None, Exit::Hidden)
+            }
             Presence::Appearing(run) => {
                 if run.seat().is_none() {
                     capri.still(None);
@@ -511,9 +575,13 @@ impl Look {
     /// Cachée avant d'être apparue (l'intro du lancement coupée en la cachant, voir
     /// [`crate::intro`]) : partie d'un coup à l'image `frame`, sans rien jouer. Montrée ensuite
     /// ([`Look::appear`]), elle se matérialise comme au lancement.
-    pub fn hide_unseen(&mut self, frame: u64) {
+    pub fn hide_unseen(&mut self, capri: &mut Capri, frame: u64) {
         self.frame = self.frame.max(frame);
         self.act = None;
+        if let Presence::Entering(entrance) = self.presence {
+            self.finish(entrance, Some(intro::Cut::Hidden), frame);
+            self.leave_stage(capri);
+        }
         self.presence = Presence::Gone(None, Exit::Hidden);
     }
 
@@ -592,6 +660,252 @@ impl Look {
     /// ([`Look::arrive`]).
     pub fn is_between(&self) -> bool {
         matches!(self.presence, Presence::Gone(_, Exit::Trip))
+    }
+
+    /// « Voir une intro », à l'image `frame` : elle s'efface de là où elle est dessinée, comme
+    /// cachée, mais la fenêtre reste montrée ; une fois effacée ([`Look::is_offstage`]), l'intro
+    /// se joue ([`Look::perform`], ou `Look::enter` après une intro en images ou « rien »). Seulement
+    /// si elle est là et libre : ni tenue ni lancée, ni en marche, et on ne se parle pas
+    /// ([`Look::set_conversing`], à dire juste avant) ; sinon rend
+    /// ce qui la retient, et rien ne change. Un geste en cours s'arrête. Sans ses planches de vie,
+    /// elle est effacée tout de suite. Cachée ensuite, elle finit de s'effacer et n'ira pas plus
+    /// loin ; on lui parle avant que l'intro ne commence, elle revient sur ses pas
+    /// ([`Look::turn_back`]).
+    pub fn bow_out(&mut self, capri: &mut Capri, frame: u64) -> Result<(), Hold> {
+        if carried(capri) {
+            return Err(Hold::Carried);
+        }
+        if !self.is_here() {
+            return Err(Hold::Away);
+        }
+        if self.conversing {
+            return Err(Hold::Talking);
+        }
+        if capri.is_walking() {
+            return Err(Hold::Walking);
+        }
+        let picture = self.picture(capri);
+        self.frame = self.frame.max(frame);
+        self.stop(capri);
+        self.presence = if self.has_life() {
+            Presence::Vanishing(self.exit(capri, picture.drawing, frame), Exit::Encore)
+        } else {
+            Presence::Gone(None, Exit::Encore)
+        };
+        Ok(())
+    }
+
+    /// S'efface-t-elle pour une intro (« Voir une intro »), ou est-elle effacée et l'attend-elle ?
+    pub fn is_bowing_out(&self) -> bool {
+        matches!(self.presence, Presence::Vanishing(_, Exit::Encore) | Presence::Gone(_, Exit::Encore))
+    }
+
+    /// Effacée pour une intro : il est temps de la jouer.
+    pub fn is_offstage(&self) -> bool {
+        matches!(self.presence, Presence::Gone(_, Exit::Encore))
+    }
+
+    /// Peut-elle jouer cette intro, d'où elle est (`capri`) ? Tomber du ciel : sa planche en l'air
+    /// et se relever ; arriver en marchant : sa marche, et assez de place pour marcher au moins
+    /// `act::WALK_SHORTEST` jusqu'à sa place ; se rassembler : son arrivée.
+    pub fn can_perform(&self, act: Act, capri: &Capri) -> bool {
+        match act {
+            Act::Fall => self.has_move(life::Strip::Dangle) && self.has_move(life::Strip::Glitch),
+            Act::Walk => self.has_move(life::Strip::Walk) && self.walk_in(capri).is_some(),
+            Act::Gather => self.has_life(),
+        }
+    }
+
+    /// D'où elle part pour arriver en marchant à sa place (ses pieds, debout, dans l'écran), et
+    /// si elle s'y matérialise d'abord (voir `act::walk_from`) ; `None` sans sa marche, ou si cette
+    /// intro n'est pas possible depuis là.
+    fn walk_in(&self, capri: &Capri) -> Option<(f32, bool)> {
+        let speed = self.walk_speed()?;
+        let mut probe = capri.clone();
+        probe.set_at(probe.feet());
+        let place = probe.feet();
+        // sa toile de vie commence là, à gauche de ses pieds, et finit là, à leur droite
+        let k = probe.size().x / stand::CELL_WIDTH as f32;
+        let left = probe.size().x * self.standing_feet().x + life::STAND_LEFT as f32 * k;
+        let right = life::CELL_WIDTH as f32 * k - left;
+        let (offscreen, inside) =
+            (act::offscreen_right(probe.bounds(), left), act::inside_right(probe.bounds(), right));
+        act::walk_from(place.x, offscreen, inside, speed)
+    }
+
+    /// Elle joue l'intro `act` à l'image `frame` (voir `crate::intro::act`), vers sa place : là où
+    /// sont ses pieds, debout (posée, le point posé sur son bord). Seulement à son entrée en scène
+    /// (au lancement, pas encore montrée) ou effacée pour une intro ([`Look::is_offstage`]), et si
+    /// ses planches le permettent ([`Look::can_perform`]) : rend `false` sinon, et rien ne change.
+    /// Elle n'est pas là tant qu'elle la joue ([`Look::is_performing`]) ; l'attraper la coupe (elle
+    /// est tenue), la cacher la coupe net ([`Look::vanish`]), lui parler aussi
+    /// ([`Look::cut_performance`]). Comment elle a fini : [`Look::take_performed`].
+    pub fn perform(&mut self, capri: &mut Capri, act: Act, frame: u64) -> bool {
+        let ready = matches!(self.presence, Presence::Here | Presence::Gone(_, Exit::Encore));
+        if !ready || !self.can_perform(act, capri) || carried(capri) || capri.is_walking() {
+            return false;
+        }
+        self.frame = self.frame.max(frame);
+        self.act = None;
+        self.walking = None;
+        self.seat = Seat::Standing;
+        // debout là où sont ses pieds : sa place, dans l'écran
+        capri.set_at(capri.feet());
+        let place = capri.feet();
+        capri.still(None);
+        let stage = match act {
+            Act::Fall => {
+                let from = act::fall_from(place, capri.size(), self.standing_feet(), capri.bounds());
+                capri.fall(from, place.y);
+                Stage::Falling
+            }
+            Act::Walk => {
+                let speed = self.walk_speed().unwrap_or(0.0);
+                // `can_perform` l'a vérifié, d'ici
+                let Some((x, appears)) = self.walk_in(capri) else { return false };
+                capri.set_beyond(Vec2::new(x, place.y));
+                if appears && self.has_life() {
+                    Stage::Appearing(Run::new(Clip::Arrive, frame, self.sheets.life_arriving.len()))
+                } else {
+                    capri.walk_to(place.x, speed);
+                    self.walking = Some(frame);
+                    Stage::Walking { since: frame }
+                }
+            }
+            Act::Gather => Stage::Gathering,
+        };
+        self.presence = Presence::Entering(Entrance { act, since: frame, place, height: self.height, stage });
+        true
+    }
+
+    /// Joue-t-elle une intro ([`Look::perform`]) ?
+    pub fn is_performing(&self) -> bool {
+        matches!(self.presence, Presence::Entering(_))
+    }
+
+    /// L'intro qu'elle joue, s'il y en a une.
+    pub fn performing(&self) -> Option<Act> {
+        match self.presence {
+            Presence::Entering(entrance) => Some(entrance.act),
+            _ => None,
+        }
+    }
+
+    /// Comment a fini l'intro qu'elle jouait, une fois : jouée jusqu'au bout, ou coupée (en images
+    /// d'animation depuis son début, voir `crate::intro::End`).
+    pub fn take_performed(&mut self) -> Option<End> {
+        self.performed.take()
+    }
+
+    /// On lui parle pendant une intro qu'elle joue, à l'image `frame` : elle s'arrête, et elle se
+    /// matérialise tout de suite à sa place. Sans effet si elle n'en joue pas.
+    pub fn cut_performance(&mut self, capri: &mut Capri, frame: u64) {
+        let Presence::Entering(entrance) = self.presence else { return };
+        self.frame = self.frame.max(frame);
+        self.finish(entrance, Some(intro::Cut::Talked), frame);
+        self.leave_stage(capri);
+        self.presence = self.entrance(capri, frame);
+    }
+
+    /// Retient comment l'intro `entrance` a fini, à l'image `frame` : jouée, ou coupée (`cut`).
+    fn finish(&mut self, entrance: Entrance, cut: Option<intro::Cut>, frame: u64) {
+        let lasted = frame.saturating_sub(entrance.since).min(u64::from(u32::MAX)) as u32;
+        self.performed = Some(match cut {
+            None => End::Played { shown: lasted },
+            Some(why) => End::Cut { why, at: Some(lasted) },
+        });
+    }
+
+    /// Une intro qu'elle jouait s'arrête là : debout à sa place (sauf tenue), sa marche ou sa
+    /// chute arrêtées, son tour repris (une suite qui commence l'arrête de nouveau). Sans effet si
+    /// elle n'en jouait pas ; sa présence est à l'appelant.
+    fn leave_stage(&mut self, capri: &mut Capri) {
+        let Presence::Entering(entrance) = self.presence else { return };
+        self.walking = None;
+        if !capri.is_held() {
+            capri.set_at(entrance.place);
+            // sa chute arrêtée n'est pas un lâcher : elle ne se relève pas
+            self.carried = None;
+        }
+        capri.unstill();
+    }
+
+    /// Un pas d'une intro qu'elle joue, à l'image `frame`, dans `update` : ce qui suit.
+    fn on_stage(&mut self, capri: &mut Capri, entrance: Entrance, frame: u64) -> Presence {
+        // attrapée : tenue, comme d'habitude
+        if capri.is_held() {
+            self.finish(entrance, Some(intro::Cut::Grabbed), frame);
+            self.walking = None;
+            return Presence::Here;
+        }
+        // sa taille a changé (son menu, la molette, la densité de l'écran) : comme quand on lui
+        // parle, elle est à sa place tout de suite
+        if self.height != entrance.height {
+            self.finish(entrance, Some(intro::Cut::Resized), frame);
+            self.leave_stage(capri);
+            return self.entrance(capri, frame);
+        }
+        let going = Presence::Entering(entrance);
+        match entrance.stage {
+            Stage::Falling if capri.is_falling() => going,
+            Stage::Walking { .. } if capri.is_walking() => going,
+            Stage::Appearing(run) if run.left(frame) > 0 => going,
+            Stage::Gathering if frame < entrance.since + act::GATHER_FRAMES => going,
+            // en bas de sa chute : son tour reprend, et elle se relève (`gestures`, comme lâchée)
+            Stage::Falling => {
+                self.finish(entrance, None, frame);
+                capri.unstill();
+                Presence::Here
+            }
+            // matérialisée là où sa marche commence : elle marche jusqu'à sa place, en
+            // `act::WALK_LONGEST` au plus (une autre taille l'aurait coupée, plus haut)
+            Stage::Appearing(_) => {
+                let walks = self.walk_speed().is_some_and(|speed| capri.walk_to(entrance.place.x, speed));
+                if walks {
+                    self.walking = Some(frame);
+                    Presence::Entering(Entrance { stage: Stage::Walking { since: frame }, ..entrance })
+                } else {
+                    self.finish(entrance, None, frame);
+                    capri.unstill();
+                    Presence::Here
+                }
+            }
+            // arrivée (ou arrêtée par une nouvelle taille) : sa boucle reprend (`gestures`)
+            Stage::Walking { .. } => {
+                self.finish(entrance, None, frame);
+                Presence::Here
+            }
+            // rassemblée : son arrivée reprend après la dernière case de ses bandes
+            Stage::Gathering => {
+                self.finish(entrance, None, frame);
+                let run = Run {
+                    clip: Clip::Arrive,
+                    since: frame,
+                    from: act::ARRIVE_FROM,
+                    len: self.sheets.life_arriving.len(),
+                    backward: false,
+                };
+                self.resume_after(capri, run, frame);
+                Presence::Appearing(run)
+            }
+        }
+    }
+
+    /// Ce qu'elle dessine pendant une intro qu'elle joue.
+    fn on_stage_picture(&self, capri: &Capri, entrance: Entrance) -> Picture {
+        let frame = self.frame;
+        match entrance.stage {
+            Stage::Falling => self.alive(capri, self.sheets.dangle.at(frame.saturating_sub(entrance.since))),
+            Stage::Appearing(run) => self.played(capri, run),
+            Stage::Walking { since } => self.alive(capri, self.sheets.walk.at(frame.saturating_sub(since))),
+            Stage::Gathering => Picture {
+                drawing: Drawing::Gather(act::gather_key(frame.saturating_sub(entrance.since))),
+                rect: life::over_stand(capri.pose().rect),
+                mouth: None,
+                boil_seed: 0,
+                ghost: Vec2::ZERO,
+            },
+        }
     }
 
     /// Son geste et sa marche s'arrêtent là, et son tour reprend s'ils l'avaient arrêté (s'effacer
@@ -725,6 +1039,14 @@ impl Look {
         self.conversing = conversing;
     }
 
+    /// Son bonjour attend-il d'être dit (après l'intro du lancement) ? Tant qu'il attend, elle ne
+    /// commence aucun geste d'elle-même (sourire pour Claude Code, éclat de sa vie) : le bonjour
+    /// passe avant. Un clic, et se relever en bas de sa chute (qui fait partie de l'intro), si. À
+    /// dire avant chaque pas.
+    pub fn set_greeting_due(&mut self, due: bool) {
+        self.greeting_due = due;
+    }
+
     /// Libre pour un geste ou une marche : là, aucun geste en cours, on ne se parle pas, ni tenue,
     /// ni lancée, ni en marche.
     fn free(&self, capri: &Capri) -> bool {
@@ -747,7 +1069,10 @@ impl Look {
             && match capri.stance() {
                 Stance::Floating => true,
                 Stance::Perched { .. } => !self.has_perch(),
-                Stance::Held { .. } | Stance::Thrown { .. } | Stance::Walking { .. } => false,
+                Stance::Held { .. }
+                | Stance::Thrown { .. }
+                | Stance::Walking { .. }
+                | Stance::Falling { .. } => false,
             }
     }
 
@@ -775,10 +1100,10 @@ impl Look {
     }
 
     /// Claude Code vient de finir son tour (dans la session principale), à l'image `frame` :
-    /// debout et libre, elle sourit, pas plus d'une fois par [`CHEER_EVERY`] ; assise, rien. Rend
-    /// `true` si elle sourit.
+    /// debout et libre, elle sourit, pas plus d'une fois par [`CHEER_EVERY`] ; assise, ou son bonjour
+    /// pas encore dit ([`Look::set_greeting_due`]), rien. Rend `true` si elle sourit.
     pub fn cheer(&mut self, capri: &mut Capri, frame: u64) -> bool {
-        if self.cheered.is_some_and(|at| frame < at.saturating_add(CHEER_EVERY)) {
+        if self.greeting_due || self.cheered.is_some_and(|at| frame < at.saturating_add(CHEER_EVERY)) {
             return false;
         }
         let cheered = self.begin(capri, Gesture::Grin, frame);
@@ -788,10 +1113,10 @@ impl Look {
         cheered
     }
 
-    /// Assise et libre, sans musique : un éclat, à l'image `frame` (sa vie le lui fait faire de
-    /// temps en temps, voir `roam`). Rend `true` s'il se joue.
+    /// Assise et libre, sans musique, son bonjour dit s'il y en avait un : un éclat, à l'image
+    /// `frame` (sa vie le lui fait faire de temps en temps, voir `roam`). Rend `true` s'il se joue.
     pub fn fidget(&mut self, capri: &mut Capri, frame: u64) -> bool {
-        !self.music && !self.grooving && self.begin(capri, Gesture::PerchGlitch, frame)
+        !self.greeting_due && !self.music && !self.grooving && self.begin(capri, Gesture::PerchGlitch, frame)
     }
 
     /// Sa vitesse de marche, en pixels par seconde, si elle sait marcher (sa planche est là).
@@ -938,6 +1263,7 @@ impl Look {
             Presence::Appearing(run) if run.seat().is_some() != seat.is_some() => Presence::Here,
             Presence::Appearing(run) if run.left(frame) == 0 => Presence::Here,
             Presence::Vanishing(run, exit) if run.left(frame) == 0 => Presence::Gone(Some(run), exit),
+            Presence::Entering(entrance) => self.on_stage(capri, entrance, frame),
             unchanged => unchanged,
         };
         self.gestures(capri, frame, talking);
@@ -1003,6 +1329,10 @@ impl Look {
     pub fn picture(&self, capri: &Capri) -> Picture {
         let frame = self.frame;
         match self.presence {
+            // une intro qu'elle joue (tenue, elle pend, plus bas)
+            Presence::Entering(entrance) if !capri.is_held() => {
+                return self.on_stage_picture(capri, entrance);
+            }
             // tenue, elle est debout tout de suite
             Presence::Appearing(run) if !capri.is_held() => return self.played(capri, run),
             Presence::Vanishing(run, _) | Presence::Gone(Some(run), _) => return self.played(capri, run),
@@ -1074,6 +1404,8 @@ impl Look {
                 Some(mask) => mask,
                 None => return false,
             },
+            // ses bandes, d'un bord à l'autre de l'écran : rien ne l'attrape, elle n'est pas là
+            Drawing::Gather(_) => return false,
         };
         picture.rect.to_unit(cursor).is_some_and(|uv| mask.hit(uv))
     }
@@ -1266,9 +1598,10 @@ fn at_most<T: Copy>(sheet: &Sheet<T>, frame: u64) -> T {
     sheet.at(frame.min(sheet.len() - 1))
 }
 
-/// Tenue, ou lancée.
+/// Tenue, lancée, ou en train de tomber du ciel (une intro) : en bas, elle se relève, comme
+/// lâchée.
 fn carried(capri: &Capri) -> bool {
-    matches!(capri.stance(), Stance::Held { .. } | Stance::Thrown { .. })
+    matches!(capri.stance(), Stance::Held { .. } | Stance::Thrown { .. } | Stance::Falling { .. })
 }
 
 #[cfg(test)]
@@ -1714,7 +2047,7 @@ mod tests {
         let mut look = dressed(true, true);
         let mut c = capri(&look);
         c.step(0.0, 30);
-        look.hide_unseen(30);
+        look.hide_unseen(&mut c, 30);
         assert!(look.is_gone() && look.is_hidden() && look.is_away() && !look.is_traveling());
         assert!(!look.is_over(&c, c.position() + c.size() * 0.5), "rien ne l'attrape");
         // la cacher encore ne change rien ; montrée, elle se matérialise là où elle se tient
@@ -1730,7 +2063,7 @@ mod tests {
         let mut look = dressed(true, false);
         look.wardrobe.life = None;
         let mut c = capri(&look);
-        look.hide_unseen(0);
+        look.hide_unseen(&mut c, 0);
         assert!(look.is_gone());
         look.appear(&mut c, 10);
         assert!(look.is_here());
@@ -2554,6 +2887,48 @@ mod tests {
     }
 
     #[test]
+    fn while_her_greeting_waits_she_starts_no_gesture_of_her_own() {
+        // debout : pas de sourire pour Claude Code tant que son bonjour attend ; un clic, si
+        let mut look = moving();
+        let mut c = capri(&look);
+        entered(&mut look, &mut c, 100);
+        look.set_greeting_due(true);
+        assert!(!look.cheer(&mut c, 100), "le bonjour passe avant");
+        assert!(look.gesture().is_none());
+        assert_eq!(look.poke(&mut c, 100), Some(Gesture::Grin), "un clic est un geste de l'utilisateur");
+        // son bonjour dit : de nouveau
+        let mut look = moving();
+        let mut c = capri(&look);
+        entered(&mut look, &mut c, 100);
+        look.set_greeting_due(true);
+        assert!(!look.cheer(&mut c, 100));
+        look.set_greeting_due(false);
+        assert!(look.cheer(&mut c, 101), "pas compté comme un sourire : la minute ne commence pas");
+        // tombée du ciel, elle se relève quand même : cela fait partie de l'intro
+        let mut look = moving();
+        let mut c = capri(&look);
+        c.step(0.0, 0);
+        assert!(look.perform(&mut c, Act::Fall, 0));
+        look.set_greeting_due(true);
+        let mut frame = 0;
+        while look.is_performing() {
+            frame += 1;
+            staged(&mut look, &mut c, frame);
+        }
+        assert_eq!(look.gesture(), Some(Gesture::Rise));
+        // assise : pas d'éclat d'elle-même tant qu'il attend
+        let mut look = moving();
+        let mut c = capri(&look);
+        land(&mut look, &mut c, 0);
+        let since = sheets::arriving().len();
+        at(&mut look, &mut c, since + 3 * TOUR, false, false);
+        look.set_greeting_due(true);
+        assert!(!look.fidget(&mut c, since + 3 * TOUR));
+        look.set_greeting_due(false);
+        assert!(look.fidget(&mut c, since + 3 * TOUR));
+    }
+
+    #[test]
     fn she_fidgets_seated_only_when_free_and_without_music() {
         let mut look = moving();
         let mut c = capri(&look);
@@ -2739,6 +3114,380 @@ mod tests {
                 assert!(look.gesture().is_none() && look.is_here(), "{case}");
             }
         }
+    }
+
+    /// Un pas de l'app pendant une intro qu'elle joue : son corps à la cadence de l'animation.
+    fn staged(look: &mut Look, c: &mut Capri, frame: u64) -> Picture {
+        c.step(1.0 / 24.0, frame);
+        look.update(c, frame, false, false);
+        look.picture(c)
+    }
+
+    #[test]
+    fn falling_from_the_sky_she_dangles_down_to_her_place_then_rises_and_loops() {
+        let mut look = moving();
+        let mut c = capri(&look);
+        c.step(0.0, 0);
+        let place = c.feet();
+        assert!(look.perform(&mut c, Act::Fall, 0));
+        assert!(look.is_performing() && !look.is_here() && !look.is_away() && !look.is_hidden());
+        assert_eq!(look.performing(), Some(Act::Fall));
+        let first = look.picture(&c);
+        assert_eq!(life_of(&first).map(|(strip, _)| strip), Some(life::Strip::Dangle));
+        assert!(first.rect.max().y <= 0.0, "au-dessus de l'écran : {:?}", first.rect);
+        let mut frame = 0;
+        let mut last = c.feet().y;
+        while look.is_performing() {
+            frame += 1;
+            assert!(frame <= 31, "elle finit de tomber");
+            let picture = staged(&mut look, &mut c, frame);
+            if look.is_performing() {
+                assert_eq!(life_of(&picture).map(|(strip, _)| strip), Some(life::Strip::Dangle), "{frame}");
+                assert!(c.feet().y > last, "elle descend : image {frame}");
+                assert!(look.gesture().is_none());
+            }
+            last = c.feet().y;
+        }
+        assert!((c.feet() - place).length() < 1e-3, "à sa place : {:?} contre {place:?}", c.feet());
+        assert_eq!(look.take_performed(), Some(End::Played { shown: frame as u32 }));
+        assert_eq!(look.take_performed(), None, "une fois");
+        // en bas, elle se relève, puis sa boucle
+        assert_eq!(look.gesture(), Some(Gesture::Rise));
+        assert!(look.is_here());
+        let end = frame + Gesture::Rise.frames();
+        let picture = at(&mut look, &mut c, end, false, false);
+        assert!(matches!(picture.drawing, Drawing::Stand(_)), "{picture:?}");
+        let tour = c.tour();
+        at(&mut look, &mut c, end + 10, false, false);
+        assert!(c.tour() > tour, "son tour reprend");
+    }
+
+    #[test]
+    fn grabbed_hidden_or_talked_to_while_she_falls_her_intro_stops() {
+        // attrapée : tenue, comme d'habitude, et elle pend
+        let mut look = moving();
+        let mut c = capri(&look);
+        c.step(0.0, 0);
+        let place = c.feet();
+        assert!(look.perform(&mut c, Act::Fall, 0));
+        let mut picture = look.picture(&c);
+        for frame in 1..=26 {
+            picture = staged(&mut look, &mut c, frame);
+        }
+        let middle = picture.rect.min + picture.rect.size * 0.5;
+        assert!(look.is_over(&c, middle), "on peut l'attraper en l'air");
+        assert!(look.hold(&mut c, &grab_at(middle, 1.0)));
+        staged(&mut look, &mut c, 27);
+        assert!(look.is_here() && c.is_held() && look.is_dangling(&c));
+        assert_eq!(look.take_performed(), Some(End::Cut { why: intro::Cut::Grabbed, at: Some(27) }));
+        // on lui parle : elle se matérialise tout de suite à sa place
+        let mut look = moving();
+        let mut c = capri(&look);
+        c.step(0.0, 0);
+        assert!(look.perform(&mut c, Act::Fall, 0));
+        staged(&mut look, &mut c, 5);
+        look.cut_performance(&mut c, 5);
+        assert!(!look.is_performing() && (c.feet() - place).length() < 1e-3);
+        assert_eq!(c.stance(), Stance::Floating);
+        assert_eq!(look.take_performed(), Some(End::Cut { why: intro::Cut::Talked, at: Some(5) }));
+        let picture = at(&mut look, &mut c, 6, false, false);
+        assert_eq!(life_of(&picture).map(|(strip, _)| strip), Some(life::Strip::Arrive));
+        at(&mut look, &mut c, 6 + life::arriving().len(), false, false);
+        assert!(look.is_here() && look.gesture().is_none(), "elle ne se relève pas : elle n'est pas tombée");
+        // cachée : coupée net, cachée ; montrée, elle se matérialise à sa place
+        let mut look = moving();
+        let mut c = capri(&look);
+        c.step(0.0, 0);
+        assert!(look.perform(&mut c, Act::Fall, 0));
+        staged(&mut look, &mut c, 5);
+        look.vanish(&mut c, 5);
+        assert!(look.is_gone() && look.is_hidden() && !look.is_performing());
+        assert_eq!(look.take_performed(), Some(End::Cut { why: intro::Cut::Hidden, at: Some(5) }));
+        assert!((c.feet() - place).length() < 1e-3 && c.stance() == Stance::Floating);
+        look.appear(&mut c, 50);
+        assert_eq!(
+            life_of(&at(&mut look, &mut c, 50, false, false)).map(|(s, _)| s),
+            Some(life::Strip::Arrive)
+        );
+    }
+
+    #[test]
+    fn grabbed_while_she_enters_partly_off_the_screen_she_does_not_jump() {
+        let screen = Rect::new(Vec2::ZERO, Vec2::new(3024.0, 1964.0));
+        for (act, frame) in [(Act::Fall, 5u64), (Act::Walk, 24)] {
+            let mut look = moving();
+            let mut c = Capri::new(look.standing_size(), screen, Vec2::new(2700.0, 1300.0));
+            c.set_feet(look.standing_feet());
+            c.step(0.0, 0);
+            assert!(look.perform(&mut c, act, 0));
+            let mut picture = look.picture(&c);
+            for f in 1..=frame {
+                picture = staged(&mut look, &mut c, f);
+            }
+            // la part d'elle qui se voit
+            let visible =
+                Rect::new(Vec2::new(picture.rect.min.x.max(0.0), picture.rect.min.y.max(0.0)), Vec2::ZERO);
+            let seen = Vec2::new(
+                (visible.min.x + picture.rect.max().x.min(3024.0)) * 0.5,
+                (visible.min.y + picture.rect.max().y.min(1964.0)) * 0.5,
+            );
+            let before = c.position();
+            assert!(before.y < 0.0 || before.x + c.size().x > 3024.0, "{act:?} : en partie dehors");
+            assert!(look.is_over(&c, seen), "{act:?} : on l'attrape par ce qui se voit");
+            assert!(look.hold(&mut c, &grab_at(seen, 1.0)));
+            assert_eq!(c.position(), before, "{act:?} : pas de saut à la prise");
+            staged(&mut look, &mut c, frame + 1);
+            assert_eq!(
+                look.take_performed(),
+                Some(End::Cut { why: intro::Cut::Grabbed, at: Some(frame as u32 + 1) })
+            );
+            // le curseur va vers l'intérieur de l'écran : elle le suit, sans saut
+            let inward = if act == Act::Fall { Vec2::new(0.0, 20.0) } else { Vec2::new(-20.0, 0.0) };
+            c.drag_to(seen + inward, 1.1);
+            let moved = c.position() - before;
+            // au plus le chemin du curseur, et la moitié de plus (son glissé vers sa mèche)
+            assert!(moved.length() > 0.0 && moved.length() <= 30.0 + 1e-3, "{act:?} : {moved:?}");
+        }
+    }
+
+    #[test]
+    fn walking_in_from_closer_she_always_appears_whole_on_the_screen() {
+        // sa place à 400 px du bord droit : 4 s de marche la feraient apparaître en partie dehors
+        let screen = Rect::new(Vec2::ZERO, Vec2::new(3024.0, 1964.0));
+        let mut look = moving();
+        let size = look.standing_size();
+        let feet = look.standing_feet();
+        let mut c = Capri::new(size, screen, Vec2::new(2624.0 - size.x * feet.x, 1300.0));
+        c.set_feet(feet);
+        c.step(0.0, 0);
+        assert!(look.perform(&mut c, Act::Walk, 0));
+        let appearing = look.picture(&c);
+        assert_eq!(life_of(&appearing), Some((life::Strip::Arrive, 0)), "elle se matérialise d'abord");
+        assert!(appearing.rect.max().x <= 3024.0 + 1.0, "entière dans l'écran : {:?}", appearing.rect);
+        assert!(appearing.rect.min.x >= 0.0);
+    }
+
+    #[test]
+    fn a_new_size_while_she_plays_her_intro_cuts_it_and_puts_her_at_her_place() {
+        for (act, frame) in [(Act::Fall, 10u64), (Act::Walk, 40), (Act::Gather, 6)] {
+            let mut look = moving();
+            let mut c = capri(&look);
+            c.step(0.0, 0);
+            let place = c.feet();
+            assert!(look.perform(&mut c, act, 0));
+            for f in 1..=frame {
+                staged(&mut look, &mut c, f);
+            }
+            assert!(look.is_performing(), "{act:?}");
+            // sa taille change (son menu, la molette, ou la densité de l'écran), comme dans l'app
+            look.set_height(360.0);
+            c.set_size(look.standing_size());
+            staged(&mut look, &mut c, frame + 1);
+            assert_eq!(
+                look.take_performed(),
+                Some(End::Cut { why: intro::Cut::Resized, at: Some(frame as u32 + 1) }),
+                "{act:?}"
+            );
+            assert!((c.feet() - place).length() < 1e-3, "{act:?} : à sa place, {:?}", c.feet());
+            assert!(!look.is_performing() && look.gesture().is_none(), "{act:?} : ni intro ni geste");
+            assert_eq!(c.stance(), Stance::Floating);
+            // elle se matérialise à sa place, comme quand on lui parle
+            let picture = look.picture(&c);
+            assert_eq!(life_of(&picture).map(|(strip, _)| strip), Some(life::Strip::Arrive), "{act:?}");
+        }
+        // sans ses planches de vie (elle est là d'un coup) : coupée en tombant, par sa taille ou
+        // parce qu'on lui parle, elle ne se relève pas pour autant (ce n'est pas un lâcher)
+        for resized in [true, false] {
+            let mut wardrobe = wardrobe(true, true, false);
+            wardrobe.moves = every_move(true);
+            let mut look = Look::new(wardrobe, HEIGHT);
+            let mut c = capri(&look);
+            c.step(0.0, 0);
+            assert!(look.perform(&mut c, Act::Fall, 0));
+            staged(&mut look, &mut c, 10);
+            if resized {
+                look.set_height(360.0);
+                c.set_size(look.standing_size());
+            } else {
+                look.cut_performance(&mut c, 10);
+            }
+            staged(&mut look, &mut c, 11);
+            staged(&mut look, &mut c, 12);
+            assert!(look.is_here() && look.gesture().is_none(), "taille {resized} : {:?}", look.gesture());
+        }
+    }
+
+    #[test]
+    fn walking_in_she_enters_from_the_right_edge_or_appears_closer_then_walks_to_her_place() {
+        // sa place près du bord droit : elle entre en marchant, de hors de l'écran
+        let mut look = moving();
+        let screen = Rect::new(Vec2::ZERO, Vec2::new(3024.0, 1964.0));
+        let mut c = Capri::new(look.standing_size(), screen, Vec2::new(2700.0, 1300.0));
+        c.set_feet(look.standing_feet());
+        c.step(0.0, 0);
+        let place = c.feet();
+        assert!(look.perform(&mut c, Act::Walk, 0));
+        let first = look.picture(&c);
+        assert_eq!(life_of(&first).map(|(strip, _)| strip), Some(life::Strip::Walk));
+        assert!(first.rect.min.x >= 3024.0, "hors de l'écran : {:?}", first.rect);
+        let mut frame = 0;
+        let mut last = c.feet().x;
+        while look.is_performing() {
+            frame += 1;
+            assert!(frame <= 4 * 24 + 1, "4 s au plus");
+            let picture = staged(&mut look, &mut c, frame);
+            assert!(c.feet().x < last || !look.is_performing(), "vers la gauche : image {frame}");
+            last = c.feet().x;
+            if look.is_performing() {
+                assert_eq!(life_of(&picture).map(|(strip, _)| strip), Some(life::Strip::Walk));
+            }
+        }
+        assert!((c.feet() - place).length() < 1e-3);
+        assert!(matches!(look.take_performed(), Some(End::Played { .. })));
+        assert!(look.is_here() && c.stance() == Stance::Floating && !look.is_walking(&c));
+        let tour = c.tour();
+        at(&mut look, &mut c, frame + 10, false, false);
+        assert!(c.tour() > tour, "sa boucle reprend");
+
+        // sa place loin du bord : elle se matérialise à 4 s de marche, puis marche
+        let mut look = moving();
+        let mut c = capri(&look);
+        c.step(0.0, 0);
+        let place = c.feet();
+        assert!(look.perform(&mut c, Act::Walk, 0));
+        let speed = look.walk_speed().expect("sa marche");
+        assert!((c.feet().x - place.x - act::WALK_LONGEST * speed).abs() < 1e-2, "{:?}", c.feet());
+        let appearing = look.picture(&c);
+        assert_eq!(life_of(&appearing), Some((life::Strip::Arrive, 0)));
+        let mut frame = 0;
+        while look.is_performing() {
+            frame += 1;
+            assert!(frame <= life::arriving().len() + 4 * 24 + 1);
+            let picture = staged(&mut look, &mut c, frame);
+            if look.is_performing() && frame > life::arriving().len() {
+                assert_eq!(life_of(&picture).map(|(strip, _)| strip), Some(life::Strip::Walk), "{frame}");
+            }
+        }
+        assert!((c.feet() - place).length() < 1e-3);
+        assert!(look.is_here());
+    }
+
+    #[test]
+    fn gathering_her_bands_close_in_on_her_then_her_arrival_ends() {
+        let mut look = moving();
+        let mut c = capri(&look);
+        c.step(0.0, 0);
+        assert!(look.perform(&mut c, Act::Gather, 0));
+        let mut keys = Vec::new();
+        for frame in 0..act::GATHER_FRAMES {
+            let picture = at(&mut look, &mut c, frame, false, false);
+            let Drawing::Gather(key) = picture.drawing else { panic!("{picture:?}") };
+            keys.push(key);
+            assert!(!look.is_over(&c, picture.rect.min + picture.rect.size * 0.5), "rien ne l'attrape");
+            assert_eq!(picture.rect, life::over_stand(c.pose().rect));
+        }
+        assert_eq!(keys, [0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8]);
+        // puis son arrivée, de sa case 9 à la fin, et sa boucle
+        let picture = at(&mut look, &mut c, act::GATHER_FRAMES, false, false);
+        assert_eq!(life_of(&picture), Some((life::Strip::Arrive, 9)));
+        assert_eq!(look.take_performed(), Some(End::Played { shown: act::GATHER_FRAMES as u32 }));
+        assert!(!look.is_performing() && !look.is_here());
+        at(&mut look, &mut c, act::GATHER_FRAMES + 10, false, false);
+        assert!(look.is_here());
+    }
+
+    #[test]
+    fn see_an_intro_she_fades_out_then_plays_it_and_is_refused_when_busy() {
+        let mut look = moving();
+        let mut c = capri(&look);
+        c.step(0.0, 0);
+        look.update(&mut c, 0, false, false);
+        let place = c.feet();
+        assert_eq!(look.bow_out(&mut c, 0), Ok(()));
+        assert!(look.is_bowing_out() && !look.is_offstage() && !look.is_hidden() && !look.is_traveling());
+        assert_eq!(look.bow_out(&mut c, 1), Err(Hold::Away), "déjà en train de s'effacer");
+        at(&mut look, &mut c, life::leaving().len(), false, false);
+        assert!(look.is_offstage() && !look.is_gone() && !look.is_between());
+        assert!(look.perform(&mut c, Act::Gather, 30));
+        assert!(look.is_performing() && (c.feet() - place).length() < 1e-3);
+        // l'intro en images, ou « rien » : elle se matérialise ensuite
+        let mut look = moving();
+        let mut c = capri(&look);
+        c.step(0.0, 0);
+        look.bow_out(&mut c, 0).expect("libre");
+        at(&mut look, &mut c, 40, false, false);
+        look.enter(&mut c, 40);
+        at(&mut look, &mut c, 40 + life::arriving().len(), false, false);
+        assert!(look.is_here());
+        // on lui parle avant que l'intro ne commence : elle revient sur ses pas
+        let mut look = moving();
+        let mut c = capri(&look);
+        c.step(0.0, 0);
+        look.bow_out(&mut c, 0).expect("libre");
+        at(&mut look, &mut c, 6, false, false);
+        look.turn_back(&mut c, 6);
+        assert!(!look.is_bowing_out());
+        // cachée pendant qu'elle s'efface : cachée, sans intro
+        let mut look = moving();
+        let mut c = capri(&look);
+        c.step(0.0, 0);
+        look.bow_out(&mut c, 0).expect("libre");
+        look.vanish(&mut c, 3);
+        assert!(look.is_hidden() && !look.is_bowing_out());
+        at(&mut look, &mut c, 60, false, false);
+        assert!(look.is_gone() && !look.is_offstage());
+        assert!(!look.perform(&mut c, Act::Fall, 60), "cachée, pas d'intro");
+        // refusée : tenue, on se parle, en marche
+        let mut look = moving();
+        let mut c = capri(&look);
+        c.step(0.0, 0);
+        look.update(&mut c, 0, false, false);
+        look.set_conversing(true);
+        assert_eq!(look.bow_out(&mut c, 1), Err(Hold::Talking));
+        look.set_conversing(false);
+        let to = c.feet().x - 300.0;
+        assert!(look.walk(&mut c, 1, to));
+        assert_eq!(look.bow_out(&mut c, 2), Err(Hold::Walking));
+        look.halt(&mut c);
+        c.grab(c.position() + Vec2::new(10.0, 10.0), 0.0);
+        assert_eq!(look.bow_out(&mut c, 3), Err(Hold::Carried));
+        assert!(look.is_here(), "refusée, rien n'a changé");
+        // sans ses planches de vie : effacée tout de suite
+        let mut look = dressed(true, false);
+        look.wardrobe.life = None;
+        let mut c = capri(&look);
+        assert_eq!(look.bow_out(&mut c, 0), Ok(()));
+        assert!(look.is_offstage());
+    }
+
+    #[test]
+    fn an_intro_she_plays_needs_its_sheets_and_otherwise_changes_nothing() {
+        let mut bare = dressed(true, true);
+        let mut c = capri(&bare);
+        for act in Act::ALL {
+            assert_eq!(bare.can_perform(act, &c), act == Act::Gather, "{act:?}");
+        }
+        assert!(!bare.perform(&mut c, Act::Fall, 0));
+        assert!(!bare.perform(&mut c, Act::Walk, 0));
+        assert!(bare.is_here() && !bare.is_performing());
+        let mut lifeless = Look::new(Wardrobe { life: None, ..wardrobe(true, true, false) }, HEIGHT);
+        assert!(!lifeless.perform(&mut c, Act::Gather, 0));
+        // seulement à son entrée en scène, ou effacée pour une intro
+        let mut look = moving();
+        let mut c = capri(&look);
+        look.enter(&mut c, 0);
+        assert!(!look.perform(&mut c, Act::Fall, 1), "en train d'apparaître");
+        look.hide_unseen(&mut c, 2);
+        assert!(!look.perform(&mut c, Act::Fall, 3), "cachée");
+        // assise : elle joue l'intro debout, ses pieds sur le point où elle était posée
+        let mut look = moving();
+        let mut c = capri(&look);
+        land(&mut look, &mut c, 0);
+        assert!(c.perched().is_some());
+        look.bow_out(&mut c, 100).expect("libre");
+        at(&mut look, &mut c, 200, false, false);
+        assert!(look.perform(&mut c, Act::Walk, 200));
+        assert!(c.perched().is_none() && !look.is_seated(&c));
     }
 
     #[test]

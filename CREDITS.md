@@ -17,6 +17,12 @@ D'après ce dépôt, elles proviennent de captures de la série, d'un détourage
 de fan art (les gros plans de l'introduction). Merci à **mochiiwuff** pour leur sélection et leur
 préparation, ainsi qu'aux fans qui les ont créées.
 
+Neuf d'entre elles, les gros plans de l'introduction (`intro-grab.webp`, `intro-smear.webp`,
+`intro-wave1.webp` à `intro-wave3.webp`, `intro-mouth1.webp` à `intro-mouth3.webp`,
+`intro-happy.webp`), servent à l'une des intros du lancement, « le coucou », dont l'enchaînement
+est écrit par ce projet. Avec `capri-cutout.png`, et l'icône tirée de `capri-face.png` (voir plus
+bas), ce sont les seules images de ce dépôt-là que `Capri.app` emporte.
+
 **Ces images ne sont couvertes par aucune licence de ce projet**, et ce projet ne revendique aucun
 droit sur elles. Si un ayant droit souhaite leur retrait, ouvrez une issue : elles seront retirées
 immédiatement. Le code les charge au lancement, sans les intégrer au binaire, pour qu'on puisse les
