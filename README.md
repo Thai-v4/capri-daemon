@@ -922,8 +922,10 @@ lance la vraie app avec ses quatre lieux d'essai contre un faux serveur qui redi
 et vérifie qu'elle trouve la version, la dit à son tour, et que ni sa sortie d'erreur ni son
 fichier de journal (au niveau `trace`) ne contiennent l'adresse signée.
 
-Pas encore vérifié : **le chemin réel jusqu'à GitHub** (aucun essai ne le contacte ; il sera
-essayé avec ton accord, une fois une version publiée avec son manifeste) ; **ce qui se voit** :
+Le chemin réel jusqu'à GitHub (qu'aucun essai ne contacte) a été essayé le 23 novembre 2026,
+avec l'accord de l'utilisateur : `capri update check` de l'app installée, en 0.1.0, a lu le
+manifeste de la 0.2.0 publiée, par les vraies redirections. Pas encore vérifié : la veille de
+l'app elle-même contre GitHub (une minute après son lancement) ; **ce qui se voit** :
 la phrase au-dessus de sa tête, la ligne glissée sous la case dans les deux menus et ce qu'elle
 dit quand on la choisit, la case décochée puis recochée ; **sous Windows**, rien n'a tourné
 ailleurs que dans la CI. Ailleurs (Linux), pas de `https` : elle ne regarde pas.
@@ -998,8 +1000,9 @@ novembre 2026 avec l'identité « Developer ID Application » de l'utilisateur :
 signée par la même identité, mise en place et vérifiée (et la fenêtre du trousseau est apparue une
 fois).
 
-Pas encore vérifié : **le vrai chemin jusqu'à GitHub** (aucune version n'est publiée ; il sera
-essayé avec ton accord) ; **la relance par
+Pas encore vérifié : **le vrai chemin jusqu'à GitHub** (la 0.2.0 est publiée depuis le 23
+novembre 2026, et son manifeste lu par l'app ; ses fichiers n'ont pas encore été téléchargés par
+elle) ; **la relance par
 `open`** (pendant un essai, le programme de fin la saute : `open` ne lui passerait pas ses lieux
 d'essai, et pourrait réveiller ta Capri, du même identifiant) ; **ce qui se voit** (la ligne du
 menu à chaque étape, les phrases à leur tour, Capri qui disparaît et revient) ; **sous Windows**,
@@ -2140,11 +2143,12 @@ Points à surveiller :
    vraie ouverture de session restent à vérifier, voir plus haut). Sa signature par une identité
    « Developer ID Application » du trousseau : écrite, et essayée le 23 novembre 2026 vers un
    dossier temporaire (voir « État de validation »). Des mises à jour à la manière de Droppy, en
-   trois lots : publier les versions (le workflow de publication, écrit le 23 novembre 2026,
-   jamais encore lancé sur GitHub) ; savoir qu'une version existe (écrit et répété le même jour
-   contre un faux serveur de cette machine, jamais encore contre GitHub ni regardé à l'écran) ;
-   la télécharger, la vérifier et l'installer sur un geste (pas écrit). Reste aussi : un
-   installeur.
+   trois lots : publier les versions (le workflow de publication, écrit le 23 novembre 2026 ; la
+   0.2.0 publiée par lui le même jour) ; savoir qu'une version existe (écrit et répété le même
+   jour contre un faux serveur de cette machine, puis contre GitHub par `capri update check` ;
+   pas encore regardé à l'écran) ; la télécharger, la vérifier et l'installer sur un geste (écrit
+   le même jour, macOS seulement, répété de bout en bout dans un dossier temporaire ; pas encore
+   essayé contre GitHub ni regardé à l'écran). Reste aussi : un installeur.
    Pas de notarisation tant que l'app emporte ses images : elle les enverrait chez Apple.
 
 ## Licence

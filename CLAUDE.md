@@ -41,11 +41,14 @@ lancée depuis `/Applications` a écrit le fichier, dossier et fichier réservé
 Jalon 5, sa seconde moitié : des mises à jour à la manière de Droppy, en trois lots (publier les
 versions ; savoir qu'une version existe ; la télécharger, la vérifier et l'installer, sur un
 geste). Le premier est écrit le 23 novembre 2026 (`.github/workflows/release.yml`,
-`tools/release-manifest.sh` essayé avec de faux fichiers), jamais encore lancé sur GitHub : aucune
-version n'est publiée. Le deuxième est écrit et testé sans réseau le même jour : la case « Chercher les
+`tools/release-manifest.sh` essayé avec de faux fichiers) et lancé sur GitHub le même jour, en
+répétition puis pour de bon : la version 0.2.0 est publiée (tag `v0.2.0`, six fichiers, tailles et
+empreintes du manifeste contrôlées à part). Le deuxième est écrit et testé sans réseau le même jour : la case « Chercher les
 mises à jour » de son menu (cochée par défaut), une vérification par jour sur un thread à elle,
 ce qu'elle en dit, et `capri update check` ; répété dans la vraie app contre un faux serveur de
-cette machine, jamais encore contre GitHub, ni regardé à l'écran, ni exécuté sous Windows. Le
+cette machine, puis, avec l'accord de l'utilisateur, contre GitHub par `capri update check` de
+l'app installée (la 0.2.0 trouvée depuis la 0.1.0, par les vraies redirections) ; ni regardé à
+l'écran, ni exécuté sous Windows. Le
 troisième est écrit et testé sans écran le 23 novembre 2026 (macOS seulement) : sur un geste, la
 ligne « Installer la version … » de son menu la télécharge, la vérifie, refait son app à côté de
 l'installée et la signe comme elle ; « Redémarrer pour passer à la … » la met en place par le
