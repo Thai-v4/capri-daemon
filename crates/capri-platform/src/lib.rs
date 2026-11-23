@@ -27,12 +27,18 @@
 //! Et son inscription à l'ouverture de session ([`login`] : un agent de lancement de macOS, dans
 //! un dossier passé en paramètre), et le lancement d'Ollama quand c'est son cerveau sur cette
 //! machine ([`launch`] : un programme par son chemin absolu, détaché, jamais arrêté ; une app par
-//! `open`). Refus explicite ailleurs que sur macOS.
+//! `open` ; et le relais d'une mise à jour, sur un geste). Refus explicite ailleurs que sur macOS.
+//!
+//! Et la signature de l'app qu'une mise à jour refait ([`codesign`] : `/usr/bin/codesign`, sans
+//! horodatage par un serveur ni notarisation, et les noms des identités de signature du trousseau,
+//! seulement pour une app installée signée par une identité). Refus explicite ailleurs que sur
+//! macOS.
 
 use raw_window_handle::{HandleError, HasDisplayHandle, HasWindowHandle, WindowHandle};
 use winit::event::{MouseButton, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, EventLoopBuilder};
 
+pub mod codesign;
 pub mod desk;
 mod ear;
 pub mod keychain;

@@ -14,11 +14,18 @@
 //!   premier plan (`open(1)`) ; si elle tourne déjà, `open` ne fait que la retrouver ;
 //! - un fichier montré dans le Finder ([`reveal`]) : par `/usr/bin/open -R` (« Reveals the file(s)
 //!   in the Finder instead of opening them », `open(1)`), sans attendre `open` : un thread à part
-//!   attend sa fin.
+//!   attend sa fin ;
+//! - le **relais d'une mise à jour** ([`hand_over`]) : le `capri` de la nouvelle app, sur le geste
+//!   de l'utilisateur qui redémarre Capri, détaché comme un programme, son entrée branchée sur un
+//!   tube dont Capri garde l'autre bout jusqu'à sa sortie (le protocole est décrit dans
+//!   `capri_core::bundle`). Il saura qu'elle est sortie quand le tube se fermera : aucun processus
+//!   n'est jamais signalé, ni par elle ni par lui.
 //!
 //! Ailleurs que sur macOS : [`LaunchError::Unavailable`].
 
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
+use std::sync::mpsc::{Receiver, TryRecvError};
 
 /// Ce système sait-il lancer Ollama, et montrer un fichier ?
 pub const AVAILABLE: bool = cfg!(target_os = "macos");
@@ -156,6 +163,120 @@ pub fn reveal(file: &Path) -> Result<(), LaunchError> {
     Err(LaunchError::Unavailable)
 }
 
+/// Le relais d'une mise à jour, du côté de l'ancienne Capri : le programme de fin est lancé, et
+/// elle garde le bout du tube qui le tient en attente.
+pub struct Relay {
+    /// Le bout du tube : écrire `capri_core::bundle::HANDOVER_GO` dit « vas-y » ; le fermer sans
+    /// l'avoir écrit lui dit de renoncer.
+    writer: Option<std::io::PipeWriter>,
+    /// A-t-il dit qu'il prenait le relais ? (sa première ligne)
+    answer: Receiver<bool>,
+    heard: std::cell::Cell<Option<bool>>,
+}
+
+/// Le bout du tube après « vas-y » : il doit rester ouvert jusqu'à la sortie de Capri, que le
+/// programme de fin attend ([`Gone::keep_until_exit`]). Lâché avant, le programme de fin croirait
+/// qu'elle est sortie : seuls les essais le lâchent.
+pub struct Gone {
+    _writer: std::io::PipeWriter,
+}
+
+impl Gone {
+    /// Le tube reste ouvert jusqu'à la sortie du processus, qui le fermera.
+    pub fn keep_until_exit(self) {
+        std::mem::forget(self);
+    }
+}
+
+impl Relay {
+    /// A-t-il pris le relais ? `None` : il ne l'a pas encore dit. `Some(false)` : il a dit autre
+    /// chose, ou il est sorti sans rien dire.
+    pub fn ready(&self) -> Option<bool> {
+        if self.heard.get().is_none() {
+            match self.answer.try_recv() {
+                Ok(ready) => self.heard.set(Some(ready)),
+                Err(TryRecvError::Disconnected) => self.heard.set(Some(false)),
+                Err(TryRecvError::Empty) => {}
+            }
+        }
+        self.heard.get()
+    }
+
+    /// Lui dit d'y aller : il commencera quand ce processus sera sorti. Le bout du tube est rendu,
+    /// à garder ouvert jusque-là.
+    pub fn go(mut self) -> Result<Gone, LaunchError> {
+        use std::io::Write;
+        let mut writer = self.writer.take().ok_or(LaunchError::Unavailable)?;
+        writer
+            .write_all(capri_core::bundle::HANDOVER_GO.as_bytes())
+            .and_then(|()| writer.flush())
+            .map_err(|source| LaunchError::Io { path: PathBuf::from("relais"), source })?;
+        Ok(Gone { _writer: writer })
+    }
+}
+
+/// Lance `program` (le `capri` de la nouvelle app) avec `args`, détaché (son propre groupe de
+/// processus, sa sortie d'erreur jetée), son entrée sur un tube dont on garde l'autre bout, sa
+/// sortie lue par un thread « capri-relais » qui attend sa première ligne. Rien d'autre n'est lu
+/// de lui.
+pub fn hand_over(program: &Path, args: &[&OsStr]) -> Result<Relay, LaunchError> {
+    if !AVAILABLE {
+        return Err(LaunchError::Unavailable);
+    }
+    if !program.is_absolute() {
+        return Err(LaunchError::NotAbsolute(program.to_owned()));
+    }
+    #[cfg(target_os = "macos")]
+    {
+        use std::io::Read;
+        use std::os::unix::process::CommandExt;
+        use std::process::{Command, Stdio};
+        let io = |source| LaunchError::Io { path: program.to_owned(), source };
+        // les deux bouts sont fermés à l'exécution d'un autre programme (`std::io::pipe`) : seul
+        // celui que reçoit son entrée passe au programme de fin ; le nôtre ne passe à personne
+        let (reader, writer) = std::io::pipe().map_err(io)?;
+        let mut child = Command::new(program)
+            .args(args)
+            .stdin(Stdio::from(reader))
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            // son propre groupe : un Ctrl+C du terminal qui a lancé Capri ne l'atteint pas
+            .process_group(0)
+            .spawn()
+            .map_err(io)?;
+        let mut stdout = child.stdout.take().ok_or_else(|| io(std::io::Error::other("pas de sortie")))?;
+        let (sender, answer) = std::sync::mpsc::channel();
+        let reading = std::thread::Builder::new().name("capri-relais".to_owned()).spawn(move || {
+            let expected = capri_core::bundle::HANDOVER_READY.as_bytes();
+            let mut line = Vec::new();
+            let mut byte = [0u8; 1];
+            while line.len() < expected.len() && !line.ends_with(b"\n") {
+                match stdout.read(&mut byte) {
+                    Ok(1) => line.push(byte[0]),
+                    Ok(_) => break,
+                    Err(err) if err.kind() == std::io::ErrorKind::Interrupted => {}
+                    Err(_) => break,
+                }
+            }
+            let _ = sender.send(line == expected);
+            // sa fin est attendue ici, pour que le système n'en garde pas la trace, si elle
+            // arrive avant la nôtre
+            drop(stdout);
+            let _ = child.wait();
+        });
+        if let Err(err) = reading {
+            // sans personne pour l'écouter, il renoncera quand le tube se fermera
+            log::warn!("relais : pas de thread pour l'écouter : {err}");
+        }
+        Ok(Relay { writer: Some(writer), answer, heard: std::cell::Cell::new(None) })
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = args;
+        Err(LaunchError::Unavailable)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #[cfg(target_os = "macos")]
@@ -235,5 +356,72 @@ mod tests {
         assert!(matches!(start_program(Path::new("/bin/true"), &[], &[]), Err(LaunchError::Unavailable)));
         assert!(matches!(open_app(Path::new("/Applications/Ollama.app")), Err(LaunchError::Unavailable)));
         assert!(matches!(reveal(Path::new("/tmp/capri.log")), Err(LaunchError::Unavailable)));
+        assert!(matches!(hand_over(Path::new("/bin/true"), &[]), Err(LaunchError::Unavailable)));
+    }
+
+    /// Attend `condition`, cinq secondes au plus.
+    #[cfg(target_os = "macos")]
+    fn within_five_seconds(mut condition: impl FnMut() -> bool) -> bool {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while Instant::now() < deadline {
+            if condition() {
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        false
+    }
+
+    /// Un faux programme de fin (le shell du système) : il dit qu'il prend le relais, puis
+    /// recopie ce qu'il reçoit dans un fichier jusqu'à la fermeture du tube, et laisse une trace de
+    /// sa fin. Le tube ne se ferme qu'une fois notre bout lâché : il n'est passé à personne d'autre.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn the_relay_waits_for_the_pipe_to_close_and_nothing_else() {
+        use std::ffi::OsString;
+        let directory = scratch("relais");
+        let (received, ended) = (directory.join("recu"), directory.join("fini"));
+        let script = format!(
+            "printf '{}'; cat > '{}'; : > '{}'",
+            capri_core::bundle::HANDOVER_READY.trim_end().to_owned() + "\\n",
+            received.display(),
+            ended.display()
+        );
+        let args: Vec<OsString> = ["-c", &script].map(OsString::from).to_vec();
+        let args: Vec<&OsStr> = args.iter().map(OsString::as_os_str).collect();
+        let relay = hand_over(Path::new("/bin/sh"), &args).expect("lancé");
+        assert!(within_five_seconds(|| relay.ready().is_some()), "aucune réponse");
+        assert_eq!(relay.ready(), Some(true));
+        let gone = relay.go().expect("vas-y");
+        assert!(within_five_seconds(|| std::fs::read_to_string(&received).is_ok_and(|text| text == "go\n")));
+        std::thread::sleep(Duration::from_millis(300));
+        assert!(!ended.exists(), "le tube est encore ouvert : il attend");
+        drop(gone); // ce que fait la sortie de Capri
+        assert!(within_five_seconds(|| ended.exists()), "le tube s'est fermé : il a fini");
+        let _ = std::fs::remove_dir_all(&directory);
+    }
+
+    /// Un programme qui ne dit pas la bonne ligne n'a pas pris le relais ; lâcher le relais sans
+    /// « vas-y » ferme le tube sans rien y écrire.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_wrong_answer_is_no_handover_and_dropping_the_relay_says_nothing() {
+        use std::ffi::OsString;
+        let directory = scratch("relais-refuse");
+        let received = directory.join("recu");
+        let script = format!("echo autre chose; cat > '{}'", received.display());
+        let args: Vec<OsString> = ["-c", &script].map(OsString::from).to_vec();
+        let args: Vec<&OsStr> = args.iter().map(OsString::as_os_str).collect();
+        let relay = hand_over(Path::new("/bin/sh"), &args).expect("lancé");
+        assert!(within_five_seconds(|| relay.ready().is_some()));
+        assert_eq!(relay.ready(), Some(false));
+        drop(relay);
+        assert!(within_five_seconds(|| std::fs::metadata(&received).is_ok_and(|meta| meta.len() == 0)));
+        // muet et sorti : pas de relais non plus
+        let relay = hand_over(Path::new("/usr/bin/true"), &[]).expect("lancé");
+        assert!(within_five_seconds(|| relay.ready().is_some()));
+        assert_eq!(relay.ready(), Some(false));
+        assert!(matches!(hand_over(Path::new("sh"), &[]), Err(LaunchError::NotAbsolute(_))));
+        let _ = std::fs::remove_dir_all(&directory);
     }
 }
