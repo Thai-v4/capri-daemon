@@ -352,7 +352,7 @@ dependencies = [
 
 [[package]]
 name = "capri-app"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "capri-chat",
@@ -374,7 +374,7 @@ dependencies = [
 
 [[package]]
 name = "capri-chat"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "capri-claude",
  "capri-core",
@@ -384,7 +384,7 @@ dependencies = [
 
 [[package]]
 name = "capri-claude"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -393,11 +393,11 @@ dependencies = [
 
 [[package]]
 name = "capri-core"
-version = "0.1.0"
+version = "0.2.0"
 
 [[package]]
 name = "capri-hook"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "capri-claude",
  "capri-ipc",
@@ -405,7 +405,7 @@ dependencies = [
 
 [[package]]
 name = "capri-ipc"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "libc",
  "thiserror 2.0.21",
@@ -414,7 +414,7 @@ dependencies = [
 
 [[package]]
 name = "capri-net"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "capri-chat",
  "log",
@@ -424,7 +424,7 @@ dependencies = [
 
 [[package]]
 name = "capri-platform"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "block2 0.6.2",
  "capri-core",
@@ -447,7 +447,7 @@ dependencies = [
 
 [[package]]
 name = "capri-render"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "bytemuck",
  "cosmic-text",
