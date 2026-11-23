@@ -155,7 +155,15 @@ fn live(seed: u64, (stand_, perch_, life_): (bool, bool, bool), tally: &mut Tall
     let (mut hidden, mut talking, mut music) = (false, false, false);
     let mut frame = 0u64;
     capri.step(0.0, frame);
-    look.enter(&mut capri, frame);
+    // une vie sur cinq commence cachée pendant l'intro du lancement : partie d'un coup, sans
+    // s'être jamais montrée (`Running::end_intro`, `Look::hide_unseen`) ; les autres, l'intro
+    // jouée ou pas, commencent par se matérialiser
+    if seed % 5 == 4 {
+        look.hide_unseen(frame);
+        hidden = true;
+    } else {
+        look.enter(&mut capri, frame);
+    }
     // depuis quand elle n'est pas là, montrée ; depuis quand on l'a cachée
     let mut away_since: Option<u64> = None;
     let mut toggled_at = 0u64;

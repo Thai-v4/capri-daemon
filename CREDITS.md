@@ -10,7 +10,7 @@ avec eux.
 ## Les images (`assets/capri/`)
 
 Les images ne sont pas incluses dans ce dépôt : `tools/fetch-assets.sh` (ou `.ps1`) télécharge
-celles de `assets/capri/` (sauf `perch/`, `stand/` et `life/`, voir plus bas) depuis le dépôt [mochiiwuff/capri-desktop](https://github.com/mochiiwuff/capri-desktop), à la
+celles de `assets/capri/` (sauf `perch/`, `stand/`, `life/` et `intro/`, voir plus bas) depuis le dépôt [mochiiwuff/capri-desktop](https://github.com/mochiiwuff/capri-desktop), à la
 révision `c011764ca1fdbd191925321e3aaa8af5b84babe8`, et vérifie l'empreinte SHA-256 de chacune.
 
 D'après ce dépôt, elles proviennent de captures de la série, d'un détourage réalisé par un fan et
@@ -54,13 +54,23 @@ depuis, par décision de son auteur, aux mêmes conditions que ses poses : la m�
 mêmes mentions obligatoires, le même usage non commercial. Si leur auteur souhaite être nommé, ou
 leur retrait, ouvrez une issue : ce sera fait aussitôt.
 
+### Son intro au démarrage (`assets/capri/intro/`)
+
+Les 22 images de l'intro en plein écran (« Up close » : elle surgit dans l'écran et y colle son
+visage) viennent du même projet, à la même révision (`assets/intros/up-close/`). **Ce dépôt ne
+nomme pas leur auteur** non plus : elles y sont arrivées par le commit `49c2ff5b` du 21 novembre
+2026, dont la demande de fusion parle de « Two new hand-drawn startup animations, Peek and Up
+close », sans crédit, et son README ne les range pas parmi les parties faites par d'autres. Ce
+projet les prend aux mêmes conditions que les planches de sa vie, par la même décision du 23
+novembre 2026.
+
 **Restent écartées** les images que ce dépôt crédite à quelqu'un d'autre que son artiste : l'effet
 de clic (mixmix312352), l'animation de transformation et les deux emotes (Qewiw), et l'intro
 « Peek », dont les images actuelles sont de Qewiw d'après la demande de fusion qui les a apportées.
 
 ### Leur licence
 
-Les planches de ces trois dossiers sont sous la licence de ce projet, la
+Les images de ces quatre dossiers sont sous la licence du projet Capri, la
 [PolyForm Noncommercial 1.0.0](https://polyformproject.org/licenses/noncommercial/1.0.0), dont
 voici les mentions obligatoires, recopiées telles quelles :
 

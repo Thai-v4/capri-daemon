@@ -7,13 +7,11 @@
 //! Et si une répétition de la vraie app est en cours ([`rehearsing`]) : elle ne change alors pas
 //! de place d'elle-même.
 
-use std::ffi::OsString;
 use std::path::Path;
 
 use anyhow::{Context, Result, bail};
 
 use crate::brain_setup::read_text;
-use crate::update_setup::REHEARSALS;
 
 const ROAM_FILE: &str = "roam.json";
 
@@ -30,14 +28,12 @@ pub fn save(directory: &Path, enabled: bool) -> Result<std::path::PathBuf> {
     crate::brain_setup::write_file(directory, ROAM_FILE, &format!("{{\n  \"enabled\": {enabled}\n}}\n"))
 }
 
-/// Une répétition de la vraie app est-elle demandée (`env` : `std::env::var_os` en vrai, une table
-/// dans les essais ; une variable vide compte pour absente) ? Ses départs d'elle-même fausseraient
+/// Une répétition de la vraie app est-elle demandée (la règle des répétitions, écrite une fois
+/// dans `update_setup` : leur variable est là, vide ou non) ? Ses départs d'elle-même fausseraient
 /// ce que la répétition mesure : le suivi d'une fenêtre (elle la quitterait), la fenêtre de
 /// réglages, les annonces de musique. `CAPRI_CONFIG_DIR` seule n'en est pas une : sa vie peut se
 /// répéter dans un dossier d'essai.
-pub fn rehearsing(env: impl Fn(&str) -> Option<OsString>) -> bool {
-    REHEARSALS.iter().any(|name| env(name).is_some_and(|value| !value.is_empty()))
-}
+pub use crate::update_setup::rehearsing;
 
 /// Un objet JSON ; `enabled` absent vaut le défaut (elle vit sa vie), un champ inconnu est ignoré.
 fn parse(text: &str) -> Result<bool> {
@@ -52,7 +48,10 @@ fn parse(text: &str) -> Result<bool> {
 
 #[cfg(test)]
 mod tests {
+    use std::ffi::OsString;
+
     use super::*;
+    use crate::update_setup::REHEARSALS;
 
     fn temporary(name: &str) -> std::path::PathBuf {
         let directory = std::env::temp_dir().join(format!("capri-test-vie-{name}-{}", std::process::id()));
@@ -95,7 +94,8 @@ mod tests {
         assert!(!rehearsing(alone), "un dossier d'essai seul");
         for name in REHEARSALS {
             assert!(rehearsing(table(vec![(name, "1")])), "{name}");
-            assert!(!rehearsing(table(vec![(name, "")])), "{name} vide");
+            // la répétition démarre sur la seule présence de sa variable : vide, c'en est une
+            assert!(rehearsing(table(vec![(name, "")])), "{name} vide");
         }
     }
 }

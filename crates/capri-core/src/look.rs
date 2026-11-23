@@ -40,6 +40,8 @@
 //! de suite, là où elle apparaissait ; pendant qu'elle s'efface, rien ne l'attrape. Tant qu'une de
 //! ces suites dure, elle n'est pas libre ([`Look::is_here`]). Sans ses planches de vie, ou sans sa
 //! pose debout sur laquelle elles s'alignent, elle apparaît et disparaît d'un coup, comme avant.
+//! Cachée pendant l'intro du lancement ([`crate::intro`]), avant d'être jamais apparue, elle est
+//! partie d'un coup ([`Look::hide_unseen`]) ; montrée, elle se matérialise comme au lancement.
 //!
 //! **Changer de place** ([`crate::roam`]) : elle s'efface où elle est, de la même façon
 //! ([`Look::travel`]), mais elle n'est pas cachée : la fenêtre reste montrée. Une fois effacée
@@ -350,6 +352,14 @@ impl Look {
             Presence::Here if !self.has_life() => Presence::Gone(None, Exit::Hidden),
             Presence::Here => Presence::Vanishing(self.exit(capri, picture.drawing, frame), Exit::Hidden),
         };
+    }
+
+    /// Cachée avant d'être apparue (l'intro du lancement coupée en la cachant, voir
+    /// [`crate::intro`]) : partie d'un coup à l'image `frame`, sans rien jouer. Montrée ensuite
+    /// ([`Look::appear`]), elle se matérialise comme au lancement.
+    pub fn hide_unseen(&mut self, frame: u64) {
+        self.frame = self.frame.max(frame);
+        self.presence = Presence::Gone(None, Exit::Hidden);
     }
 
     /// Elle change de place, à l'image `frame` : elle s'efface de là où elle est dessinée, comme
@@ -1240,6 +1250,34 @@ mod tests {
         let appearing = look.presence;
         look.appear(&mut c, 501);
         assert_eq!(look.presence, appearing);
+    }
+
+    #[test]
+    fn hidden_before_she_ever_appeared_she_is_gone_at_once_and_materializes_when_shown() {
+        // l'intro coupée en la cachant : elle n'était pas encore là, rien ne se joue
+        let mut look = dressed(true, true);
+        let mut c = capri(&look);
+        c.step(0.0, 30);
+        look.hide_unseen(30);
+        assert!(look.is_gone() && look.is_hidden() && look.is_away() && !look.is_traveling());
+        assert!(!look.is_over(&c, c.position() + c.size() * 0.5), "rien ne l'attrape");
+        // la cacher encore ne change rien ; montrée, elle se matérialise là où elle se tient
+        look.vanish(&mut c, 40);
+        assert!(look.is_gone());
+        c.step(0.0, 200);
+        look.appear(&mut c, 200);
+        let back = at(&mut look, &mut c, 200, false, false);
+        assert_eq!(life_cell(&back), Some(life::Cell { strip: life::Strip::Arrive, index: 0 }));
+        at(&mut look, &mut c, 200 + life::arriving().len(), false, false);
+        assert!(look.is_here());
+        // sans ses planches de vie : là d'un coup, comme avant
+        let mut look = dressed(true, false);
+        look.wardrobe.life = None;
+        let mut c = capri(&look);
+        look.hide_unseen(0);
+        assert!(look.is_gone());
+        look.appear(&mut c, 10);
+        assert!(look.is_here());
     }
 
     #[test]

@@ -18,7 +18,8 @@
 //! Elle dit aussi, comme une réponse, la ligne que Claude Code a écrite pour elle quand le miroir
 //! est activé ([`Chat::relay`]) : dans sa bulle, à voix haute si sa voix est activée, et « La
 //! faire taire » la coupe. Cette ligne n'entre pas dans la conversation : son cerveau ne la voit
-//! jamais.
+//! jamais. Son bonjour après l'intro du lancement ([`Chat::greet`]) passe par le même chemin, et
+//! n'y entre pas davantage : une phrase écrite par nous, sans appel au modèle.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -75,6 +76,8 @@ enum Origin {
     Conversation,
     /// La ligne que Claude Code a écrite pour elle : elle la dit, et l'oublie.
     ClaudeCode,
+    /// Son bonjour après l'intro : elle le dit, et l'oublie.
+    Greeting,
 }
 
 /// Ce que le thread du cerveau envoie.
@@ -171,6 +174,18 @@ impl Chat {
     /// voix haute si sa voix est activée, comme une réponse. Ce qu'elle disait s'arrête. La ligne
     /// n'entre pas dans la conversation, et n'est jamais écrite dans le journal.
     pub fn relay(&mut self, line: &str) {
+        self.recite(line, Origin::ClaudeCode);
+    }
+
+    /// Elle dit son bonjour, après l'intro du lancement : comme la ligne du miroir ([`Chat::relay`]),
+    /// dans sa bulle et à voix haute si sa voix est activée, sans entrer dans la conversation ni
+    /// appeler son cerveau.
+    pub fn greet(&mut self, line: &str) {
+        self.recite(line, Origin::Greeting);
+    }
+
+    /// Elle dit `line`, venue d'ailleurs que de son cerveau (`origin`), puis l'oublie.
+    fn recite(&mut self, line: &str, origin: Origin) {
         // nettoyée comme ses réponses : du Markdown n'a de sens ni dans une bulle ni à l'oral
         let text = plain_text(line, true);
         if text.trim().is_empty() {
@@ -186,13 +201,17 @@ impl Chat {
         };
         self.clock.resume();
         self.speech = Some(Speech::new(self.clock.now_ms()));
-        match std::thread::Builder::new().name("capri-claude-dit".to_owned()).spawn(job) {
+        let name = match origin {
+            Origin::Greeting => "capri-bonjour",
+            Origin::ClaudeCode | Origin::Conversation => "capri-claude-dit",
+        };
+        match std::thread::Builder::new().name(name.to_owned()).spawn(job) {
             Ok(_) => {
                 let cancelled = Arc::new(AtomicBool::new(false));
-                self.reply = Some(Reply { events, cancelled, origin: Origin::ClaudeCode });
+                self.reply = Some(Reply { events, cancelled, origin });
             }
             Err(err) => {
-                log::warn!("impossible de dire la phrase de Claude Code : {err}");
+                log::warn!("impossible de dire une phrase ({name}) : {err}");
                 self.speech = None;
             }
         }
@@ -773,6 +792,27 @@ mod tests {
         // une ligne vide ne dit rien
         chat.relay("  ** ` ");
         assert!(!chat.is_busy());
+    }
+
+    #[test]
+    fn her_greeting_is_said_like_the_mirror_line_and_never_reaches_her_brain() {
+        let (address, requests) = fake_provider(1);
+        let directory = settings_with_a_brain_at("bonjour", address);
+        let mut chat = Chat::new(Some(directory.clone()));
+        chat.greet(capri_chat::greeting::GREETINGS[0]);
+        assert!(chat.is_speaking() && chat.is_busy());
+        assert_eq!(listen(&mut chat), capri_chat::greeting::GREETINGS[0]);
+        assert_eq!(chat.turns(), 0, "pas dans la conversation");
+        assert!(chat.is_talking(), "sa bouche bouge tant que sa bulle montre ses mots");
+        assert!(requests.recv_timeout(Duration::from_millis(100)).is_err(), "aucun appel au modèle");
+        // l'utilisateur lui parle : son bonjour s'arrête, et ne part pas avec
+        chat.greet(capri_chat::greeting::GREETINGS[1]);
+        chat.say("Bonjour");
+        assert_eq!(listen(&mut chat), "Réponse 1");
+        let request = body_of(requests.recv_timeout(Duration::from_secs(5)).expect("une requête"));
+        assert_eq!(request["messages"].as_array().map(Vec::len), Some(2), "{request}");
+        assert_eq!(chat.turns(), 2);
+        let _ = std::fs::remove_dir_all(directory);
     }
 
     #[test]

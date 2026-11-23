@@ -76,7 +76,9 @@ sans écran le même jour (ses planches `arrive` et `leave`, au lancement et qua
 la montre ; portraits rendus et regardés) ; pas encore regardé en mouvement. Le troisième aussi
 (`roam` : elle choisit seule un bord de fenêtre, s'efface où elle est et apparaît là-bas ; la case
 « Vivre sa vie » et la ligne « Changer de place » de son menu) ; pas regardé en mouvement non
-plus. Des dessins générés par un outil d'images ont été essayés le même jour pour un coucou de
+plus. Le deuxième aussi (l'intro « Up close » en plein écran au lancement, puis son bonjour ; la
+case « Intro au démarrage ») : images fixes rendues et regardées, son poids mesuré, mais la vraie
+app jamais lancée avec l'intro. Des dessins générés par un outil d'images ont été essayés le même jour pour un coucou de
 la main, trois fois, et écartés : aucun ne se mêlait à ses dessins.
 
 ## Architecture : où va quoi
@@ -126,6 +128,13 @@ la main, trois fois, et écartés : aucun ne se mêlait à ses dessins.
   cachée, en train d'apparaître, le curseur sur elle) ; et `Roamer`, qui pilote le tout dans
   l'ordre de la boucle, derrière un trait `World` (l'écran, le curseur, les fenêtres déjà triées)
   et une horloge passée en paramètre. Il ne sait rien du système.
+  Et `intro` : **son intro du lancement**, 22 images de 1920 × 1080 px en plein écran
+  (`COUNT`, `SIZE`, `file`), chacune tenue deux images (`HOLD`) ; où et à quelle taille dans
+  l'overlay (`place` : elle remplit l'écran, centrée, calée en bas, ce qui dépasse sur les côtés
+  ou en haut étant coupé) ; et son déroulé (`Intro` : `due`, `wants`, `shown`, `step` ; ce qui la
+  coupe, `Cut` ; comment elle finit, `End`, qui dit s'il faut la cacher ou lui faire dire
+  bonjour ; la première image a `START_WAIT` pour arriver, sinon pas d'intro). `Look::hide_unseen`
+  la cache avant qu'elle ne soit apparue.
   Et `scale` : **sa taille**, choisie par l'utilisateur, est une échelle `Scale` rapportée à sa
   hauteur **debout** d'origine (300 points pour sa silhouette, `stand::STATURE`, pas pour la case),
   de 40 % à 140 % (borne choisie pour son dessin d'avant, agrandi 2 fois à 140 % sur un écran
@@ -240,7 +249,15 @@ la main, trois fois, et écartés : aucun ne se mêlait à ses dessins.
 - `capri-render` : wgpu, et le tracé du texte du bandeau et de la bulle (cosmic-text, polices du
   système). Ses images sont confiées une fois (`Renderer::add_image`, qui compte ce qu'elles
   pèsent) ; chaque dessin en prend une part (`Crop` : une case de grille), lue à un demi-texel des
-  bords de la case. `Offscreen` fait le même rendu dans une image en mémoire, pour les essais.
+  bords de la case. Une **toile** (`add_canvas`, `paint_canvas`) est une image repeinte sur place,
+  pour l'intro : une seule texture pour ses 22 images ; `remove_image` lâche une image, et
+  `image_bytes` diminue d'autant. Ce que wgpu ne dit pas d'emblée, vérifié dans ses sources
+  (version 30) et mesuré : une copie vers une texture attend la soumission suivante, donc
+  `paint_canvas` soumet à vide après chaque copie (sinon elles s'accumulent quand rien n'est
+  présenté) ; une texture lâchée n'est rendue qu'au tri suivant, donc `Renderer::settle` (borné,
+  `SETTLE`) le provoque quand plus rien ne va se dessiner ; et `render` dit s'il a présenté une
+  image (sur Metal, rien n'est présenté tant que la fenêtre n'est pas redevenue visible : la
+  boucle redessine alors au pas suivant, `awaiting_present`). `Offscreen` fait le même rendu dans une image en mémoire, pour les essais.
   Couleurs prémultipliées de bout en bout.
 - Les appels système et l'`unsafe` lié à l'OS vivent dans **deux crates, et nulle part
   ailleurs** : `capri-platform` (la fenêtre, la voix, le micro, le trousseau, la liste des
@@ -370,6 +387,16 @@ la main, trois fois, et écartés : aucun ne se mêlait à ses dessins.
   demande de changer de place et qu'elle ne le peut pas. `roam_setup` lit et écrit `roam.json`
   (la case « Vivre sa vie » de son menu, cochée par défaut ; la ligne « Changer de place » la
   fait partir sur un geste, case cochée ou non).
+  `intro_view` joue l'intro du lancement (`capri_core::intro` décide) : un thread « capri-intro »
+  décode une image à la fois, à la demande (`assets::intro`, qui ne lit d'abord que les en-têtes),
+  la boucle la peint sur une seule toile de la carte graphique et ne bloque jamais sur un
+  décodage (une image en retard : le dessin précédent est tenu) ; l'intro finie ou coupée, le
+  thread s'arrête et tout est lâché. `intro_setup` lit et écrit `intro.json` (la case « Intro au
+  démarrage », cochée par défaut) et dit si un essai est en cours (`testing`). Son bonjour
+  (`capri_chat::greeting`, des phrases écrites par nous, tirées avec la graine de sa vie ; et
+  `Hello`, qui dit s'il est attendu, en attente ou passé : attendu dès que l'intro commence,
+  oublié si on lui parle, la fait taire, repart de zéro ou la cache, pendant l'intro comme après)
+  se dit par `Chat::greet`, le chemin de la ligne du miroir.
   `figure` confie ses images à la carte graphique (les planches lues par `assets`, puis lâchées),
   fait les masques de clic, et traduit ce que décide `capri_core::look` en dessins pour le rendu ;
   `portraits` (essais ignorés) rend de vraies images de chaque pose par ce même code, pour les
@@ -428,9 +455,11 @@ la main, trois fois, et écartés : aucun ne se mêlait à ses dessins.
   (`tools/macos/Info.plist`), les images que lit le code et seulement elles (sa liste `IMAGES`, prise
   dans `assets/` ou dans le dossier de `CAPRI_ASSETS` ; l'essai
   `the_app_bundle_carries_exactly_the_images_the_code_reads` de `assets.rs` vérifie qu'elle suit
-  `assets::SPRITE`, `capri_core::sheets`, `sheets::stand` et `sheets::life` ; une liste qui change
-  change aussi le numéro de `tools/macos/bundle-format`, 2 depuis ses planches de vie, et une
-  version d'un autre numéro ne s'installe pas depuis l'app : il faut `tools/install-macos.sh`)
+  `assets::SPRITE`, `capri_core::sheets`, `sheets::stand`, `sheets::life` et `capri_core::intro` ;
+  une liste qui change change aussi le numéro de `tools/macos/bundle-format`, 2 depuis ses
+  planches de vie, sauf tant qu'aucune version n'a été publiée à ce numéro : les images de l'intro
+  s'y sont ajoutées sans le changer ; une version d'un autre numéro ne s'installe pas depuis
+  l'app : il faut `tools/install-macos.sh`)
   dans `Contents/Resources/assets/`, et
   `CREDITS.md` dans `Contents/Resources/`, et son icône `Contents/Resources/Capri.icns` (nommée par
   `CFBundleIconFile`), fabriquée sur place à partir de `capri-face.png` du même dossier d'images
@@ -499,7 +528,11 @@ la liste des modèles qu'elle demande d'elle-même à un serveur de cette machin
 
 Pendant une répétition (`update_setup::REHEARSALS`), elle ne change jamais de place d'elle-même
 (`roam_setup::rehearsing`) : cela fausserait ce que la répétition mesure ; avec `CAPRI_CONFIG_DIR`
-seule, elle vit sa vie.
+seule, elle vit sa vie. Pendant une répétition, ou dès que `CAPRI_CONFIG_DIR` est posée, ni intro
+ni bonjour (`intro_setup::testing`) : les essais qui lancent `capri` ne sont ni rallongés ni
+faussés. Une répétition se reconnaît à sa variable **posée, vide ou non**, comme elle démarre :
+la règle est écrite une fois (`update_setup::rehearsing`) et reprise par `roam_setup` et
+`intro_setup` ; une variable vide ne doit jamais laisser une répétition regarder GitHub.
 
 Pendant une répétition (ou avec `CAPRI_CONFIG_DIR`), elle ne regarde jamais les versions : ni
 l'app, ni `capri update check`. Une nouvelle répétition de la vraie app s'inscrit dans
@@ -625,7 +658,9 @@ une fausse commande `security` placée en tête du `PATH`.
   sans leur prêter un auteur. **Jamais une image que ce dépôt crédite à quelqu'un d'autre**
   (`click.png`, `form.png`, l'intro « Peek », les emotes) : une attribution se vérifie dans son
   README, sa licence et l'historique du fichier, pas de mémoire. Sans ses planches de vie, elle
-  apparaît et disparaît d'un coup. **Le repli** : seul `capri-cutout.png` est indispensable ; une
+  apparaît et disparaît d'un coup. Les 22 images de son intro (`assets/capri/intro/`, l'intro
+  « Up close » de ce dépôt) en viennent aussi, sans auteur nommé non plus, par la même décision ;
+  sans elles, ou s'il en manque une, pas d'intro. **Le repli** : seul `capri-cutout.png` est indispensable ; une
   planche absente, illisible ou refusée par la carte graphique ne fait jamais planter, sa pose
   revient à son dessin d'avant (`look::Wardrobe`), et chaque combinaison (debout, assise, vie :
   les huit) est testée.
@@ -1018,6 +1053,20 @@ une fausse commande `security` placée en tête du `PATH`.
   est oubliée si sa session repart, si on fait taire Capri, ou si le miroir est désactivé.
   Pendant qu'elle apparaît, la ligne de Claude et un message de l'app attendent qu'elle soit là
   (`Look::is_here`) ; pendant qu'elle s'efface, son bandeau s'en va avec elle, comme cachée.
+  Pendant l'intro, rien n'apparaît au-dessus de sa tête (elle n'est pas encore là). Son bonjour
+  est une prise de parole à elle, dite avant la ligne de Claude ; il est oublié si on lui parle,
+  si on la fait taire ou si on la cache avant.
+- **Son intro et son bonjour.** L'intro ne se joue qu'**au lancement**, une fois, jamais quand on
+  la montre après l'avoir cachée ; elle laisse passer tous les clics et ne prend jamais le focus.
+  La masquer la coupe net (et elle est cachée) ; lui parler la coupe (et elle se matérialise) ;
+  quitter reste immédiat. Jamais ses 22 images à la fois, ni en mémoire ni sur la carte
+  graphique (elles pèseraient 182 Mo) : une toile, et une image décodée à la fois, hors du thread
+  principal ; l'intro finie, ni thread, ni réveil, ni mémoire de plus. Son bonjour ne se dit
+  qu'après une intro jouée jusqu'au bout : une phrase de `capri_chat::greeting`, **écrite par
+  nous, jamais une citation de la série**, sans aucun appel à un modèle, hors de la conversation
+  envoyée à son cerveau, et jamais écrite dans le journal (c'est ce qu'elle dit). La case « Intro
+  au démarrage » coupe les deux. Le journal n'en dit qu'une ligne : « intro : jouée… »,
+  « intro : coupée… » ou « intro : pas d'images… », avec des nombres.
 - **Ce qui s'affiche dans la bulle ou dans la fenêtre de réglages ne renvoie jamais à une commande
   de terminal** (`capri chat …`, `capri voice …`) : le but de la fenêtre est que personne n'ait à
   ouvrir un terminal. La bulle renvoie à « Réglages… » dans son menu, la fenêtre dit quoi faire

@@ -15,6 +15,8 @@
 //! d'après l'état que les lecteurs connus ont annoncé, si de la musique joue. [`roam`] décide
 //! quand elle change d'elle-même de place, et où elle va : un bord, sinon debout en bas de
 //! l'écran, d'après une horloge passée en paramètre et un hasard à graine.
+//! [`intro`] dit quelle image de l'intro du lancement montrer à chaque image, où (tout l'écran),
+//! quand elle est finie et ce qui la coupe ; `capri-app` décode ses images une à une.
 //! [`pace`] dit quand la boucle se réveille : ses dessins restent à 24 i/s, mais sa position suit
 //! le curseur ou sa fenêtre à la cadence de l'écran.
 //! [`scale`] dit sa taille, choisie par l'utilisateur : une échelle rapportée à sa hauteur debout,
@@ -35,6 +37,7 @@ pub mod codesign;
 pub mod form;
 pub mod geom;
 pub mod input;
+pub mod intro;
 pub mod journal;
 pub mod login;
 pub mod look;

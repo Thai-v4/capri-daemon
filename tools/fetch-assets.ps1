@@ -3,10 +3,11 @@
 #
 # - mochiiwuff/capri-desktop : le dessin debout, les visages, l'introduction (assets\capri\) ;
 # - lachydotmcg/capri-desktop : sa pose assise et sa pose debout, dessinées par l'artiste de ce
-#   projet (assets\capri\perch\, assets\capri\stand\), et les planches de sa vie (elle apparaît,
-#   elle s'efface : assets\capri\life\), dont ce dépôt ne nomme pas l'auteur. PolyForm
-#   Noncommercial 1.0.0 : usage non commercial seulement. Jamais les planches que ce dépôt
-#   crédite à quelqu'un d'autre.
+#   projet (assets\capri\perch\, assets\capri\stand\), les planches de sa vie (elle apparaît,
+#   elle s'efface : assets\capri\life\) et l'intro « Up close » du lancement
+#   (assets\capri\intro\), dont ce dépôt ne nomme pas l'auteur. PolyForm Noncommercial 1.0.0 :
+#   usage non commercial seulement. Jamais les planches ni l'intro que ce dépôt crédite à
+#   quelqu'un d'autre.
 $ErrorActionPreference = 'Stop'
 $Dest = Join-Path (Split-Path -Parent $PSScriptRoot) 'assets\capri'
 
@@ -80,6 +81,35 @@ Fetch 'lachydotmcg/capri-desktop' 'b40fc2ed271976545c7a06ef78038a07a38f1dd5' 'as
 Fetch 'lachydotmcg/capri-desktop' 'b40fc2ed271976545c7a06ef78038a07a38f1dd5' 'assets/sprites' (Join-Path $Dest 'life') ([ordered]@{
     'arrive.png' = 'be03a983e65d2de7fc9ef3f992759610431ee5f4a750af580d36dfe607ca51c7'
     'leave.png' = '40b52533b57ab33c896a050f9968f639dcea8203d61ab717e1e0140d59b18d58'
+})
+
+# même dépôt, même révision ; l'intro « Up close » du lancement (22 images de 1920 × 1080 : elle
+# surgit dans l'écran, regarde autour d'elle, colle son visage à la vitre, puis repart). Le dépôt
+# ne nomme pas son auteur (comme pour les planches de sa vie) ; jamais l'autre intro, « Peek »,
+# qu'il crédite à quelqu'un d'autre
+Fetch 'lachydotmcg/capri-desktop' 'b40fc2ed271976545c7a06ef78038a07a38f1dd5' 'assets/intros/up-close' (Join-Path $Dest 'intro') ([ordered]@{
+    '01.png' = 'f39b7742e73791c45c7bcbe52fea6b6b297a8990b317683b9062db5193c15331'
+    '02.png' = '5c32119cf1f6dda6e2988273a1735f87dff2380927ed5bea2b08454ed482fc51'
+    '03.png' = '0d63bcf0b57fe40dac16b93792ee7324e91792c1dbaf9f09dfc16b9cd0207791'
+    '04.png' = 'fd563c1b24575cda44de84a1877e37297c26f97c9dab86fed6dde8e5de64291e'
+    '05.png' = 'df010a8f98676800711e890790236edec13adae1db619bb1bf12d7fcc0019203'
+    '06.png' = 'b09ca7efaf8e27c4082b0a7bae10c7bd2fffde78680bedcada2579119cda3381'
+    '07.png' = 'be9b9de1f7bc974f18118227dd0daa9c3eaeb20353c34377fac3e52906755366'
+    '08.png' = '896f20f3c040a6bf79feeaa460641c27c682711620aaf61f6063374604dc4203'
+    '09.png' = '34a5f7935687dfdc6129b778847ff28a2ed58cbab25bf5df25f3ea854a9d2110'
+    '10.png' = '83fb13c3c0d46ad4cc9877c20a8e01dbf0c7ef33b7e38df244e1a5ce06b85259'
+    '11.png' = '60e596279892b02e9e8699393eecdd8fbf14084adbd64b7e9a891d0c6f624ebb'
+    '12.png' = 'd199999dc8439174d8cbf2474c46abd40c50de36b8522d23c1560ea1368517f7'
+    '13.png' = 'a71765bbce2afa4f4d430d39db89f6bd0225e82c2b09a62c07da32d550b0b6f2'
+    '14.png' = 'abf3dc152b2da85283cfdde3aaf1c998a55dbc9d71afb9976e829e7e8cc46c72'
+    '15.png' = '9da9530426eb911a3b1cdeff7a157a8e4763b4eada1f531eda9f8a5031c02e54'
+    '16.png' = '84940d8e4e69dcd3d606089fc5aac8ff34ae8966fd0eb229964ea4d7a40ed269'
+    '17.png' = 'e426ba8e4499679091eac41fee26c59cc04588201c0eb6e090dfc38e823bcc3e'
+    '18.png' = '58b67ed10911aa23068c772f5f23e235cf96630808831f69d0b19a164349b8ac'
+    '19.png' = 'f3fcfc98c6584037aa0b7468bdb8deaa130bffaaaac57910960ee1ca61fafa03'
+    '20.png' = '6288d487e8d2c031a8ec5d369eef1f9bdf9ac6aae3e2c8ca9c50ed5e7d0afe07'
+    '21.png' = '6eddfbc77ef8b5fe92c25ebf5fa7fb61b030cc8eb3c98297e92c80138f18ca2e'
+    '22.png' = '6eddfbc77ef8b5fe92c25ebf5fa7fb61b030cc8eb3c98297e92c80138f18ca2e'
 })
 
 Write-Host "Images prêtes dans $Dest"

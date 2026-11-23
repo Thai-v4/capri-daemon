@@ -39,6 +39,8 @@ pub enum Action {
     ToggleClaudeHook,
     /// L'inscrire à l'ouverture de session (avec Ollama si c'est son cerveau ici), ou l'en retirer.
     ToggleLogin,
+    /// Jouer l'intro au lancement (et dire bonjour après), ou plus.
+    ToggleIntro,
     /// Lui permettre de regarder chaque jour s'il existe une version plus récente, ou le lui
     /// interdire.
     ToggleUpdates,
@@ -71,6 +73,8 @@ pub struct Menus {
     roams: Vec<CheckMenuItem>,
     /// La case « Se lancer à l'ouverture de session », dans les deux menus.
     logins: Vec<CheckMenuItem>,
+    /// La case « Intro au démarrage », dans les deux menus.
+    intros: Vec<CheckMenuItem>,
     /// La case « Chercher les mises à jour », dans les deux menus.
     updates: Vec<CheckMenuItem>,
     /// Dans chacun des deux menus, la ligne « Version … disponible », glissée juste sous la case
@@ -92,6 +96,7 @@ struct Built {
     music: CheckMenuItem,
     roam: CheckMenuItem,
     login: CheckMenuItem,
+    intro: CheckMenuItem,
     updates: CheckMenuItem,
     /// Pas encore dans le menu.
     update_line: MenuItem,
@@ -117,6 +122,7 @@ impl Menus {
         let musics = vec![a.music, b.music];
         let roams = vec![a.roam, b.roam];
         let logins = vec![a.login, b.login];
+        let intros = vec![a.intro, b.intro];
         let updates = vec![a.updates, b.updates];
         let update_lines = vec![(tray_menu, a.update_line), (b.menu.clone(), b.update_line)];
         let sizes = vec![a.size, b.size];
@@ -134,6 +140,7 @@ impl Menus {
                 .chain(musics.iter().map(|item| (item.id().clone(), Action::ToggleMusic)))
                 .chain(roams.iter().map(|item| (item.id().clone(), Action::ToggleRoam)))
                 .chain(logins.iter().map(|item| (item.id().clone(), Action::ToggleLogin)))
+                .chain(intros.iter().map(|item| (item.id().clone(), Action::ToggleIntro)))
                 .chain(updates.iter().map(|item| (item.id().clone(), Action::ToggleUpdates)))
                 .chain(update_lines.iter().map(|(_, item)| (item.id().clone(), Action::UpdateLine)))
                 .collect(),
@@ -144,6 +151,7 @@ impl Menus {
             musics,
             roams,
             logins,
+            intros,
             updates,
             update_lines,
             update_line_shown: Cell::new(false),
@@ -221,6 +229,14 @@ impl Menus {
         for item in &self.logins {
             item.set_checked(registered);
             item.set_enabled(capri_platform::login::AVAILABLE);
+        }
+    }
+
+    /// L'intro se joue-t-elle au lancement ? Coche ou décoche la case des deux menus (c'est le
+    /// réglage retenu qui décide).
+    pub fn set_intro_enabled(&self, enabled: bool) {
+        for item in &self.intros {
+            item.set_checked(enabled);
         }
     }
 
@@ -323,6 +339,8 @@ fn build_menu() -> Built {
         None,
     );
     // cochée par défaut ; le réglage retenu décide au lancement
+    let intro = CheckMenuItem::new("Intro au démarrage", true, true, None);
+    // cochée par défaut ; le réglage retenu décide au lancement
     let updates = CheckMenuItem::new("Chercher les mises à jour", true, true, None);
     let update_line = MenuItem::new("Version disponible", true, None);
     let settings = MenuItem::new("Réglages…", true, None);
@@ -334,7 +352,7 @@ fn build_menu() -> Built {
     let (first, second, third) = (separator(), separator(), separator());
     if let Err(err) = menu.append_items(&[
         &title, &first, &talk, &listen, &hush, &forget, &voice, &second, &toggle, &wander, &perch, &music,
-        &roam, &size, &hook, &login, &updates, &settings, &journal, &third, &quit,
+        &roam, &size, &hook, &login, &intro, &updates, &settings, &journal, &third, &quit,
     ]) {
         log::warn!("menu incomplet : {err}");
     }
@@ -354,7 +372,7 @@ fn build_menu() -> Built {
         (Action::ShowJournal, journal),
         (Action::Quit, quit),
     ];
-    Built { menu, items, perch, music, roam, login, updates, update_line, size }
+    Built { menu, items, perch, music, roam, login, intro, updates, update_line, size }
 }
 
 /// « Taille : 80 % ».

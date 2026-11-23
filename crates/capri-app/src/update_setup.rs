@@ -81,11 +81,21 @@ pub fn enabled() -> bool {
         .unwrap_or(false)
 }
 
+/// Une répétition de la vraie app est-elle demandée (`env` : `std::env::var_os` en vrai, une
+/// table dans les essais) ? La règle des répétitions elles-mêmes, qui démarrent sur la seule
+/// présence de leur variable : là, vide ou non. Écrite ici une fois, pour tout ce qui doit s'en
+/// garder : les versions ([`source`]), ses départs d'elle-même (`roam_setup`), l'intro
+/// (`intro_setup`).
+pub fn rehearsing(env: impl Fn(&str) -> Option<OsString>) -> bool {
+    REHEARSALS.iter().any(|name| env(name).is_some())
+}
+
 /// Où regarder, d'après l'environnement (`env` : `std::env::var_os` en vrai, une table dans les
-/// essais). Une variable vide compte pour absente.
+/// essais). `CAPRI_CONFIG_DIR` vide compte pour absente ; une répétition compte dès que sa variable
+/// est là, vide ou non ([`rehearsing`]).
 pub fn source(env: impl Fn(&str) -> Option<OsString>) -> Result<Source, Offline> {
     let set = |name: &str| env(name).is_some_and(|value| !value.is_empty());
-    let rehearsal = set(CAPRI_DIR_ENV) || REHEARSALS.iter().any(|name| set(name));
+    let rehearsal = set(CAPRI_DIR_ENV) || rehearsing(&env);
     let test_url =
         if cfg!(debug_assertions) { env(TEST_URL_ENV).filter(|value| !value.is_empty()) } else { None };
     let test_url = test_url.map(|url| url.to_string_lossy().into_owned());
@@ -220,8 +230,12 @@ mod tests {
             "capri/stand/idle_blink.png",
             "capri/stand/idle_mouth.png",
         ];
-        /// Au format 2, ses planches de vie en plus (elle apparaît, elle s'efface).
-        const FORMAT_2: [&str; 12] = [
+        /// Au format 2, ses planches de vie en plus (elle apparaît, elle s'efface), et l'intro du
+        /// lancement. Cette liste a pu changer sans que le numéro change : aucune version n'a été
+        /// publiée au format 2 (la 0.2.0, la dernière publiée, le 23 novembre 2026, est au format
+        /// 1), et aucune app installée ne l'attend encore. Une fois une version publiée à ce format,
+        /// elle ne change plus : toute nouvelle image demande le format 3.
+        const FORMAT_2: [&str; 34] = [
             "capri/capri-cutout.png",
             "capri/perch/perch.png",
             "capri/perch/perch_blink.png",
@@ -234,6 +248,28 @@ mod tests {
             "capri/stand/idle_mouth.png",
             "capri/life/arrive.png",
             "capri/life/leave.png",
+            "capri/intro/01.png",
+            "capri/intro/02.png",
+            "capri/intro/03.png",
+            "capri/intro/04.png",
+            "capri/intro/05.png",
+            "capri/intro/06.png",
+            "capri/intro/07.png",
+            "capri/intro/08.png",
+            "capri/intro/09.png",
+            "capri/intro/10.png",
+            "capri/intro/11.png",
+            "capri/intro/12.png",
+            "capri/intro/13.png",
+            "capri/intro/14.png",
+            "capri/intro/15.png",
+            "capri/intro/16.png",
+            "capri/intro/17.png",
+            "capri/intro/18.png",
+            "capri/intro/19.png",
+            "capri/intro/20.png",
+            "capri/intro/21.png",
+            "capri/intro/22.png",
         ];
         let script = include_str!("../../../tools/bundle-macos.sh");
         let mut listed: Vec<&str> = script
@@ -266,6 +302,8 @@ mod tests {
         assert_eq!(source(env(&[(CAPRI_DIR_ENV, "/tmp/essai")])), Err(Offline::Rehearsal));
         for rehearsal in REHEARSALS {
             assert_eq!(source(env(&[(rehearsal, "1")])), Err(Offline::Rehearsal), "{rehearsal}");
+            // la répétition démarre sur la seule présence de sa variable : vide, c'en est une
+            assert_eq!(source(env(&[(rehearsal, "")])), Err(Offline::Rehearsal), "{rehearsal} vide");
             assert_eq!(
                 source(env(&[(rehearsal, "1"), (CAPRI_DIR_ENV, "/tmp/essai")])),
                 Err(Offline::Rehearsal)

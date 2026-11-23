@@ -15,6 +15,12 @@
 //! disait. Sinon la ligne attend (la plus récente seulement, pas trop longtemps :
 //! `capri_claude::mirror::Waiting`). Cachée, ou en train de s'effacer, elle ne la dit pas.
 //!
+//! Son bonjour, après l'intro du lancement ([`BannerView::expect_greeting`], puis
+//! [`BannerView::intro_over`]), est lui aussi une prise de parole (2), dite par le même chemin que
+//! la ligne du miroir, avant elle, et seulement quand elle est libre : il attend qu'elle ait fini de
+//! se matérialiser. Lui parler (au clavier ou au micro), la faire taire, repartir de zéro ou la
+//! cacher avant le fait oublier, pendant l'intro comme après (`capri_chat::greeting::Hello`).
+//!
 //! Un message de l'app qui doit être vu (une version plus récente existe : [`BannerView::announce`])
 //! attend lui aussi son tour : il ne s'affiche que quand elle est visible et là, libre de même, et
 //! qu'aucun autre message de l'app n'est affiché. Le plus récent seulement.
@@ -26,6 +32,7 @@ use std::sync::mpsc::{Receiver, TryRecvError, channel};
 use std::time::{Duration, Instant};
 
 use capri_chat::dictation::{Dictation, EndOfSpeech, Said};
+use capri_chat::greeting::Hello;
 use capri_claude::{Headline, Tone};
 use capri_core::{Banner, Rect, Vec2, place_banner};
 use capri_platform::{Ear, EarEvent};
@@ -81,6 +88,8 @@ pub struct BannerView {
     notice: Option<(Headline, Instant)>,
     /// Un message de l'app qui attend qu'elle soit libre pour s'afficher.
     announcement: Option<Headline>,
+    /// Son bonjour : attendu pendant l'intro, puis qu'elle soit là et libre pour être dit.
+    hello: Hello,
     painter: Painter,
     painted: Option<Painted>,
     ticks: u32,
@@ -133,6 +142,7 @@ impl BannerView {
             banner: Banner::new(),
             notice: None,
             announcement: None,
+            hello: Hello::default(),
             painter,
             painted: None,
             ticks: 0,
@@ -182,6 +192,7 @@ impl BannerView {
     /// Elle se tait et écoute. Si elle ne peut pas écouter, elle dit pourquoi. `free` : écoute
     /// libre d'emblée (le menu), sans touche à maintenir.
     fn listen_begin(&mut self, free: bool) {
+        self.hello.forget(); // on lui parle avant : son bonjour est oublié
         self.chat.hush(); // on ne s'écoute pas parler, et on ne lui coupe pas la parole à moitié
         if self.ear.is_none() {
             self.ear = Ear::new();
@@ -313,8 +324,36 @@ impl BannerView {
         }
     }
 
+    /// L'intro commence : son bonjour, `line`, viendra après elle, si rien ne le fait oublier.
+    pub fn expect_greeting(&mut self, line: &'static str) {
+        self.hello = Hello::expect(line);
+    }
+
+    /// L'intro est finie ; `greets` : elle s'est jouée. Son bonjour, s'il est encore attendu, est
+    /// dit dès qu'elle est là et libre (avant la ligne de Claude Code qui attendrait).
+    pub fn intro_over(&mut self, greets: bool) {
+        self.hello.intro_over(greets);
+        self.refresh = true;
+    }
+
+    /// Oublie son bonjour, s'il n'a pas encore été dit (pendant l'intro comme après).
+    pub fn forget_greeting(&mut self) {
+        self.hello.forget();
+    }
+
+    /// Son bonjour, s'il attend et qu'elle est libre : là (`here`), personne ne lui parle au micro,
+    /// et elle ne parle pas déjà.
+    fn deliver_greeting(&mut self, here: bool) {
+        let free = here && !self.dictation.is_active() && !self.chat.is_busy();
+        if let Some(line) = self.hello.take(free) {
+            self.chat.greet(line);
+            self.refresh = true;
+        }
+    }
+
     /// L'utilisateur lui dit quelque chose : elle répond dans sa bulle.
     pub fn say(&mut self, message: &str) {
+        self.hello.forget(); // on lui parle avant : son bonjour est oublié
         log::debug!("message de {} caractères", message.chars().count());
         self.chat.say(message);
         self.refresh = true;
@@ -324,6 +363,7 @@ impl BannerView {
     /// attendait son tour est oubliée.
     #[cfg(any(target_os = "macos", windows))]
     pub fn hush(&mut self) {
+        self.hello.forget(); // pendant l'intro aussi : il n'y aura pas de bonjour
         self.chat.hush();
         if let Some(feed) = &mut self.feed {
             feed.drop_said();
@@ -381,6 +421,7 @@ impl BannerView {
     /// Repart de zéro : elle se tait et oublie la conversation.
     #[cfg(any(target_os = "macos", windows))]
     pub fn forget(&mut self) {
+        self.hello.forget(); // pendant l'intro aussi : il n'y aura pas de bonjour
         self.chat.forget();
         if let Some(feed) = &mut self.feed {
             feed.drop_said();
@@ -400,6 +441,8 @@ impl BannerView {
         let fresh = self.feed.as_mut().is_some_and(Feed::pump);
         self.chat.pump();
         self.pump_ear();
+        // son bonjour d'abord : il vient d'avant la ligne de Claude Code qui attendrait
+        self.deliver_greeting(here);
         self.relay_claude(here);
         // après la ligne de Claude Code : sa parole passe avant un message de l'app
         self.deliver_announcement(here);

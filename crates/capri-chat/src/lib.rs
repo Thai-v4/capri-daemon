@@ -10,6 +10,8 @@
 //! - [`phrases`] : ce que disent de son cerveau la ligne de commande et la fenêtre de réglages,
 //!   à commencer par où part ce qu'on lui dit ;
 //! - [`persona`] : qui elle est quand elle parle ;
+//! - [`greeting`] : son bonjour après l'intro du lancement, des phrases écrites par nous, tirées au
+//!   sort, sans modèle ;
 //! - [`wire`] : les deux formats que parlent les fournisseurs, et lequel parle chacun ;
 //! - [`openai`] : le format « chat completions », ce qu'on envoie et ce qu'on lit ;
 //! - [`anthropic`] : le format de l'API d'Anthropic, ce qu'on envoie et ce qu'on lit ;
@@ -37,6 +39,7 @@ pub mod conversation;
 pub mod dictation;
 pub mod echo;
 pub mod endpoint;
+pub mod greeting;
 pub mod key;
 pub mod openai;
 pub mod persona;

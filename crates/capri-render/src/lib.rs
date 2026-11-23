@@ -9,6 +9,12 @@
 //! côté. Chaque image dessinée en est une part rectangulaire ([`Crop`]) : une case de planche, ou
 //! l'image entière. Une fois confiée, l'image n'a plus besoin d'être gardée en mémoire.
 //!
+//! **Une toile** ([`Renderer::add_canvas`]) est une image qu'on réécrit en place, d'une seule
+//! texture : l'intro du lancement y peint ses images l'une après l'autre
+//! ([`Renderer::paint_canvas`], des pixels déjà prémultipliés par [`premultiply_in_place`], hors du
+//! thread principal), sans jamais en garder plus d'une sur la carte graphique. Toute image peut
+//! être lâchée ([`Renderer::remove_image`]) : sa texture est libérée, et son numéro ne sert plus.
+//!
 //! Sur Windows, la transparence passe par DirectComposition (DirectX 12 en mode « visual ») :
 //! le swapchain classique, lié directement à la fenêtre, ne sait pas être transparent.
 //!
@@ -36,6 +42,8 @@ pub enum RenderError {
     TooLarge { width: u32, height: u32, max: u32 },
     #[error("l'image rendue n'a pas pu être relue : {0}")]
     Readback(String),
+    #[error("l'image n° {0} n'existe pas, ou plus")]
+    UnknownImage(usize),
 }
 
 /// Image, en RGBA 8 bits **non** prémultiplié (comme dans un PNG).
@@ -90,6 +98,10 @@ pub struct SpriteDraw {
 /// La force de la copie violette du dessin d'avant et du bandeau.
 pub const GHOST: f32 = 0.55;
 
+/// Ce qu'attend au plus [`Renderer::settle`] : la carte graphique finit en quelques millisecondes
+/// ce que Capri lui donne, et la boucle ne doit pas rester bloquée si elle tarde.
+pub const SETTLE: std::time::Duration = std::time::Duration::from_millis(50);
+
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct Uniforms {
@@ -138,7 +150,8 @@ struct Painter {
     uniforms_layout: wgpu::BindGroupLayout,
     image_layout: wgpu::BindGroupLayout,
     sampler: wgpu::Sampler,
-    images: Vec<wgpu::BindGroup>,
+    /// Les images confiées, à la place de leur numéro ; `None` une fois lâchée.
+    images: Vec<Option<Stored>>,
     banner: Option<wgpu::BindGroup>,
     /// Un jeu de réglages par dessin de l'image en cours (Capri, sa bouche, son bandeau…),
     /// créés au besoin et gardés d'une image à l'autre.
@@ -150,6 +163,20 @@ struct Painter {
 struct Slot {
     buffer: wgpu::Buffer,
     bind_group: wgpu::BindGroup,
+}
+
+/// Une image confiée : ce que lit le shader, sa texture (pour la réécrire), et sa taille.
+struct Stored {
+    bind_group: wgpu::BindGroup,
+    texture: wgpu::Texture,
+    width: u32,
+    height: u32,
+}
+
+impl Stored {
+    fn bytes(&self) -> u64 {
+        u64::from(self.width) * u64::from(self.height) * 4
+    }
 }
 
 impl Renderer {
@@ -196,6 +223,31 @@ impl Renderer {
         self.painter.add_image(image)
     }
 
+    /// Une toile de `width` × `height` pixels, transparente, à réécrire en place
+    /// ([`Renderer::paint_canvas`]).
+    pub fn add_canvas(&mut self, width: u32, height: u32) -> Result<ImageId, RenderError> {
+        self.painter.add_canvas(width, height)
+    }
+
+    /// Réécrit toute la toile `id` : `premultiplied`, RGBA 8 bits **déjà prémultiplié**
+    /// ([`premultiply_in_place`]), de sa taille exacte. Visible au prochain dessin.
+    pub fn paint_canvas(&mut self, id: ImageId, premultiplied: &[u8]) -> Result<(), RenderError> {
+        self.painter.paint_canvas(id, premultiplied)
+    }
+
+    /// Lâche l'image `id` : sa texture est libérée (une fois la carte graphique passée), et son
+    /// numéro ne sert plus. Sans effet si elle l'est déjà.
+    pub fn remove_image(&mut self, id: ImageId) {
+        self.painter.remove_image(id);
+    }
+
+    /// Attend que la carte graphique ait fini ce qui lui a été soumis ([`SETTLE`] au plus), et rend
+    /// tout de suite ce qu'elle ne tient plus : les images lâchées, les copies faites. Sinon, wgpu
+    /// ne le fait qu'à la soumission suivante, et une fenêtre cachée n'en fait plus aucune.
+    pub fn settle(&self) {
+        self.painter.settle();
+    }
+
     /// Ce que pèsent les images confiées, en octets de mémoire graphique (le bandeau à part).
     pub fn image_bytes(&self) -> u64 {
         self.painter.image_bytes
@@ -222,20 +274,23 @@ impl Renderer {
 
     /// Dessine une image : chaque part de `layers` dans l'ordre (Capri, puis sa bouche par-dessus),
     /// puis son bandeau s'il y en a un et que `banner` dit où. `pre_present` est appelé juste avant
-    /// l'affichage (winit le demande pour bien caler les images sur l'écran).
+    /// l'affichage (winit le demande pour bien caler les images sur l'écran). Rend `false` si rien
+    /// n'a été présenté : la fenêtre n'est pas visible (sur macOS, wgpu ne dessine pas dans une
+    /// fenêtre que le système dit occultée, y compris juste après qu'elle a été montrée), le
+    /// système n'a pas donné d'image à temps, ou la surface était à reconfigurer.
     pub fn render(
         &mut self,
         layers: &[(ImageId, SpriteDraw)],
         banner: Option<&SpriteDraw>,
         pre_present: impl FnOnce(),
-    ) {
+    ) -> bool {
         let frame = match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(f) | wgpu::CurrentSurfaceTexture::Suboptimal(f) => f,
-            wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => return,
+            wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => return false,
             other => {
                 log::debug!("surface à reconfigurer : {other:?}");
                 self.surface.configure(&self.painter.device, &self.config);
-                return;
+                return false;
             }
         };
         let view = frame.texture.create_view(&wgpu::TextureViewDescriptor {
@@ -247,6 +302,7 @@ impl Renderer {
         self.painter.queue.submit([commands]);
         pre_present();
         self.painter.queue.present(frame);
+        true
     }
 }
 
@@ -342,14 +398,64 @@ impl Painter {
 
     fn add_image(&mut self, image: SpriteImage<'_>) -> Result<ImageId, RenderError> {
         check_image(image)?;
-        let max = self.device.limits().max_texture_dimension_2d;
-        if image.width > max || image.height > max {
-            return Err(RenderError::TooLarge { width: image.width, height: image.height, max });
+        self.check_size(image.width, image.height)?;
+        let texture = upload_sprite(&self.device, &self.queue, image);
+        Ok(self.store(texture, image.width, image.height))
+    }
+
+    fn add_canvas(&mut self, width: u32, height: u32) -> Result<ImageId, RenderError> {
+        if width == 0 || height == 0 {
+            return Err(RenderError::BadSprite { width, height, len: 0 });
         }
-        let bind_group = self.bind_image(image);
-        self.images.push(bind_group);
-        self.image_bytes += u64::from(image.width) * u64::from(image.height) * 4;
-        Ok(ImageId(self.images.len() - 1))
+        self.check_size(width, height)?;
+        // wgpu remplit de zéros une texture neuve : transparente
+        let texture = new_texture(&self.device, width, height);
+        Ok(self.store(texture, width, height))
+    }
+
+    fn paint_canvas(&mut self, id: ImageId, premultiplied: &[u8]) -> Result<(), RenderError> {
+        let Some(Some(stored)) = self.images.get(id.0) else { return Err(RenderError::UnknownImage(id.0)) };
+        let (width, height) = (stored.width, stored.height);
+        check_image(SpriteImage { width, height, rgba: premultiplied })?;
+        write_pixels(&self.queue, &stored.texture, width, height, premultiplied);
+        // la copie part tout de suite, sans attendre le prochain dessin : une fenêtre occultée n'en
+        // soumet aucun (`render` repart sur `Occluded`), et chaque copie de wgpu (8,3 Mo pour une
+        // image de l'intro) resterait jusque-là. Une soumission, même vide, envoie les écritures en
+        // attente puis rend ce que les soumissions finies tenaient (wgpu-core 30 : `Queue::submit`,
+        // puis `Device::maintain`) : au plus une ou deux copies à la fois.
+        self.queue.submit(std::iter::empty());
+        Ok(())
+    }
+
+    fn remove_image(&mut self, id: ImageId) {
+        if let Some(stored) = self.images.get_mut(id.0).and_then(Option::take) {
+            self.image_bytes -= stored.bytes();
+        }
+    }
+
+    fn settle(&self) {
+        let wait = wgpu::PollType::Wait { submission_index: None, timeout: Some(SETTLE) };
+        if let Err(err) = self.device.poll(wait) {
+            log::debug!("carte graphique pas encore libre : {err}");
+        }
+    }
+
+    /// La carte graphique accepte-t-elle une image de cette taille ?
+    fn check_size(&self, width: u32, height: u32) -> Result<(), RenderError> {
+        let max = self.device.limits().max_texture_dimension_2d;
+        if width > max || height > max {
+            return Err(RenderError::TooLarge { width, height, max });
+        }
+        Ok(())
+    }
+
+    /// Range une texture confiée, prête à être lue par le shader : son numéro.
+    fn store(&mut self, texture: wgpu::Texture, width: u32, height: u32) -> ImageId {
+        let bind_group = self.bind_texture(&texture);
+        let stored = Stored { bind_group, texture, width, height };
+        self.image_bytes += stored.bytes();
+        self.images.push(Some(stored));
+        ImageId(self.images.len() - 1)
     }
 
     fn set_banner(&mut self, image: Option<SpriteImage<'_>>) -> Result<(), RenderError> {
@@ -366,6 +472,11 @@ impl Painter {
     /// Envoie une image au GPU et la prépare à être lue par le shader.
     fn bind_image(&self, image: SpriteImage<'_>) -> wgpu::BindGroup {
         let texture = upload_sprite(&self.device, &self.queue, image);
+        self.bind_texture(&texture)
+    }
+
+    /// Prépare une texture à être lue par le shader.
+    fn bind_texture(&self, texture: &wgpu::Texture) -> wgpu::BindGroup {
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
         self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("capri image"),
@@ -389,8 +500,8 @@ impl Painter {
         let mut draws: Vec<(&wgpu::BindGroup, &SpriteDraw)> = Vec::with_capacity(layers.len() + 1);
         for (id, draw) in layers {
             match self.images.get(id.0) {
-                Some(image) => draws.push((image, draw)),
-                None => log::warn!("image n° {} inconnue : pas dessinée", id.0),
+                Some(Some(image)) => draws.push((&image.bind_group, draw)),
+                _ => log::warn!("image n° {} inconnue : pas dessinée", id.0),
             }
         }
         if let (Some(image), Some(draw)) = (self.banner.as_ref(), banner) {
@@ -480,6 +591,22 @@ impl Offscreen {
 
     pub fn add_image(&mut self, image: SpriteImage<'_>) -> Result<ImageId, RenderError> {
         self.painter.add_image(image)
+    }
+
+    pub fn add_canvas(&mut self, width: u32, height: u32) -> Result<ImageId, RenderError> {
+        self.painter.add_canvas(width, height)
+    }
+
+    pub fn paint_canvas(&mut self, id: ImageId, premultiplied: &[u8]) -> Result<(), RenderError> {
+        self.painter.paint_canvas(id, premultiplied)
+    }
+
+    pub fn remove_image(&mut self, id: ImageId) {
+        self.painter.remove_image(id);
+    }
+
+    pub fn settle(&self) {
+        self.painter.settle();
     }
 
     pub fn set_banner(&mut self, image: Option<SpriteImage<'_>>) -> Result<(), RenderError> {
@@ -617,44 +744,60 @@ fn pick_alpha_mode(modes: &[wgpu::CompositeAlphaMode]) -> wgpu::CompositeAlphaMo
 
 /// Envoie une image au GPU, prémultipliée (sinon ses bords auraient un liseré sombre).
 fn upload_sprite(device: &wgpu::Device, queue: &wgpu::Queue, sprite: SpriteImage<'_>) -> wgpu::Texture {
-    let size = wgpu::Extent3d { width: sprite.width, height: sprite.height, depth_or_array_layers: 1 };
-    let texture = device.create_texture(&wgpu::TextureDescriptor {
+    let texture = new_texture(device, sprite.width, sprite.height);
+    write_pixels(queue, &texture, sprite.width, sprite.height, &premultiply(sprite.rgba));
+    texture
+}
+
+/// Une texture RGBA 8 bits de cette taille, à lire par le shader et à remplir (de zéros d'abord).
+fn new_texture(device: &wgpu::Device, width: u32, height: u32) -> wgpu::Texture {
+    device.create_texture(&wgpu::TextureDescriptor {
         label: Some("capri sprite"),
-        size,
+        size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
         mip_level_count: 1,
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
         format: wgpu::TextureFormat::Rgba8Unorm,
         usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
         view_formats: &[],
-    });
+    })
+}
+
+/// Réécrit toute la texture avec ces pixels (déjà prémultipliés), avant le prochain dessin : wgpu
+/// les copie d'abord dans un tampon à lui, libéré une fois la copie faite par la carte graphique.
+fn write_pixels(queue: &wgpu::Queue, texture: &wgpu::Texture, width: u32, height: u32, premultiplied: &[u8]) {
     queue.write_texture(
         wgpu::TexelCopyTextureInfo {
-            texture: &texture,
+            texture,
             mip_level: 0,
             origin: wgpu::Origin3d::ZERO,
             aspect: wgpu::TextureAspect::All,
         },
-        &premultiply(sprite.rgba),
+        premultiplied,
         wgpu::TexelCopyBufferLayout {
             offset: 0,
-            bytes_per_row: Some(4 * sprite.width),
-            rows_per_image: Some(sprite.height),
+            bytes_per_row: Some(4 * width),
+            rows_per_image: Some(height),
         },
-        size,
+        wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
     );
-    texture
 }
 
 fn premultiply(rgba: &[u8]) -> Vec<u8> {
     let mut out = rgba.to_vec();
-    for px in out.as_chunks_mut::<4>().0 {
+    premultiply_in_place(&mut out);
+    out
+}
+
+/// Prémultiplie des pixels RGBA 8 bits (comme dans un PNG) par leur alpha, sur place : ce que
+/// [`Renderer::paint_canvas`] attend. Sans carte graphique : à faire hors du thread principal.
+pub fn premultiply_in_place(rgba: &mut [u8]) {
+    for px in rgba.as_chunks_mut::<4>().0 {
         let a = u16::from(px[3]);
         for c in &mut px[..3] {
             *c = ((u16::from(*c) * a + 127) / 255) as u8;
         }
     }
-    out
 }
 
 #[cfg(test)]
@@ -667,6 +810,14 @@ mod tests {
             premultiply(&[200, 100, 50, 255, 200, 100, 50, 0, 255, 255, 255, 128]),
             vec![200, 100, 50, 255, 0, 0, 0, 0, 128, 128, 128, 128]
         );
+    }
+
+    #[test]
+    fn premultiplying_in_place_gives_the_same_pixels() {
+        let mut pixels = vec![200, 100, 50, 255, 200, 100, 50, 0, 255, 255, 255, 128];
+        let copied = premultiply(&pixels);
+        premultiply_in_place(&mut pixels);
+        assert_eq!(pixels, copied);
     }
 
     #[test]
@@ -750,6 +901,112 @@ mod gpu_tests {
         let pixels = offscreen.render(&[(grid, ghosted)], None).expect("relue");
         let beside = &pixels[(30 * 64 + 58) * 4..(30 * 64 + 58) * 4 + 4];
         assert!(beside[3] > 0 && beside[2] > beside[1], "{beside:?}");
+    }
+
+    /// L'empreinte mémoire de ce processus (`phys_footprint`, mémoire graphique comprise sur un Mac
+    /// à puce Apple), lue par `/usr/bin/footprint`.
+    #[cfg(target_os = "macos")]
+    fn footprint() -> u64 {
+        let output = std::process::Command::new("/usr/bin/footprint")
+            .args(["-p", &std::process::id().to_string(), "-f", "bytes"])
+            .output()
+            .expect("footprint");
+        let text = String::from_utf8_lossy(&output.stdout).into_owned();
+        text.split("Footprint: ")
+            .nth(1)
+            .and_then(|rest| rest.split(' ').next())
+            .and_then(|n| n.parse().ok())
+            .expect("son total")
+    }
+
+    /// Sur la vraie carte graphique : une toile peinte vingt fois sans que rien ne soit dessiné
+    /// (une fenêtre occultée : `render` repart sans rien soumettre) ne garde pas vingt copies de
+    /// transfert de wgpu, au plus quelques-unes.
+    #[cfg(target_os = "macos")]
+    #[test]
+    #[ignore = "peint sur la vraie carte graphique de cette machine, et lit son empreinte mémoire"]
+    fn painting_a_canvas_without_drawing_keeps_at_most_a_few_copies() {
+        const IMAGE: u64 = 1920 * 1080 * 4;
+        let mut offscreen = Offscreen::new(16, 16).expect("une carte graphique");
+        let canvas = offscreen.add_canvas(1920, 1080).expect("une toile");
+        let pixels = vec![200u8; IMAGE as usize];
+        offscreen.paint_canvas(canvas, &pixels).expect("peinte");
+        let _ = offscreen.render(&[], None).expect("rendue");
+        let before = footprint();
+        for _ in 0..20 {
+            offscreen.paint_canvas(canvas, &pixels).expect("peinte");
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        let grown = footprint().saturating_sub(before);
+        println!("après 20 peintures sans dessin : +{:.1} Mo", grown as f64 / 1e6);
+        assert!(grown < 4 * IMAGE, "+{:.1} Mo : les copies s'accumulent", grown as f64 / 1e6);
+    }
+
+    /// Sur la vraie carte graphique : une toile lâchée juste après une copie reste tenue tant que
+    /// rien d'autre n'est soumis (une fenêtre cachée ne soumet plus rien), même longtemps ; après
+    /// `settle`, la carte graphique la rend (Metal le fait un instant après : on attend 1 s au plus).
+    #[cfg(target_os = "macos")]
+    #[test]
+    #[ignore = "peint sur la vraie carte graphique de cette machine, et lit son empreinte mémoire"]
+    fn a_canvas_let_go_is_given_back_once_settled() {
+        const IMAGE: u64 = 1920 * 1080 * 4;
+        let mut offscreen = Offscreen::new(16, 16).expect("une carte graphique");
+        let _ = offscreen.render(&[], None).expect("rendue");
+        // ses pixels, gardés tout du long : seule la carte graphique change entre les mesures
+        let pixels = vec![200u8; IMAGE as usize];
+        let before = footprint();
+        let canvas = offscreen.add_canvas(1920, 1080).expect("une toile");
+        offscreen.paint_canvas(canvas, &pixels).expect("peinte");
+        offscreen.remove_image(canvas);
+        std::thread::sleep(std::time::Duration::from_millis(400));
+        let held = footprint().saturating_sub(before);
+        println!("lâchée, 400 ms après : +{:.1} Mo", held as f64 / 1e6);
+        assert!(held > IMAGE / 2, "+{:.1} Mo : déjà rendue sans rien soumettre ?", held as f64 / 1e6);
+        offscreen.settle();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+        let after = loop {
+            let after = footprint().saturating_sub(before);
+            if after < IMAGE / 4 || std::time::Instant::now() > deadline {
+                break after;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        };
+        println!("après settle : +{:.1} Mo", after as f64 / 1e6);
+        assert!(after < IMAGE / 4, "+{:.1} Mo : toujours tenue", after as f64 / 1e6);
+    }
+
+    /// Sur la vraie carte graphique : une toile naît transparente, se réécrit en place (une seule
+    /// texture, comptée une fois), et une fois lâchée, elle ne pèse plus rien et ne se dessine plus.
+    #[test]
+    #[ignore = "dessine sur la vraie carte graphique de cette machine"]
+    fn a_canvas_is_repainted_in_place_and_released() {
+        let mut offscreen = Offscreen::new(16, 16).expect("une carte graphique");
+        let canvas = offscreen.add_canvas(4, 4).expect("une toile");
+        assert_eq!(offscreen.image_bytes(), 4 * 4 * 4);
+        let draw = SpriteDraw {
+            min: [0.0, 0.0],
+            size: [16.0, 16.0],
+            ghost: [0.0, 0.0],
+            ghost_strength: 0.0,
+            boil_seed: 0,
+            boil: 0.0,
+            opacity: 1.0,
+            crop: Crop::WHOLE,
+        };
+        let middle = |pixels: &[u8]| pixels[(8 * 16 + 8) * 4..(8 * 16 + 8) * 4 + 4].to_vec();
+        assert_eq!(middle(&offscreen.render(&[(canvas, draw)], None).expect("relue")), [0, 0, 0, 0]);
+        for color in [[255u8, 0, 0, 255], [0, 0, 255, 255], [0, 128, 0, 128]] {
+            let pixels: Vec<u8> = color.iter().copied().cycle().take(4 * 4 * 4).collect();
+            offscreen.paint_canvas(canvas, &pixels).expect("peinte");
+            assert_eq!(middle(&offscreen.render(&[(canvas, draw)], None).expect("relue")), color);
+        }
+        assert_eq!(offscreen.image_bytes(), 4 * 4 * 4, "toujours une seule texture");
+        assert!(matches!(offscreen.paint_canvas(canvas, &[0; 12]), Err(RenderError::BadSprite { .. })));
+        offscreen.remove_image(canvas);
+        assert_eq!(offscreen.image_bytes(), 0);
+        offscreen.remove_image(canvas); // une seconde fois : rien
+        assert!(matches!(offscreen.paint_canvas(canvas, &[0; 64]), Err(RenderError::UnknownImage(_))));
+        assert_eq!(middle(&offscreen.render(&[(canvas, draw)], None).expect("relue")), [0, 0, 0, 0]);
     }
 }
 

@@ -326,6 +326,40 @@ faudra `tools/install-macos.sh`, et la ligne de son menu le dira.
 Écrit et testé sans écran le 23 novembre 2026, images fixes rendues et regardées ; **pas encore
 regardé en mouvement** : la liste est dans « État de validation ».
 
+### Son intro au démarrage, puis son bonjour
+
+Le deuxième lot. Au lancement, avant d'apparaître à sa place, elle vient voir ton écran de tout
+près :
+
+- **l'intro** : 22 images en plein écran (« Up close », du projet Capri), 12 dessins par seconde,
+  1,8 s. Elle surgit, regarde autour d'elle, colle son visage à la vitre avec un grand sourire,
+  puis repart. L'image remplit l'écran, calée en bas ; ce qui dépasse sur les côtés est coupé ;
+- **elle ne gêne pas** : tes clics passent au travers, et elle ne prend pas le focus ;
+- **ensuite** elle se matérialise à sa place, puis dit une courte phrase de bonjour dans sa
+  bulle, sa bouche qui bouge, et sa voix si elle est activée. Dix phrases écrites pour elle,
+  tirées au sort ; aucune ne vient de la série, aucun modèle n'est appelé, et la phrase n'entre
+  pas dans votre conversation. Si tu lui parles avant, elle l'oublie ;
+- **ce qui la coupe** : ⌃⌥C l'arrête net, et elle est masquée ; ⌃⌥P ou ⌃⌥D l'arrêtent, et elle se
+  matérialise tout de suite, sans bonjour ; « Quitter » reste immédiat ;
+- **une seule fois** : au lancement seulement, jamais quand tu la montres après l'avoir masquée ;
+- **son menu** : la case **« Intro au démarrage »**, cochée par défaut et retenue d'un lancement
+  à l'autre (`intro.json`, dans son dossier). Décochée : ni intro ni bonjour, elle se matérialise
+  simplement ;
+- **sans ces images**, ou s'il en manque une : pas d'intro, pas d'erreur.
+
+**Ce que ça pèse.** Les 22 images pèseraient 182 Mo si elles étaient toutes chargées. Elles sont
+décodées une à une pendant qu'elles défilent, sur un thread à part, et peintes sur une seule
+toile de la carte graphique : 24,9 Mo au pire d'après le calcul, +20,4 Mo au plus haut mesurés par
+`footprint` le 23 novembre 2026. L'intro finie, la toile est rendue tout de suite, même si plus
+rien ne se dessine (fenêtre masquée, écran verrouillé), et le thread a disparu ; il reste +3,6 à
++3,9 Mo, une réserve que gardent Metal et wgpu, stable d'une lecture à l'autre. Décoder une image
+prend 1,4 ms en moyenne, pour 83 ms disponibles. Si rien ne s'affiche pendant l'intro (écran
+verrouillé au lancement), les images ne s'accumulent pas : une seule copie attend à la fois.
+
+Écrit et testé sans écran le 23 novembre 2026 ; images fixes rendues et regardées ; **la vraie
+app n'a jamais été lancée avec l'intro** : tout ce qui se voit reste à regarder, la liste est
+dans « État de validation ».
+
 ### Elle vit sa vie : elle va s'asseoir seule sur tes fenêtres
 
 Le troisième lot. Tu n'as plus à la déposer : elle choisit seule où aller.
@@ -1176,8 +1210,9 @@ Le script, dans l'ordre (rien de tout cela ne demande `sudo`) :
    session** : d'ici là, l'inscription mène encore à l'ancienne app, qui n'existe plus.
 
 Ce que l'app emporte : les deux programmes (`capri`, `capri-hook`), les images que lit le code
-(`capri-cutout.png`, les planches de `perch/` et de `stand/` ; pas les autres images que
-télécharge `fetch-assets.sh`, qui ne servent pas) dans `Contents/Resources/assets/`, et
+(`capri-cutout.png`, les planches de `perch/`, de `stand/` et de `life/`, et les 22 images de
+`intro/` ; pas les autres images que télécharge `fetch-assets.sh`, qui ne servent pas) dans
+`Contents/Resources/assets/`, et
 `CREDITS.md`, qui porte les mentions que leurs licences exigent. `bundle-macos.sh` prend les
 images dans `assets/`, ou dans le dossier que désigne `CAPRI_ASSETS` (celui qui contient
 `capri/`), et s'arrête s'il en manque une, en disant de lancer `tools/fetch-assets.sh` : il ne
@@ -1393,9 +1428,9 @@ Règle : tout ce qui peut être testé sans écran va dans `capri-core`, `capri-
 
 Vérifié automatiquement :
 
-- formatage, `clippy -D warnings` et 711 tests sur **macOS Apple Silicon** (le 23 novembre 2026 ;
-  710 en version optimisée, un essai de la répétition de la musique n'existant qu'en version de
-  débogage ; plus 16 qui ne
+- formatage, `clippy -D warnings` et 737 tests sur **macOS Apple Silicon** (le 23 novembre 2026 ;
+  736 en version optimisée, un essai de la répétition de la musique n'existant qu'en version de
+  débogage ; plus 21 qui ne
   tournent qu'à la main : ils écrivent des images ou dessinent sur la vraie carte graphique,
   lisent un vrai `settings.json`, touchent au vrai trousseau, créent de vraies voix et un vrai
   moteur audio, sans bruit, lisent la vraie liste des fenêtres, guettent une annonce d'essai
@@ -1620,6 +1655,17 @@ Vérifié automatiquement :
   coincé, mais sept défauts de comportement ou d'essais, tous reproduits puis corrigés avec leur
   essai (entre autres : un geste de l'utilisateur compté comme un bord perdu, des sauts trop
   fréquents debout quand aucun bord n'existe, le champ de saisie laissé à l'ancienne place) ;
+- son intro et son bonjour (le 23 novembre 2026) : le déroulé (chaque dessin tenu deux images,
+  une image en retard, la première jamais prête, ce qui la coupe), le cadrage pour toute forme
+  d'écran (elle couvre tout l'écran, en pixels entiers), les images absentes, incomplètes, de
+  mauvaise taille ou illisibles au milieu, le thread qui s'arrête toujours, le bonjour dit une
+  seule fois et oublié si on lui parle, la fait taire ou la cache, y compris pendant l'intro, et
+  la règle unique des répétitions (une variable posée, même vide : ni intro, ni vie, ni regard
+  vers GitHub). Sur la vraie carte graphique, par des essais à lancer à la main : une toile
+  repeinte sur place puis rendue, sans que les copies s'accumulent quand rien ne s'affiche, et
+  l'intro jouée en entier hors écran (22 images en 1,85 s). Une relecture indépendante n'y a
+  trouvé aucun défaut grave, mais quatre mineurs, corrigés. **Aucun essai ne passe par le
+  branchement de l'intro dans la boucle de l'app** : tous ceux qui lancent Capri la coupent ;
 - `clippy -D warnings` en compilation croisée pour **Windows x64** et **Linux x64** (le code
   compile, il n'est pas exécuté).
 
@@ -2147,6 +2193,30 @@ elles, l'ont été, voir plus haut) :
 14. **le tout début de son apparition** : pendant une demi-seconde, elle prend les clics sur toute
     la place qu'elle occupera, alors que presque rien n'y est dessiné. Dire si cela gêne.
 
+**Son intro et son bonjour : à regarder à la main** (écrit et testé sans écran le 23 novembre
+2026 ; la vraie app n'a jamais été lancée avec l'intro). Il faut l'app installée par
+`tools/install-macos.sh`, ou lancée depuis le dépôt, sans `CAPRI_CONFIG_DIR` :
+
+1. **l'intro au lancement** : 12 dessins par seconde, environ 1,8 s, l'image remplit l'écran. La
+   première image est un aplat rouge presque plein écran : dire si c'est trop brutal ;
+2. **tes clics passent au travers** pendant l'intro, et le focus ne bouge pas ;
+3. **le raccord à la fin** : les dernières images ne montrent plus que les pointes de ses
+   cheveux, puis plus rien, puis elle se matérialise à sa place. À juger ;
+4. **le bonjour** : sa bulle, sa bouche qui bouge, sa voix si elle est activée. Rien au-dessus de
+   sa tête pendant l'intro ;
+5. **⌃⌥C pendant l'intro** : elle s'arrête net et Capri est masquée. ⌃⌥C de nouveau : elle se
+   matérialise, sans intro ni bonjour. **Le point à regarder de près** : rien de l'intro ne doit
+   réapparaître à ce moment-là, même un instant ;
+6. **⌃⌥P et ⌃⌥D pendant l'intro** : elle se matérialise tout de suite, le champ ou l'écoute
+   s'ouvre, sans bonjour ;
+7. **« Quitter » pendant l'intro** : immédiat ;
+8. **la case « Intro au démarrage »**, dans ses deux menus : décochée, ni intro ni bonjour au
+   lancement suivant ; recochée, l'intro revient ;
+9. **changer d'écran ou de résolution** pendant l'intro : rien ne casse ;
+10. **dans le Moniteur d'activité** : sa mémoire revient au même niveau après l'intro ;
+11. **« La faire taire » pendant l'intro** : l'intro continue, et elle ne dit pas bonjour ensuite ;
+12. **les dix phrases de bonjour** : dire si le ton lui va, et lesquelles retirer.
+
 **Elle vit sa vie : à regarder à la main** (écrit et testé sans écran le 23 novembre 2026 ; rien
 n'a encore été vu en mouvement) :
 
@@ -2383,8 +2453,9 @@ Points à surveiller :
    Pas de notarisation tant que l'app emporte ses images : elle les enverrait chez Apple.
 6. Lui donner vie, avant l'installeur (demandé le 23 novembre 2026), en cinq lots : ~~elle
    apparaît et s'efface~~ (écrit et testé sans écran le 23 novembre 2026, images fixes rendues et
-   regardées ; reste à regarder en mouvement) ; une intro en plein écran au démarrage, puis elle
-   dit bonjour ; ~~elle va s'asseoir seule sur les fenêtres~~ (écrit et testé sans écran le même
+   regardées ; reste à regarder en mouvement) ; ~~une intro en plein écran au démarrage, puis elle
+   dit bonjour~~ (écrit et testé sans écran le même jour, la vraie app jamais lancée avec
+   l'intro) ; ~~elle va s'asseoir seule sur les fenêtres~~ (écrit et testé sans écran le même
    jour ; reste à regarder en mouvement) ; elle marche, pend quand on la tient, sourit ; elle
    s'allonge, s'endort et se réveille.
 

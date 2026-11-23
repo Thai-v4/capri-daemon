@@ -8,6 +8,10 @@
 //!
 //! Ce que ces images ne montrent pas : le mouvement (sauf image par image), le suivi d'une vraie
 //! fenêtre, la musique réelle.
+//!
+//! L'intro du lancement (`intro_portraits`) se rend de même, sur un faux écran de MacBook Pro et
+//! un faux écran 1080p ; `intro_played_for_real` la joue à 24 i/s par le code de l'app et dit ce
+//! qu'elle a montré et ce qu'elle a pesé.
 
 use std::path::{Path, PathBuf};
 use std::time::Instant;
@@ -512,4 +516,197 @@ fn superposition(scene: &mut Scene, life: Picture, standing: Picture) -> (Vec<u8
     );
     let cropped: Vec<Vec<u8>> = panels.iter().map(|panel| crop(panel, scene.size.0, at, crop_size)).collect();
     contact(&cropped, crop_size, 3)
+}
+
+impl crate::intro_view::Canvas for Offscreen {
+    type Id = ImageId;
+
+    fn create(&mut self, (width, height): (u32, u32)) -> Result<ImageId, capri_render::RenderError> {
+        self.add_canvas(width, height)
+    }
+
+    fn paint(&mut self, id: ImageId, premultiplied: &[u8]) -> Result<(), capri_render::RenderError> {
+        self.paint_canvas(id, premultiplied)
+    }
+
+    fn remove(&mut self, id: ImageId) {
+        self.remove_image(id);
+    }
+}
+
+/// L'intro du lancement, posée sur un faux écran de chaque taille (un MacBook Pro 14", 3024 × 1964 ;
+/// un écran 1080p, 1920 × 1080) : quelques images entières (`intro-<écran>-<numéro>.png`), et une
+/// planche de toutes, réduite (`intro-planche.png`), chacune peinte sur la même toile, comme dans
+/// l'app. Dit aussi combien de temps prend chacune à décoder et prémultiplier (le travail du
+/// thread « capri-intro »).
+#[test]
+#[ignore = "écrit des images PNG dans CAPRI_PORTRAITS_DIR, avec les vraies images et la vraie carte graphique"]
+fn intro_portraits() {
+    use capri_core::intro;
+
+    let dir = directory();
+    let sequence = assets::intro::sequence().expect("un dossier d'images");
+    sequence.check().expect("toutes les images de l'intro, à la bonne taille");
+    let decoded = |index: u32| {
+        let started = Instant::now();
+        let mut pixels = sequence.decode(index).expect("lisible");
+        capri_render::premultiply_in_place(&mut pixels);
+        (pixels, started.elapsed())
+    };
+
+    for screen in [(3024u32, 1964u32), (1920, 1080)] {
+        let mut offscreen = Offscreen::new(screen.0, screen.1).expect("une carte graphique");
+        let desk = offscreen.add_image(SpriteImage { width: 1, height: 1, rgba: &DESK }).expect("le bureau");
+        let canvas = offscreen.add_canvas(intro::SIZE.0, intro::SIZE.1).expect("la toile");
+        let whole = Rect::new(Vec2::ZERO, Vec2::new(screen.0 as f32, screen.1 as f32));
+        let rect = intro::place(whole.size, intro::SIZE);
+        println!("écran {} × {} : l'intro en {rect:?}", screen.0, screen.1);
+        for index in [0, 5, 9, 13, 16, 19] {
+            let (pixels, _) = decoded(index);
+            offscreen.paint_canvas(canvas, &pixels).expect("peinte");
+            let layers = [Scene::rect(desk, whole), crate::intro_view::layer(canvas, rect)];
+            let image = offscreen.render(&layers, None).expect("rendue");
+            save(&dir, &format!("intro-{}x{}-{:02}.png", screen.0, screen.1, index + 1), &image, screen);
+        }
+    }
+
+    // toutes, réduites, sur un écran de MacBook Pro au huitième ; et le temps de chacune
+    let small = (378, 246);
+    let mut offscreen = Offscreen::new(small.0, small.1).expect("une carte graphique");
+    let desk = offscreen.add_image(SpriteImage { width: 1, height: 1, rgba: &DESK }).expect("le bureau");
+    let canvas = offscreen.add_canvas(intro::SIZE.0, intro::SIZE.1).expect("la toile");
+    println!("mémoire graphique de la toile : {:.1} Mo", (offscreen.image_bytes() - 4) as f64 / 1_000_000.0);
+    let whole = Rect::new(Vec2::ZERO, Vec2::new(small.0 as f32, small.1 as f32));
+    let rect = intro::place(whole.size, intro::SIZE);
+    let mut images = Vec::new();
+    let mut times = Vec::new();
+    for index in 0..intro::COUNT {
+        let (pixels, took) = decoded(index);
+        times.push(took.as_secs_f64() * 1000.0);
+        offscreen.paint_canvas(canvas, &pixels).expect("peinte");
+        drop(pixels);
+        let layers = [Scene::rect(desk, whole), crate::intro_view::layer(canvas, rect)];
+        images.push(offscreen.render(&layers, None).expect("rendue"));
+    }
+    let (sheet, sheet_size) = contact(&images, small, 6);
+    save(&dir, "intro-planche.png", &sheet, sheet_size);
+    let slowest = times.iter().cloned().fold(0.0, f64::max);
+    println!(
+        "décoder et prémultiplier une image : {:.1} ms en moyenne, {slowest:.1} ms au plus (une image doit être prête en {:.0} ms)",
+        times.iter().sum::<f64>() / times.len() as f64,
+        1000.0 * intro::HOLD as f64 / capri_core::FRAME_RATE
+    );
+}
+
+/// L'intro jouée pour de vrai, à 24 images par seconde, par `intro_view` (son thread, sa toile),
+/// sur la vraie carte graphique : combien d'images montrées, à l'heure ou non, et l'empreinte
+/// mémoire du processus (`phys_footprint`, lue par `/usr/bin/footprint`, mémoire graphique
+/// comprise sur un Mac à puce Apple) avant, au plus haut pendant (aussi souvent que l'outil
+/// répond), et après ; puis ce qui a changé, par catégorie.
+#[test]
+#[ignore = "joue l'intro sur la vraie carte graphique, avec les vraies images"]
+fn intro_played_for_real() {
+    use capri_core::intro::{self, End};
+
+    use crate::intro_view::IntroView;
+
+    // le rapport de `footprint` : son total, et ses lignes (« sale  propre  récupérable  régions
+    // catégorie »)
+    let report = || -> String {
+        let output = std::process::Command::new("/usr/bin/footprint")
+            .args(["-p", &std::process::id().to_string(), "-f", "bytes"])
+            .output()
+            .expect("footprint");
+        String::from_utf8_lossy(&output.stdout).into_owned()
+    };
+    let total = |report: &str| -> u64 {
+        report
+            .split("Footprint: ")
+            .nth(1)
+            .and_then(|rest| rest.split(' ').next())
+            .and_then(|n| n.parse().ok())
+            .unwrap_or(0)
+    };
+    let dirty = |report: &str| -> std::collections::BTreeMap<String, i64> {
+        report
+            .lines()
+            .filter_map(|line| {
+                let fields: Vec<&str> = line.split_whitespace().collect();
+                let bytes = fields.first()?.parse::<i64>().ok()?;
+                (fields.get(1) == Some(&"B") && fields.len() > 7).then(|| (fields[7..].join(" "), bytes))
+            })
+            .collect()
+    };
+    let rss = move || total(&report());
+    let mut offscreen = Offscreen::new(64, 64).expect("une carte graphique");
+    let sequence = assets::intro::sequence().expect("un dossier d'images");
+    // la carte graphique prête à dessiner (son pipeline, la relecture) avant de mesurer quoi que ce soit
+    let _ = offscreen.render(&[], None).expect("rendue");
+    // l'allocateur de macOS garde en réserve le dernier grand bloc lâché (« Malloc Large ») : sans
+    // un premier bloc lâché avant de mesurer, cette réserve compterait dans « après ». L'app en a
+    // déjà lâché de bien plus grands avant l'intro (ses planches, une fois confiées)
+    let block = std::hint::black_box(vec![7u8; 1920 * 1080 * 4]);
+    drop(block);
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    // la mémoire se lit sur un autre thread pendant qu'elle se joue
+    let (stop, stopped) = std::sync::mpsc::channel::<()>();
+    let first = report();
+    let before = total(&first);
+    let sampler = std::thread::spawn(move || {
+        let (mut highest, mut samples) = (0, 0);
+        while stopped.try_recv().is_err() {
+            highest = highest.max(rss());
+            samples += 1;
+        }
+        (highest, samples)
+    });
+    let started = Instant::now();
+    let mut view: IntroView = IntroView::start(sequence, 0).expect("lancée");
+    let mut painted = 0;
+    let mut last = None;
+    let end = loop {
+        let frame = capri_core::frame_at(started.elapsed());
+        if let Some(end) = view.step(frame, &mut offscreen) {
+            break end;
+        }
+        if let Some((id, shown, rect)) = view.picture(Vec2::new(64.0, 64.0))
+            && last != Some(shown)
+        {
+            last = Some(shown);
+            painted += 1;
+            let _ = offscreen.render(&[crate::intro_view::layer(id, rect)], None).expect("rendue");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(16));
+    };
+    let elapsed = started.elapsed();
+    let line = view.close(end, &mut offscreen);
+    // la toile lâchée : la carte graphique ne garde rien ; comme l'app à la fin de l'intro
+    // (`Running::end_intro`), elle la rend tout de suite, puis un dessin de plus
+    assert_eq!(offscreen.image_bytes(), 0);
+    offscreen.settle();
+    let _ = offscreen.render(&[], None).expect("rendue");
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    let _ = stop.send(());
+    let (highest, samples) = sampler.join().expect("les mesures");
+    let last = report();
+    let after = total(&last);
+    println!("{line}");
+    println!("jouée en {:.2} s, {painted} dessins à l'écran", elapsed.as_secs_f64());
+    println!(
+        "empreinte mémoire : {:.1} Mo avant, {:.1} Mo au plus haut (+{:.1}, {samples} mesures), {:.1} Mo après ({:+.1})",
+        before as f64 / 1e6,
+        highest as f64 / 1e6,
+        highest.saturating_sub(before) as f64 / 1e6,
+        after as f64 / 1e6,
+        (after as f64 - before as f64) / 1e6
+    );
+    let (was, is) = (dirty(&first), dirty(&last));
+    for (category, bytes) in &is {
+        let change = bytes - was.get(category).copied().unwrap_or(0);
+        if change.abs() >= 256 * 1024 {
+            println!("  {category} : {:+.1} Mo", change as f64 / 1e6);
+        }
+    }
+    assert!(matches!(end, End::Played { .. }), "{end:?}");
+    assert!(elapsed.as_secs_f64() < 1.0 + intro::COUNT as f64 * intro::HOLD as f64 / 24.0);
 }

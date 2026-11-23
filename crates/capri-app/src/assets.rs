@@ -364,6 +364,68 @@ pub mod life {
     }
 }
 
+/// L'intro du lancement (`assets/capri/intro/`, voir CREDITS.md et `capri_core::intro`) : de
+/// grandes images, **jamais lues toutes ensemble**. Elles sont vérifiées d'abord (toutes là, et
+/// toutes à la bonne taille, d'après leur seul en-tête), puis décodées une à une, à la demande, par
+/// le thread de `intro_view`.
+pub mod intro {
+    use std::path::{Path, PathBuf};
+
+    use capri_core::intro::{self, Missing};
+
+    /// Ses images : où, combien, de quelle taille.
+    pub struct Sequence {
+        pub dir: PathBuf,
+        pub count: u32,
+        pub size: (u32, u32),
+    }
+
+    impl Sequence {
+        /// La vraie intro, dans le dossier d'images `assets` (celui qui contient `capri/`).
+        pub fn real(assets: &Path) -> Self {
+            Self { dir: assets.join(intro::DIR), count: intro::COUNT, size: intro::SIZE }
+        }
+
+        fn path(&self, index: u32) -> PathBuf {
+            self.dir.join(intro::file(index))
+        }
+
+        /// Toutes là, et toutes de la taille attendue ? D'après leur en-tête seulement : rien
+        /// n'est décodé ici. Le journal n'en dira que des nombres (`intro_view`).
+        pub fn check(&self) -> Result<(), Missing> {
+            let found = (0..self.count).filter(|&index| self.path(index).is_file()).count() as u32;
+            if found < self.count {
+                return Err(Missing::Absent { found });
+            }
+            for index in 0..self.count {
+                let size = image::ImageReader::open(self.path(index))
+                    .ok()
+                    .and_then(|reader| reader.into_dimensions().ok());
+                match size {
+                    None => return Err(Missing::Unreadable { index }),
+                    Some(found) if found != self.size => return Err(Missing::WrongSize { index, found }),
+                    Some(_) => {}
+                }
+            }
+            Ok(())
+        }
+
+        /// L'image n° `index`, décodée : RGBA 8 bits non prémultiplié, de la taille attendue ;
+        /// `None` si elle est illisible (ou d'une autre taille que celle de son en-tête).
+        pub fn decode(&self, index: u32) -> Option<Vec<u8>> {
+            let image = image::ImageReader::open(self.path(index)).ok()?.decode().ok()?;
+            // sans copie si elle est déjà en RGBA 8 bits (le cas de ces images à fond transparent)
+            let image = image.into_rgba8();
+            (image.dimensions() == self.size).then(|| image.into_raw())
+        }
+    }
+
+    /// Ses images, dans le premier dossier d'images trouvé ; `None` s'il n'y en a aucun.
+    pub fn sequence() -> Option<Sequence> {
+        Some(Sequence::real(&super::assets_dir()?))
+    }
+}
+
 fn assets_dir() -> Option<PathBuf> {
     let executable = std::env::current_exe().ok();
     let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets");
@@ -567,6 +629,7 @@ mod tests {
         /// seulement elles : sa liste `IMAGES` suit le code.
         #[test]
         fn the_app_bundle_carries_exactly_the_images_the_code_reads() {
+            use capri_core::intro;
             use capri_core::sheets::{self, life, stand};
 
             let script = include_str!("../../../tools/bundle-macos.sh");
@@ -582,6 +645,7 @@ mod tests {
             read.extend(sheets::Strip::ALL.iter().map(|strip| format!("{}/{}", sheets::DIR, strip.file())));
             read.extend(stand::Strip::ALL.iter().map(|strip| format!("{}/{}", stand::DIR, strip.file())));
             read.extend(life::Strip::ALL.iter().map(|strip| format!("{}/{}", life::DIR, strip.file())));
+            read.extend((0..intro::COUNT).map(|index| format!("{}/{}", intro::DIR, intro::file(index))));
             listed.sort_unstable();
             read.sort_unstable();
             assert_eq!(listed, read);
@@ -842,6 +906,31 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// Les vraies images de l'intro, si `tools/fetch-assets.sh` les a téléchargées (rien n'est
+    /// téléchargé ici) : toutes là, à la taille décrite, en RGBA 8 bits (décodées sans copie), à
+    /// fond transparent. Seules la première et la dernière sont décodées : les 22 seraient lentes
+    /// en version de débogage.
+    #[test]
+    fn the_real_intro_matches_its_description_when_present() {
+        use capri_core::intro;
+
+        let Some(dir) = super::assets_dir() else { return };
+        let sequence = super::intro::Sequence::real(&dir);
+        if !(0..intro::COUNT).all(|index| sequence.dir.join(intro::file(index)).is_file()) {
+            return;
+        }
+        assert_eq!(sequence.check(), Ok(()));
+        for index in [0, intro::COUNT - 1] {
+            let path = sequence.dir.join(intro::file(index));
+            let decoded = image::ImageReader::open(&path).unwrap().decode().unwrap();
+            assert_eq!(decoded.color(), image::ColorType::Rgba8, "image {index}");
+            let pixels = sequence.decode(index).expect("lisible");
+            assert_eq!(pixels.len(), (intro::SIZE.0 * intro::SIZE.1 * 4) as usize);
+        }
+        let last = sequence.decode(intro::COUNT - 1).expect("lisible");
+        assert!(last.as_chunks::<4>().0.iter().any(|pixel| pixel[3] == 0), "à fond transparent");
     }
 
     mod alive {

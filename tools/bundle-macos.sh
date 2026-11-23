@@ -49,9 +49,10 @@ if [ -d "$ASSETS" ]; then ASSETS="$(cd "$ASSETS" && pwd -P)"; fi
 cd "$ROOT"
 
 # Les images que lit le code : son dessin d'avant, indispensable (assets.rs : SPRITE), sa pose
-# assise (capri_core::sheets), sa pose debout (capri_core::sheets::stand) et les planches de sa
-# vie (capri_core::sheets::life). Les autres images que télécharge tools/fetch-assets.sh ne
-# servent pas : elles restent hors de l'app.
+# assise (capri_core::sheets), sa pose debout (capri_core::sheets::stand), les planches de sa
+# vie (capri_core::sheets::life) et l'intro du lancement (capri_core::intro : 01.png à 22.png).
+# Les autres images que télécharge tools/fetch-assets.sh ne servent pas : elles restent hors de
+# l'app.
 IMAGES=(
   capri/capri-cutout.png
   capri/perch/perch.png
@@ -65,6 +66,28 @@ IMAGES=(
   capri/stand/idle_mouth.png
   capri/life/arrive.png
   capri/life/leave.png
+  capri/intro/01.png
+  capri/intro/02.png
+  capri/intro/03.png
+  capri/intro/04.png
+  capri/intro/05.png
+  capri/intro/06.png
+  capri/intro/07.png
+  capri/intro/08.png
+  capri/intro/09.png
+  capri/intro/10.png
+  capri/intro/11.png
+  capri/intro/12.png
+  capri/intro/13.png
+  capri/intro/14.png
+  capri/intro/15.png
+  capri/intro/16.png
+  capri/intro/17.png
+  capri/intro/18.png
+  capri/intro/19.png
+  capri/intro/20.png
+  capri/intro/21.png
+  capri/intro/22.png
 )
 
 # Avant de compiler : toutes les images sont-elles là ?
