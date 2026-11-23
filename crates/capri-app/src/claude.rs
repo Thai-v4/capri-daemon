@@ -8,6 +8,10 @@
 //! que Capri soit libre de la dire. Elle n'est jamais écrite dans le journal, sa longueur
 //! seulement. Des événements, le journal n'écrit que leur forme pour lui
 //! (`capri_claude::protocol::Message::for_log`), jamais un texte écrit par Claude.
+//!
+//! Quand la session principale finit son tour (`Message::ends_main_turn`), elle le retient
+//! jusqu'à ce que la boucle le relève ([`Feed::take_turn_end`]) : Capri sourit alors, si elle est
+//! libre (`capri_core::look::Look::cheer`). Rien d'autre n'en est gardé.
 
 use std::sync::mpsc::{Receiver, channel};
 use std::time::Instant;
@@ -22,6 +26,8 @@ pub struct Feed {
     tracker: Tracker,
     /// La ligne de Claude pour Capri qui attend d'être dite.
     waiting: Waiting,
+    /// La session principale a fini son tour depuis la dernière fois qu'on l'a relevé.
+    turn_end: bool,
     /// Origine de l'horloge du suivi.
     origin: Instant,
     endpoint: Endpoint,
@@ -88,6 +94,7 @@ impl Feed {
             messages,
             tracker: Tracker::new(),
             waiting: Waiting::new(),
+            turn_end: false,
             origin: Instant::now(),
             endpoint,
         })
@@ -105,6 +112,7 @@ impl Feed {
             // sa forme pour le journal : ni résumé, ni message, ni erreur, ni chemin, ni modèle, ni
             // identifiant de session, seulement des noms, des catégories, des durées et des longueurs
             log::debug!("Claude Code : {}", message.for_log());
+            self.turn_end |= message.ends_main_turn();
             match &mut message.event {
                 Event::TurnEnd { said } => {
                     if let Some(said) = said.take() {
@@ -126,6 +134,11 @@ impl Feed {
     pub fn take_said(&mut self) -> Option<Said> {
         let now_ms = self.now_ms();
         self.waiting.take(now_ms)
+    }
+
+    /// La session principale a-t-elle fini son tour depuis le dernier appel ? Rendu une seule fois.
+    pub fn take_turn_end(&mut self) -> bool {
+        std::mem::take(&mut self.turn_end)
     }
 
     /// Oublie la ligne qui attendait : on a fait taire Capri (depuis son menu).
@@ -196,6 +209,9 @@ mod tests {
             Some("Claude a fini"),
             "le bandeau, comme avant"
         );
+        // la fin de son tour, une fois
+        assert!(feed.take_turn_end());
+        assert!(!feed.take_turn_end());
 
         // une fin de tour sans phrase n'efface pas celle qui attend ; la faire taire, si
         deliver(&mut feed, &endpoint, Event::TurnEnd { said: said("Encore.") });
@@ -208,6 +224,10 @@ mod tests {
         deliver(&mut feed, &endpoint, Event::TurnEnd { said: said("Périmée.") });
         deliver(&mut feed, &endpoint, Event::TurnStart);
         assert_eq!(feed.take_said(), None);
+        // un sous-agent qui finit n'est pas la fin de son tour
+        assert!(feed.take_turn_end());
+        deliver(&mut feed, &endpoint, Event::AgentEnd { agent_type: None, agent_id: None });
+        assert!(!feed.take_turn_end());
         drop(feed);
         assert!(!endpoint.path().exists(), "le canal est rangé");
         let _ = std::fs::remove_dir_all(endpoint.path().parent().unwrap());

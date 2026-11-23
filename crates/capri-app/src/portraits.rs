@@ -11,7 +11,9 @@
 //!
 //! L'intro du lancement (`intro_portraits`) se rend de même, sur un faux écran de MacBook Pro et
 //! un faux écran 1080p ; `intro_played_for_real` la joue à 24 i/s par le code de l'app et dit ce
-//! qu'elle a montré et ce qu'elle a pesé.
+//! qu'elle a montré et ce qu'elle a pesé. Ses gestes (`gesture_portraits`) : tenue en l'air, sa
+//! mèche et le curseur marqués ; lancée ; elle se relève ; elle sourit ; elle marche ; son éclat
+//! assise ; ses clignements glitchés.
 
 use std::path::{Path, PathBuf};
 use std::time::Instant;
@@ -31,9 +33,11 @@ const HEIGHT: f32 = 600.0;
 const DESK: [u8; 4] = [38, 44, 62, 255];
 const WINDOW: [u8; 4] = [236, 238, 242, 255];
 const TITLE: [u8; 4] = [214, 216, 222, 255];
-/// Les repères tracés sur les superpositions : la ligne de ses pieds, le haut de ses cheveux.
+/// Les repères tracés sur les superpositions : la ligne de ses pieds, le haut de ses cheveux ; et,
+/// tenue en l'air, le curseur (en jaune) et sa mèche (le point bleu).
 const FEET_MARK: [u8; 4] = [255, 64, 64, 255];
 const TOP_MARK: [u8; 4] = [64, 200, 255, 255];
+const CURSOR_MARK: [u8; 4] = [255, 220, 0, 255];
 
 /// Un pinceau : de quoi peindre des rectangles pleins avec le même rendu qu'elle.
 struct Scene {
@@ -44,6 +48,7 @@ struct Scene {
     title: ImageId,
     feet_mark: ImageId,
     top_mark: ImageId,
+    cursor_mark: ImageId,
     size: (u32, u32),
 }
 
@@ -69,8 +74,8 @@ impl Scene {
             offscreen.add_image(SpriteImage { width: 1, height: 1, rgba: &color }).expect("une couleur")
         };
         let (desk, window, title) = (plain(DESK), plain(WINDOW), plain(TITLE));
-        let (feet_mark, top_mark) = (plain(FEET_MARK), plain(TOP_MARK));
-        Scene { offscreen, figure, desk, window, title, feet_mark, top_mark, size }
+        let (feet_mark, top_mark, cursor_mark) = (plain(FEET_MARK), plain(TOP_MARK), plain(CURSOR_MARK));
+        Scene { offscreen, figure, desk, window, title, feet_mark, top_mark, cursor_mark, size }
     }
 
     fn rect(id: ImageId, rect: Rect) -> (ImageId, SpriteDraw) {
@@ -177,7 +182,7 @@ fn portraits() {
     let mut stood = Vec::new();
     for (frame, talking) in [(0, false), (28, false), (6, true), (10, true), (12, true), (40, false)] {
         c.step(0.0, frame);
-        scene.figure.look.update(&c, frame, talking, false);
+        scene.figure.look.update(&mut c, frame, talking, false);
         stood.push(scene.render(None, &[scene.figure.look.picture(&c)]));
     }
     save(&dir, "debout.png", &stood[0], size);
@@ -193,7 +198,7 @@ fn portraits() {
     for (frame, talking) in [(0, false), (28, false), (0, true), (2, true), (4, true), (6, true), (10, true)]
     {
         c.step(0.0, frame);
-        scene.figure.look.update(&c, frame, talking, false);
+        scene.figure.look.update(&mut c, frame, talking, false);
         let picture = scene.figure.look.picture(&c);
         let s = picture.rect.size.y / sheets::CELL_HEIGHT as f32;
         let center = picture.rect.min + Vec2::new(66.0 * s, 124.0 * s);
@@ -211,7 +216,7 @@ fn portraits() {
     let mut mouths = Vec::new();
     for (frame, talking) in [(0, false), (0, true), (2, true), (4, true), (6, true), (10, true)] {
         c.step(0.0, frame);
-        zoomed.figure.look.update(&c, frame, talking, false);
+        zoomed.figure.look.update(&mut c, frame, talking, false);
         let picture = zoomed.figure.look.picture(&c);
         let s = picture.rect.size.y / sheets::CELL_HEIGHT as f32;
         let center = picture.rect.min + Vec2::new(66.0 * s, 124.0 * s);
@@ -227,12 +232,12 @@ fn portraits() {
     c.step(0.0, 50);
     let grip = c.position() + Vec2::new(100.0, 300.0);
     c.grab(grip, 0.0);
-    scene.figure.look.update(&c, 50, false, false);
+    scene.figure.look.update(&mut c, 50, false, false);
     let held = scene.render(None, &[scene.figure.look.picture(&c)]);
     c.drag_to(grip + Vec2::new(-200.0, -10.0), 0.04);
     c.release(0.05);
     c.step(1.0 / 120.0, 51);
-    scene.figure.look.update(&c, 51, false, false);
+    scene.figure.look.update(&mut c, 51, false, false);
     let thrown = scene.render(None, &[scene.figure.look.picture(&c)]);
     let (sheet, sheet_size) = contact(&[held, thrown], size, 2);
     save(&dir, "tenue-et-lancee.png", &sheet, sheet_size);
@@ -243,10 +248,10 @@ fn perched(scene: &mut Scene, window: Rect, seat: Vec2, from: u64) -> Capri {
     let mut c = capri(&scene.figure, scene.size, seat - Vec2::new(0.0, 4.0));
     c.step(0.0, from);
     // comme dans l'app : elle n'était pas posée juste avant (lâchée près du bord)
-    scene.figure.look.update(&c, from, false, false);
+    scene.figure.look.update(&mut c, from, false, false);
     let spot = Spot { window: 1, along: seat.x - window.min.x, left: window.min.x, width: window.size.x };
     c.land(Perch { spot, feet: seat });
-    scene.figure.look.update(&c, from, false, false);
+    scene.figure.look.update(&mut c, from, false, false);
     c
 }
 
@@ -274,7 +279,7 @@ fn seated_portraits() {
         (since + 100, false, true),
     ] {
         c.step(0.0, frame);
-        scene.figure.look.update(&c, frame, talking, music);
+        scene.figure.look.update(&mut c, frame, talking, music);
         seated.push(scene.render(Some(window), &[scene.figure.look.picture(&c)]));
     }
     save(&dir, "assise.png", &seated[0], size);
@@ -287,20 +292,20 @@ fn seated_portraits() {
     let mut frames = Vec::new();
     for frame in (1000..1000 + since).step_by(2) {
         c.step(0.0, frame);
-        scene.figure.look.update(&c, frame, false, false);
+        scene.figure.look.update(&mut c, frame, false, false);
         frames.push(scene.render(Some(window), &[scene.figure.look.picture(&c)]));
     }
     let (sheet, sheet_size) = contact(&frames, size, 7);
     save(&dir, "arrivee.png", &sheet, sheet_size);
     let left = 2000;
     c.step(0.0, left);
-    scene.figure.look.update(&c, left, false, false);
+    scene.figure.look.update(&mut c, left, false, false);
     c.take_off();
-    scene.figure.look.update(&c, left, false, false);
+    scene.figure.look.update(&mut c, left, false, false);
     let mut frames = Vec::new();
     for frame in (left..left + sheets::leaving().len() + 4).step_by(2) {
         c.step(0.0, frame);
-        scene.figure.look.update(&c, frame, false, false);
+        scene.figure.look.update(&mut c, frame, false, false);
         frames.push(scene.render(Some(window), &[scene.figure.look.picture(&c)]));
     }
     let (sheet, sheet_size) = contact(&frames, size, 7);
@@ -314,12 +319,12 @@ fn seated_portraits() {
     let standing = {
         let mut c = capri(&scene.figure, wide, Vec2::new(330.0, window.min.y));
         c.step(0.0, 24); // au plus bas de son flottement : ses pieds sur le bord
-        scene.figure.look.update(&c, 24, false, false);
+        scene.figure.look.update(&mut c, 24, false, false);
         scene.figure.look.picture(&c)
     };
     let mut c = perched(&mut scene, window, Vec2::new(1000.0, window.min.y), 0);
     c.step(0.0, since + 24);
-    scene.figure.look.update(&c, since + 24, false, false);
+    scene.figure.look.update(&mut c, since + 24, false, false);
     let sitting = scene.figure.look.picture(&c);
     let both = scene.render(Some(window), &[standing, sitting]);
     save(&dir, "cote-a-cote.png", &both, wide);
@@ -386,12 +391,12 @@ fn without_her_sheets_or_refused_she_falls_back_to_her_old_drawing() {
     assert!(!figure.look.has_stand() && !figure.look.has_perch() && !figure.look.has_life());
     let mut c = capri(&figure, (900, 900), Vec2::new(450.0, 800.0));
     c.step(0.0, 10);
-    figure.look.update(&c, 10, true, true);
+    figure.look.update(&mut c, 10, true, true);
     assert_eq!(figure.look.picture(&c).drawing, Drawing::Cutout);
     // posée : debout sur le bord, toujours son dessin d'avant
     let spot = Spot { window: 1, along: 100.0, left: 350.0, width: 400.0 };
     c.land(Perch { spot, feet: Vec2::new(450.0, 800.0) });
-    figure.look.update(&c, 11, false, true);
+    figure.look.update(&mut c, 11, false, true);
     assert_eq!(figure.look.picture(&c).drawing, Drawing::Cutout);
     assert!(!figure.look.wants_music(&c));
     // sans planches du tout : pareil
@@ -516,6 +521,199 @@ fn superposition(scene: &mut Scene, life: Picture, standing: Picture) -> (Vec<u8
     );
     let cropped: Vec<Vec<u8>> = panels.iter().map(|panel| crop(panel, scene.size.0, at, crop_size)).collect();
     contact(&cropped, crop_size, 3)
+}
+
+/// Une croix de `color` (une image de `Scene`) centrée en `at`, de `arm` pixels de chaque côté.
+fn cross(id: ImageId, at: Vec2, arm: f32) -> [(ImageId, SpriteDraw); 2] {
+    [
+        Scene::rect(id, Rect::new(Vec2::new(at.x - arm, at.y - 1.0), Vec2::new(2.0 * arm, 2.0))),
+        Scene::rect(id, Rect::new(Vec2::new(at.x - 1.0, at.y - arm), Vec2::new(2.0, 2.0 * arm))),
+    ]
+}
+
+/// Ses gestes, image par image (un dessin sur deux images, trois pour son sourire) : tenue en
+/// l'air (le curseur en croix jaune, sa mèche en croix bleue, qui se rejoignent à mesure que le
+/// curseur bouge, et se recouvrent à la fin), lancée,
+/// elle se relève (puis sa boucle : la coupe, superposée), elle sourit, elle marche (sur place
+/// dans la planche, et sa position qui avance), son éclat assise, ses clignements glitchés.
+#[test]
+#[ignore = "écrit des images PNG dans CAPRI_PORTRAITS_DIR, avec les vraies planches et la vraie carte graphique"]
+fn gesture_portraits() {
+    use capri_core::look::Gesture;
+    use capri_core::sheets::life;
+
+    let dir = directory();
+    let size = (900, 900);
+    let mut scene = Scene::new(size, HEIGHT);
+    let look = &scene.figure.look;
+    assert!(
+        life::Strip::MOVES.iter().all(|&strip| look.has_move(strip)) && look.can(Gesture::PerchGlitch),
+        "il faut les planches de ses gestes"
+    );
+
+    // tenue en l'air, prise par la taille : son corps ne bouge pas à la prise ; puis le curseur
+    // monte, puis va à droite, et elle glisse jusqu'à avoir sa mèche sous lui (une image sur quatre)
+    let feet = Vec2::new(450.0, 820.0);
+    let mut c = capri(&scene.figure, size, feet);
+    c.step(0.0, 0);
+    scene.figure.look.update(&mut c, 0, false, false);
+    let mut cursor = c.position() + Vec2::new(c.size().x * 0.5, c.size().y * 0.5);
+    let grab = capri_core::input::Grab { at: cursor, since: 0.0, trail: Vec::new() };
+    assert!(scene.figure.look.hold(&mut c, &grab));
+    let mut held = Vec::new();
+    for frame in 1..97u64 {
+        cursor += if frame <= 48 { Vec2::new(0.0, -6.0) } else { Vec2::new(6.0, 0.0) };
+        c.drag_to(cursor, frame as f64 / 24.0);
+        let picture = step(&mut scene, &mut c, frame);
+        let grip = scene.figure.look.grip(&c).expect("elle pend");
+        if frame % 4 == 1 || frame == 96 {
+            let mut layers = vec![Scene::rect(scene.desk, Rect::new(Vec2::ZERO, Vec2::new(900.0, 900.0)))];
+            layers.extend(scene.figure.layers(&picture));
+            layers.extend(cross(scene.cursor_mark, cursor, 14.0));
+            layers.extend(cross(scene.top_mark, grip, 6.0));
+            held.push(scene.offscreen.render(&layers, None).expect("rendue"));
+        }
+        if frame == 1 || frame == 96 {
+            println!(
+                "tenue, image {frame} : sa mèche en ({:.1}, {:.1}), le curseur en ({:.1}, {:.1})",
+                grip.x, grip.y, cursor.x, cursor.y
+            );
+        }
+    }
+    save(&dir, "geste-tenue.png", held.last().expect("rendue"), size);
+    let (sheet, sheet_size) = contact(&held, size, 6);
+    save(&dir, "geste-tenue-planche.png", &sheet, sheet_size);
+    // lancée vers la gauche : étirée dans le sens de sa course, toujours en l'air
+    c.drag_to(cursor + Vec2::new(-200.0, 0.0), 96.0 / 24.0 + 0.04);
+    c.release(96.0 / 24.0 + 0.05);
+    let thrown = step(&mut scene, &mut c, 97);
+    let flying = scene.render(None, &[thrown]);
+    let (sheet, sheet_size) = contact(&[held.last().expect("rendue").clone(), flying], size, 2);
+    save(&dir, "geste-tenue-et-lancee.png", &sheet, sheet_size);
+
+    // lâchée doucement : elle se relève, puis sa boucle
+    let mut c = capri(&scene.figure, size, feet);
+    c.step(0.0, 100);
+    scene.figure.look.update(&mut c, 100, false, false);
+    let grip_at = c.position() + Vec2::new(100.0, 100.0);
+    let grab = capri_core::input::Grab { at: grip_at, since: 0.0, trail: Vec::new() };
+    assert!(scene.figure.look.hold(&mut c, &grab));
+    step(&mut scene, &mut c, 101);
+    c.release(100.0);
+    let mut rise = Vec::new();
+    let mut last = None;
+    for frame in (102..102 + Gesture::Rise.frames()).step_by(2) {
+        let picture = step(&mut scene, &mut c, frame);
+        last = Some(picture);
+        rise.push(scene.render(None, &[picture]));
+    }
+    let (sheet, sheet_size) = contact(&rise, size, 5);
+    save(&dir, "geste-se-releve.png", &sheet, sheet_size);
+    let after = step(&mut scene, &mut c, 102 + Gesture::Rise.frames());
+    let cut = superposition(&mut scene, last.expect("ses dessins"), after);
+    save(&dir, "geste-se-releve-superposition.png", &cut.0, cut.1);
+
+    // un clic : elle sourit, deux tours, un dessin sur trois images
+    let mut c = capri(&scene.figure, size, feet);
+    c.step(0.0, 300);
+    scene.figure.look.update(&mut c, 300, false, false);
+    assert_eq!(scene.figure.look.poke(&mut c, 300), Some(Gesture::Grin));
+    let mut grin = Vec::new();
+    for frame in (300..348).step_by(3) {
+        let picture = step(&mut scene, &mut c, frame);
+        grin.push(scene.render(None, &[picture]));
+    }
+    let (sheet, sheet_size) = contact(&grin, size, 8);
+    save(&dir, "geste-sourit.png", &sheet, sheet_size);
+    let last = step(&mut scene, &mut c, 300 + Gesture::Grin.frames() - 1);
+    let after = step(&mut scene, &mut c, 300 + Gesture::Grin.frames());
+    let cut = superposition(&mut scene, last, after);
+    save(&dir, "geste-sourit-superposition.png", &cut.0, cut.1);
+
+    // elle marche vers la gauche : ses douze dessins, puis là où elle est toutes les 6 images
+    let wide = (1800, 900);
+    let mut street = Scene::new(wide, HEIGHT);
+    let mut c = capri(&street.figure, wide, Vec2::new(1500.0, 820.0));
+    c.step(0.0, 500);
+    street.figure.look.update(&mut c, 500, false, false);
+    let to = c.feet().x - 1000.0;
+    assert!(street.figure.look.walk(&mut c, 500, to));
+    let speed = street.figure.look.walk_speed().expect("sa planche de marche");
+    let mut drawings = Vec::new();
+    let mut steps = Vec::new();
+    let mut frame = 500;
+    while c.is_walking() && frame < 524 {
+        c.step(1.0 / 24.0, frame);
+        street.figure.look.update(&mut c, frame, false, false);
+        let picture = street.figure.look.picture(&c);
+        if (frame - 500) % 2 == 0 {
+            drawings.push(street.render(None, &[picture]));
+        }
+        if (frame - 500) % 6 == 0 {
+            steps.push(picture);
+        }
+        frame += 1;
+    }
+    let small = drawings.iter().map(|image| crop(image, wide.0, (1100, 100), (500, 800))).collect::<Vec<_>>();
+    let (sheet, sheet_size) = contact(&small, (500, 800), 6);
+    save(&dir, "geste-marche.png", &sheet, sheet_size);
+    let trail = street.render(None, &steps);
+    save(&dir, "geste-marche-trajet.png", &trail, wide);
+    println!("marche : {speed:.1} px par seconde, {:.1} px par pas", life::WALK_STEP * stand::scale(HEIGHT));
+
+    // assise : son éclat, puis sa boucle
+    let window = Rect::new(Vec2::new(140.0, 480.0), Vec2::new(640.0, 420.0));
+    let seat = Vec2::new(430.0, window.min.y);
+    let mut c = perched(&mut scene, window, seat, 2000);
+    let since = 2000 + sheets::arriving().len();
+    step(&mut scene, &mut c, since + 10);
+    assert_eq!(scene.figure.look.poke(&mut c, since + 10), Some(Gesture::PerchGlitch));
+    let mut glitch = Vec::new();
+    for frame in (since + 10..since + 10 + Gesture::PerchGlitch.frames() + 2).step_by(2) {
+        let picture = step(&mut scene, &mut c, frame);
+        glitch.push(scene.render(Some(window), &[picture]));
+    }
+    let (sheet, sheet_size) = contact(&glitch, size, 6);
+    save(&dir, "geste-eclat-assise.png", &sheet, sheet_size);
+
+    // ses clignements glitchés : debout puis assise, au tour 5 (les dessins 24 à 31 debout, 28 à 35
+    // assise), et le clignement ordinaire du tour 0 à côté ; une scène neuve, son dessin repartant
+    // de zéro
+    let mut scene = Scene::new(size, HEIGHT);
+    let mut c = capri(&scene.figure, size, feet);
+    let mut faces = Vec::new();
+    for tour in [0u64, 5] {
+        for drawing in [24u64, 26, 28, 30] {
+            let picture = step(&mut scene, &mut c, tour * 60 + drawing);
+            let s = picture.rect.size.y / sheets::CELL_HEIGHT as f32;
+            let center = picture.rect.min + Vec2::new(66.0 * s, 124.0 * s);
+            let image = scene.render(None, &[picture]);
+            faces.push(crop(
+                &image,
+                size.0,
+                ((center.x - 150.0) as u32, (center.y - 150.0) as u32),
+                (300, 300),
+            ));
+        }
+    }
+    let mut c = perched(&mut scene, window, seat, 3000);
+    let since = 3000 + sheets::arriving().len();
+    for tour in [0u64, 5] {
+        for drawing in [28u64, 30, 32, 34] {
+            let picture = step(&mut scene, &mut c, since + tour * 60 + drawing);
+            let s = picture.rect.size.y / sheets::CELL_HEIGHT as f32;
+            let center = picture.rect.min + Vec2::new(134.0 * s, 160.0 * s);
+            let image = scene.render(Some(window), &[picture]);
+            faces.push(crop(
+                &image,
+                size.0,
+                ((center.x - 150.0) as u32, (center.y - 150.0) as u32),
+                (300, 300),
+            ));
+        }
+    }
+    let (sheet, sheet_size) = contact(&faces, (300, 300), 8);
+    save(&dir, "geste-clignements.png", &sheet, sheet_size);
 }
 
 impl crate::intro_view::Canvas for Offscreen {

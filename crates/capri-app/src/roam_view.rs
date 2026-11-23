@@ -150,16 +150,16 @@ fn tell(event: Event) -> Option<(&'static str, Tone)> {
     let benches =
         |count: usize| format!("{count} {}", if count <= 1 { "bord possible" } else { "bords possibles" });
     match event {
-        Event::Leaves { to, benches: count, asked } => {
+        Event::Leaves { to, benches: count, asked, walking } => {
             let seated = matches!(to, Choice::Ledge(_));
             log::info!(
                 "elle change de place{} : {}, {}",
                 if asked { " (demandé)" } else { "" },
                 benches(count),
-                if seated {
-                    "elle va s'asseoir sur l'un d'eux"
-                } else {
-                    "elle va se tenir debout en bas de l'écran"
+                match (seated, walking) {
+                    (true, _) => "elle va s'asseoir sur l'un d'eux",
+                    (false, true) => "elle va en marchant ailleurs en bas de l'écran",
+                    (false, false) => "elle va se tenir debout en bas de l'écran",
                 }
             );
             None
@@ -187,12 +187,20 @@ fn tell(event: Event) -> Option<(&'static str, Tone)> {
             log::debug!("on lui parle en chemin : elle revient sur ses pas");
             None
         }
+        Event::Halted => {
+            log::debug!("on lui parle pendant qu'elle marche : elle s'arrête là");
+            None
+        }
+        Event::Fidgeted => {
+            log::debug!("assise, un éclat");
+            None
+        }
         Event::Refused(hold) => {
             log::debug!("elle ne change pas de place : {}", hold.describe());
             match hold {
                 Hold::Talking => Some(("Pas pendant qu'on se parle", Tone::Done)),
                 Hold::Music => Some(("Pas maintenant, j'écoute ta musique", Tone::Done)),
-                Hold::Carried | Hold::Away => None,
+                Hold::Carried | Hold::Away | Hold::Walking => None,
             }
         }
     }
@@ -204,8 +212,14 @@ mod tests {
 
     #[test]
     fn she_only_speaks_when_asked_and_unable() {
-        assert_eq!(tell(Event::Leaves { to: Choice::Floor(Vec2::ZERO), benches: 4, asked: true }), None);
+        assert_eq!(
+            tell(Event::Leaves { to: Choice::Floor(Vec2::ZERO), benches: 4, asked: true, walking: true }),
+            None
+        );
         assert_eq!(tell(Event::TurnedBack), None);
+        assert_eq!(tell(Event::Halted), None);
+        assert_eq!(tell(Event::Fidgeted), None);
+        assert_eq!(tell(Event::Refused(Hold::Walking)), None, "elle arrive bientôt");
         assert_eq!(tell(Event::Arrived { seated: false, lost: true }), None);
         assert_eq!(tell(Event::Stays { benches: 0, asked: false }), None, "d'elle-même, sans un mot");
         assert!(tell(Event::Stays { benches: 1, asked: true }).is_some());

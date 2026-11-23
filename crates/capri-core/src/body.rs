@@ -21,6 +21,10 @@ pub enum Stance {
     /// Posée sur le bord supérieur d'une fenêtre (`spot` dit laquelle et où, voir
     /// [`crate::perch`]), le point posé sur le bord en `seat` : elle ne flotte plus, et suit le bord.
     Perched { spot: Spot, seat: Vec2 },
+    /// Elle marche, ses pieds vers `to` (en x), à `speed` pixels par seconde, à la cadence de
+    /// l'écran ; arrivée, elle flotte de nouveau. Son flottement reste à la hauteur où il était
+    /// (`look` arrête son tour le temps de la marche).
+    Walking { to: f32, speed: f32 },
 }
 
 /// Ce que le rendu doit dessiner à une image donnée.
@@ -70,6 +74,9 @@ const BOUNCE: f32 = 0.6;
 const SQUASH_FRAMES: u64 = 4;
 /// Fenêtre de temps (s) pour mesurer la vitesse du lancer.
 const VELOCITY_WINDOW: f64 = 0.08;
+/// Tenue, elle glisse vers l'écart voulu ([`Capri::hold_toward`]) de cette part du chemin du
+/// curseur à chaque pas, au plus : elle le suit toujours d'au moins l'autre moitié.
+const TOWARD: f32 = 0.5;
 /// Elle se pose sur un bord : écrasée sur ses pieds (3 images), un rebond étiré (2 images), puis
 /// immobile. Échelles (largeur, hauteur), tenues un nombre entier d'images, ancrées à ses pieds.
 const LANDING: [((f32, f32), u32); 2] = [((1.14, 0.84), 3), ((0.95, 1.06), 2)];
@@ -124,6 +131,9 @@ pub struct Capri {
     leave_frames: u64,
     /// Son tour, qui s'arrête le temps qu'elle apparaisse ou s'efface ([`Capri::still`]).
     tour: Tour,
+    /// Tenue : l'écart entre le curseur et son coin haut gauche vers lequel elle glisse à mesure
+    /// que le curseur bouge ([`Capri::hold_toward`]) ; aucun, elle garde l'écart de la prise.
+    toward: Option<Vec2>,
 }
 
 impl Capri {
@@ -142,6 +152,7 @@ impl Capri {
             samples: VecDeque::new(),
             leave_frames: 0,
             tour: Tour { at: 0, from: 0 },
+            toward: None,
         };
         capri.clamp();
         capri
@@ -260,6 +271,31 @@ impl Capri {
         self.samples.clear();
     }
 
+    /// Elle marche jusqu'à ce que ses pieds soient en x = `to`, à `speed` pixels par seconde, à la
+    /// hauteur où elle est. Seulement si elle flotte : rend `false` sinon, et rien ne change.
+    pub fn walk_to(&mut self, to: f32, speed: f32) -> bool {
+        if self.stance != Stance::Floating || speed.is_nan() || speed <= 0.0 || !to.is_finite() {
+            return false;
+        }
+        self.stance = Stance::Walking { to, speed };
+        self.squash = None;
+        self.gesture = None;
+        self.samples.clear();
+        true
+    }
+
+    /// Marche-t-elle ?
+    pub fn is_walking(&self) -> bool {
+        matches!(self.stance, Stance::Walking { .. })
+    }
+
+    /// Elle s'arrête là où elle est, et flotte. Sans effet si elle ne marche pas.
+    pub fn halt(&mut self) {
+        if self.is_walking() {
+            self.stance = Stance::Floating;
+        }
+    }
+
     /// Elle quitte son bord et se remet à flotter sur place, avec un petit étirement une fois son
     /// départ joué ([`Capri::set_leave_frames`]). Sans effet si elle n'est pas posée.
     pub fn take_off(&mut self) {
@@ -276,11 +312,13 @@ impl Capri {
         self.clamp();
     }
 
-    /// Nouvelle taille, en gardant ses pieds au même endroit.
+    /// Nouvelle taille, en gardant ses pieds au même endroit. En marche, elle s'arrête là : sa
+    /// vitesse était celle de son ancienne taille.
     pub fn set_size(&mut self, size: Vec2) {
         let feet = self.feet();
         self.size = size;
         self.place_feet(feet);
+        self.halt();
     }
 
     /// On l'attrape avec le curseur en `cursor` à l'instant `t` (secondes), debout, son image
@@ -292,21 +330,45 @@ impl Capri {
         self.grab(cursor, t);
     }
 
-    /// On l'attrape avec le curseur en `cursor` à l'instant `t` (secondes). Si son tour était
-    /// arrêté (elle apparaissait), il reprend.
+    /// On l'attrape avec le curseur en `cursor` à l'instant `t` (secondes), là où elle est : son
+    /// corps ne bouge pas. Si son tour était arrêté (elle apparaissait), il reprend ; si elle
+    /// rebondissait, elle n'est plus écrasée.
     pub fn grab(&mut self, cursor: Vec2, t: f64) {
         self.unstill();
         self.stance = Stance::Held { grab: cursor - self.pos };
+        self.squash = None;
         self.gesture = None;
+        self.toward = None;
         self.samples.clear();
         self.samples.push_back((t, cursor));
     }
 
+    /// Tenue, elle glisse vers l'écart `offset` entre le curseur et son coin haut gauche (sa mèche
+    /// sous le curseur), à mesure que le curseur bouge : à chaque pas, l'écart se réduit au plus de
+    /// la moitié du chemin du curseur ([`TOWARD`]), et elle le suit toujours de l'autre moitié au
+    /// moins ; curseur immobile, elle ne bouge pas. Et le bord de l'écran ne la retient jamais
+    /// au-delà : dès que le curseur s'en éloigne, elle le suit. Sans effet si on ne la tient pas.
+    pub fn hold_toward(&mut self, offset: Vec2) {
+        if self.is_held() {
+            self.toward = Some(offset);
+        }
+    }
+
     /// Le curseur bouge pendant qu'on la tient.
     pub fn drag_to(&mut self, cursor: Vec2, t: f64) {
-        let Stance::Held { grab } = self.stance else { return };
+        let Stance::Held { mut grab } = self.stance else { return };
+        if let (Some(toward), Some(&(_, last))) = (self.toward, self.samples.back()) {
+            let gap = toward - grab;
+            let (room, length) = ((cursor - last).length() * TOWARD, gap.length());
+            grab += if length <= room { gap } else { gap * (room / length) };
+        }
         self.pos = cursor - grab;
         self.clamp();
+        if self.toward.is_some() {
+            // le bord l'arrête : l'écart suit, pour qu'elle reparte dès que le curseur s'en éloigne
+            grab = cursor - self.pos;
+        }
+        self.stance = Stance::Held { grab };
         self.samples.push_back((t, cursor));
         while self.samples.len() > 2 && self.samples[1].0 < t - VELOCITY_WINDOW {
             self.samples.pop_front();
@@ -341,6 +403,9 @@ impl Capri {
         if self.gesture.is_some_and(|(start, _)| frame >= start) && self.gesture_scale().is_none() {
             self.gesture = None;
         }
+        if let Stance::Walking { to, speed } = self.stance {
+            return self.walk(to, speed * dt.max(0.0));
+        }
         let Stance::Thrown { mut vel } = self.stance else { return };
 
         self.pos += vel * dt;
@@ -362,6 +427,23 @@ impl Capri {
             if vel.length() < STOP_BELOW * self.size.y { Stance::Floating } else { Stance::Thrown { vel } };
     }
 
+    /// Un pas de sa marche : ses pieds avancent de `step` pixels vers `to`, sans le dépasser ; elle
+    /// flotte de nouveau une fois arrivée, ou si le bord de l'écran l'arrête.
+    fn walk(&mut self, to: f32, step: f32) {
+        let gap = to - self.standing_feet().x;
+        let before = self.pos.x;
+        if gap.abs() <= step {
+            self.pos.x += gap;
+        } else {
+            self.pos.x += step * gap.signum();
+        }
+        self.clamp();
+        let moved = (self.pos.x - before).abs();
+        if gap.abs() <= step || moved + 1e-3 < step.min(gap.abs()) {
+            self.stance = Stance::Floating;
+        }
+    }
+
     /// La pose à dessiner pour l'image courante. Tant qu'elle flotte, la pose ne change
     /// qu'avec les dessins : inutile de redessiner entre deux.
     pub fn pose(&self) -> Pose {
@@ -372,7 +454,8 @@ impl Capri {
         let mut ghost = Vec2::new(4.0, 3.0) * unit;
 
         match self.stance {
-            Stance::Floating => offset.y = self.float.at(self.tour()) * self.size.y,
+            // en marche, son tour est arrêté : elle garde la hauteur de son flottement
+            Stance::Floating | Stance::Walking { .. } => offset.y = self.float.at(self.tour()) * self.size.y,
             // posée : immobile, seul son trait continue de bouillir
             Stance::Held { .. } | Stance::Perched { .. } => {}
             Stance::Thrown { vel } => {
@@ -597,9 +680,72 @@ mod tests {
         assert_eq!(c.position(), Vec2::new(880.0, 600.0));
         c.drag_to(Vec2::new(960.0, 720.0), 0.1);
         assert_eq!(c.position(), Vec2::new(890.0, 600.0), "elle suit le curseur d'où on l'a prise");
-        // jamais hors de l'écran
+        // jamais hors de l'écran, et elle suit le curseur tout de suite (comme avant sa planche
+        // en l'air)
         c.grab_at(Vec2::new(10.0, 10.0), Vec2::new(-500.0, -500.0), 0.2);
         assert_eq!(c.position(), Vec2::ZERO);
+        c.drag_to(Vec2::new(11.0, 12.0), 0.3);
+        assert_eq!(c.position(), Vec2::new(1.0, 2.0));
+    }
+
+    #[test]
+    fn held_toward_her_grip_she_glides_with_the_cursor_and_never_waits_at_an_edge() {
+        // debout au bas de l'écran, prise aux pieds ; sa mèche est à (124, 58) de son coin
+        let screen = Rect::new(Vec2::ZERO, Vec2::new(1920.0, 2000.0));
+        let size = Vec2::new(200.0, 664.0);
+        let mut c = Capri::new(size, screen, Vec2::new(800.0, 2000.0 - 664.0));
+        let start = c.position();
+        let cursor = start + Vec2::new(100.0, 630.0);
+        let grip = Vec2::new(124.0, 58.0);
+        c.grab(cursor, 0.0);
+        c.hold_toward(grip);
+        assert_eq!(c.position(), start, "à la prise, son corps ne bouge pas");
+        // curseur immobile : rien ne bouge
+        c.drag_to(cursor, 0.05);
+        assert_eq!(c.position(), start);
+        // le curseur monte : elle monte aussitôt, d'au moins la moitié du chemin, et sa mèche
+        // s'approche du curseur
+        let mut cursor = cursor;
+        let mut gap = (cursor - (c.position() + grip)).length();
+        for step in 1..=400 {
+            let before = c.position();
+            cursor += Vec2::new(0.0, -3.0);
+            c.drag_to(cursor, 0.05 + f64::from(step) * 0.01);
+            let moved = before.y - c.position().y;
+            assert!(moved >= 1.5 - 1e-3, "pas {step} : elle n'a monté que de {moved}");
+            let now = (cursor - (c.position() + grip)).length();
+            assert!(now <= gap + 1e-3, "pas {step} : sa mèche s'éloigne ({gap} → {now})");
+            gap = now;
+        }
+        assert!(gap < 1e-3, "sa mèche sous le curseur : {gap}");
+        // poussée contre le haut de l'écran, puis le curseur redescend : elle suit aussitôt
+        for step in 0..100 {
+            cursor += Vec2::new(0.0, -10.0);
+            c.drag_to(cursor, 5.0 + f64::from(step) * 0.01);
+        }
+        assert_eq!(c.position().y, 0.0);
+        let top = c.position();
+        c.drag_to(cursor + Vec2::new(0.0, 4.0), 6.5);
+        assert!(c.position().y > top.y, "elle redescend dès le premier pas");
+        // une nouvelle prise oublie l'écart voulu : son corps ne bouge plus vers la mèche
+        let here = c.position();
+        let at = here + Vec2::new(50.0, 500.0);
+        c.grab(at, 7.0);
+        c.drag_to(at + Vec2::new(0.0, 40.0), 7.1);
+        assert_eq!(c.position(), here + Vec2::new(0.0, 40.0));
+    }
+
+    #[test]
+    fn a_new_size_stops_her_walk_where_she_is() {
+        let mut c = capri();
+        c.step(0.0, 0);
+        let feet = c.feet();
+        assert!(c.walk_to(feet.x - 300.0, 100.0));
+        c.step(0.5, 1);
+        let walked = c.feet();
+        c.set_size(Vec2::new(240.0, 450.0));
+        assert_eq!(c.stance(), Stance::Floating);
+        assert_eq!(c.feet(), walked, "ses pieds là où ils étaient");
     }
 
     #[test]
@@ -711,6 +857,59 @@ mod tests {
         // jamais hors de l'écran
         c.set_at(Vec2::new(5000.0, 5000.0));
         assert_eq!(c.position(), Vec2::new(1920.0 - 160.0, 1080.0 - 300.0));
+    }
+
+    #[test]
+    fn she_walks_to_where_she_goes_at_her_speed_then_floats() {
+        let mut c = capri();
+        c.set_feet(Vec2::new(0.5, 1.0));
+        c.step(0.0, 0);
+        let feet = c.feet();
+        assert!(c.walk_to(feet.x - 100.0, 60.0));
+        assert!(c.is_walking() && !c.is_held());
+        // une seconde à 60 pas : 60 px, à la hauteur où elle était
+        for frame in 1..=60 {
+            c.step(1.0 / 60.0, frame);
+        }
+        assert!((c.feet().x - (feet.x - 60.0)).abs() < 0.01, "{:?}", c.feet());
+        assert_eq!(c.feet().y, feet.y);
+        assert!(c.is_walking());
+        // elle ne dépasse pas là où elle va
+        c.step(1.0, 61);
+        assert_eq!(c.feet().x, feet.x - 100.0);
+        assert_eq!(c.stance(), Stance::Floating);
+        // déjà en marche, ou pas en flottant : refusé
+        assert!(c.walk_to(feet.x, 60.0));
+        assert!(!c.walk_to(feet.x - 10.0, 60.0), "déjà en marche");
+        c.halt();
+        assert_eq!(c.stance(), Stance::Floating, "elle s'arrête là où elle est");
+        assert!(!c.walk_to(feet.x, 0.0) && !c.walk_to(f32::NAN, 60.0));
+        c.grab(Vec2::new(850.0, 500.0), 0.0);
+        assert!(!c.walk_to(feet.x, 60.0), "tenue");
+        // attrapée en marche : elle ne marche plus
+        c.release(0.01);
+        assert!(c.walk_to(feet.x - 50.0, 60.0));
+        c.grab(Vec2::new(850.0, 500.0), 1.0);
+        assert!(c.is_held() && !c.is_walking());
+    }
+
+    #[test]
+    fn walking_she_keeps_the_height_of_her_float_and_stops_at_the_edge_of_the_screen() {
+        let mut c = capri();
+        c.step(0.0, 30);
+        c.still(None);
+        let floating = c.pose().rect;
+        assert!(c.walk_to(-500.0, 600.0));
+        c.step(0.05, 31);
+        let walking = c.pose().rect;
+        assert_eq!(walking.min.y, floating.min.y, "son flottement arrêté, à la même hauteur");
+        assert_eq!(walking.size, floating.size, "ni écrasée ni étirée");
+        // le bord de l'écran l'arrête : elle flotte de nouveau, là
+        for frame in 32..200 {
+            c.step(0.05, frame);
+        }
+        assert_eq!(c.position().x, 0.0);
+        assert_eq!(c.stance(), Stance::Floating);
     }
 
     #[test]

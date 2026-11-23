@@ -15,6 +15,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 use capri_core::AlphaMask;
+use capri_core::sheets::WrongSize;
 
 /// Le sprite principal : le détourage d'origine, 220 × 420 px.
 const SPRITE: &str = "capri/capri-cutout.png";
@@ -46,6 +47,44 @@ pub fn load_sprite() -> Result<Sprite> {
     }
     log::info!("sprite : {} ({width}×{height})", path.display());
     Ok(Sprite { width, height, rgba, mask })
+}
+
+/// Une planche facultative, lue et remise en grille par `repack` ; `None` si elle est absente,
+/// illisible ou n'a pas la taille attendue (une ligne au journal : `what`, le nom du fichier, des
+/// nombres, et ce que son absence change, `without`). Jamais une panne.
+fn optional(
+    folder: &Path,
+    file: &str,
+    what: &str,
+    without: &str,
+    repack: impl FnOnce(u32, u32, &[u8]) -> Result<Vec<u8>, WrongSize>,
+) -> Option<Vec<u8>> {
+    let path = folder.join(file);
+    if !path.is_file() {
+        log::info!("{what} : {file} absente, {without}");
+        return None;
+    }
+    let image = match image::open(&path) {
+        Ok(image) => image.to_rgba8(),
+        Err(err) => {
+            log::warn!("{what} : {file} illisible ({err}), {without}");
+            return None;
+        }
+    };
+    let (width, height) = image.dimensions();
+    match repack(width, height, image.as_raw()) {
+        Ok(rgba) => Some(rgba),
+        Err(wrong) => {
+            log::warn!(
+                "{what} : {file} mesure {} × {} au lieu de {} × {}, {without}",
+                wrong.found.0,
+                wrong.found.1,
+                wrong.expected.0,
+                wrong.expected.1
+            );
+            None
+        }
+    }
 }
 
 /// Le masque de clic d'une pose : l'union de ses dessins (un pixel compte s'il compte dans au
@@ -84,16 +123,25 @@ pub mod perch {
         pub rgba: Vec<u8>,
     }
 
-    /// Toutes les planches de sa pose assise, chacune à la bonne taille.
+    /// Toutes les planches de sa pose assise, chacune à la bonne taille ; et celles des planches
+    /// facultatives qui sont là.
     pub struct PerchSheets {
-        /// Dans l'ordre de `Strip::ALL`.
+        /// Dans l'ordre de `Strip::SET`.
         strips: Vec<PerchStrip>,
+        /// Parmi `Strip::EXTRA`, celles qui sont là.
+        extras: Vec<PerchStrip>,
     }
 
     impl PerchSheets {
+        /// Une planche de `Strip::SET`.
         pub fn get(&self, strip: Strip) -> &PerchStrip {
             // `load_from` les range toutes, dans l'ordre : la recherche trouve toujours
             self.strips.iter().find(|grid| grid.strip == strip).unwrap_or(&self.strips[0])
+        }
+
+        /// Une planche facultative (`Strip::EXTRA`), si elle est là.
+        pub fn extra(&self, strip: Strip) -> Option<&PerchStrip> {
+            self.extras.iter().find(|grid| grid.strip == strip)
         }
 
         /// Les masques de clic de sa pose assise : l'union des quatre boucles (cases étroites),
@@ -129,14 +177,22 @@ pub mod perch {
     #[cfg(debug_assertions)]
     pub fn present() -> bool {
         super::assets_dir().is_some_and(|dir| {
-            Strip::ALL.iter().all(|strip| dir.join(sheets::DIR).join(strip.file()).is_file())
+            Strip::SET.iter().all(|strip| dir.join(sheets::DIR).join(strip.file()).is_file())
         })
+    }
+
+    /// Ce que l'absence d'une planche facultative change, pour le journal.
+    fn without(strip: Strip) -> &'static str {
+        match strip {
+            Strip::PerchGlitch => "assise, pas d'éclat",
+            _ => "assise, ses clignements d'avant",
+        }
     }
 
     pub(super) fn load_from(dir: &Path) -> Option<PerchSheets> {
         let folder = dir.join(sheets::DIR);
-        let mut strips = Vec::with_capacity(Strip::ALL.len());
-        for strip in Strip::ALL {
+        let mut strips = Vec::with_capacity(Strip::SET.len());
+        for strip in Strip::SET {
             let path = folder.join(strip.file());
             if !path.is_file() {
                 log::info!("pose assise : {} absente, elle reste debout sur les fenêtres", strip.file());
@@ -168,8 +224,16 @@ pub mod perch {
                 }
             }
         }
-        log::info!("pose assise : {} planches", strips.len());
-        Some(PerchSheets { strips })
+        let extras: Vec<PerchStrip> = Strip::EXTRA
+            .into_iter()
+            .filter_map(|strip| {
+                let repack = |width, height, rgba: &[u8]| sheets::repack(strip, width, height, rgba);
+                let rgba = super::optional(&folder, strip.file(), "pose assise", without(strip), repack)?;
+                Some(PerchStrip { strip, width: strip.grid_size().0, rgba })
+            })
+            .collect();
+        log::info!("pose assise : {} planches, et {} facultatives", strips.len(), extras.len());
+        Some(PerchSheets { strips, extras })
     }
 }
 
@@ -190,16 +254,25 @@ pub mod stand {
         pub rgba: Vec<u8>,
     }
 
-    /// Les trois planches de sa pose debout, chacune à la bonne taille.
+    /// Les trois planches de sa pose debout, chacune à la bonne taille ; et la variante de son
+    /// clignement, si elle est là.
     pub struct StandSheets {
-        /// Dans l'ordre de `Strip::ALL`.
+        /// Dans l'ordre de `Strip::SET`.
         strips: Vec<StandStrip>,
+        /// Parmi `Strip::EXTRA`, celles qui sont là.
+        extras: Vec<StandStrip>,
     }
 
     impl StandSheets {
+        /// Une planche de `Strip::SET`.
         pub fn get(&self, strip: Strip) -> &StandStrip {
             // `load_from` les range toutes, dans l'ordre : la recherche trouve toujours
             self.strips.iter().find(|grid| grid.strip == strip).unwrap_or(&self.strips[0])
+        }
+
+        /// Une planche facultative (`Strip::EXTRA`), si elle est là.
+        pub fn extra(&self, strip: Strip) -> Option<&StandStrip> {
+            self.extras.iter().find(|grid| grid.strip == strip)
         }
 
         /// Le masque de clic de sa pose debout : l'union de la boucle et du clignement (sa bouche
@@ -227,14 +300,14 @@ pub mod stand {
     #[cfg(debug_assertions)]
     pub fn present() -> bool {
         super::assets_dir().is_some_and(|dir| {
-            Strip::ALL.iter().all(|strip| dir.join(stand::DIR).join(strip.file()).is_file())
+            Strip::SET.iter().all(|strip| dir.join(stand::DIR).join(strip.file()).is_file())
         })
     }
 
     pub(super) fn load_from(dir: &Path) -> Option<StandSheets> {
         let folder = dir.join(stand::DIR);
-        let mut strips = Vec::with_capacity(Strip::ALL.len());
-        for strip in Strip::ALL {
+        let mut strips = Vec::with_capacity(Strip::SET.len());
+        for strip in Strip::SET {
             let path = folder.join(strip.file());
             if !path.is_file() {
                 log::info!("pose debout : {} absente, elle garde son dessin d'avant", strip.file());
@@ -269,13 +342,23 @@ pub mod stand {
                 }
             }
         }
-        log::info!("pose debout : {} planches", strips.len());
-        Some(StandSheets { strips })
+        let extras: Vec<StandStrip> = Strip::EXTRA
+            .into_iter()
+            .filter_map(|strip| {
+                let repack = |width, height, rgba: &[u8]| stand::repack(strip, width, height, rgba);
+                let without = "debout, ses clignements d'avant";
+                let rgba = super::optional(&folder, strip.file(), "pose debout", without, repack)?;
+                Some(StandStrip { strip, width: strip.grid_size().0, rgba })
+            })
+            .collect();
+        log::info!("pose debout : {} planches, et {} facultatives", strips.len(), extras.len());
+        Some(StandSheets { strips, extras })
     }
 }
 
 /// Les planches de sa vie (`assets/capri/life/`, voir CREDITS.md et `capri_core::sheets::life`) :
-/// elle se matérialise, elle s'efface. Du même artiste que ses poses.
+/// elle se matérialise, elle s'efface (les deux ensemble), et ses gestes, chacun à part : elle
+/// marche, elle pend, elle se relève, elle sourit. Du même artiste que ses poses.
 pub mod life {
     use std::path::Path;
 
@@ -291,76 +374,68 @@ pub mod life {
         pub rgba: Vec<u8>,
     }
 
-    /// Toutes les planches de sa vie, chacune à la bonne taille.
+    /// Celles des planches de sa vie qui sont là, chacune à la bonne taille.
     pub struct LifeSheets {
-        /// Dans l'ordre de `Strip::ALL`.
+        /// Dans l'ordre de `Strip::ALL`, sans celles qui manquent.
         strips: Vec<LifeStrip>,
     }
 
     impl LifeSheets {
-        pub fn get(&self, strip: Strip) -> &LifeStrip {
-            // `load_from` les range toutes, dans l'ordre : la recherche trouve toujours
-            self.strips.iter().find(|grid| grid.strip == strip).unwrap_or(&self.strips[0])
+        /// Cette planche, si elle est là.
+        pub fn get(&self, strip: Strip) -> Option<&LifeStrip> {
+            self.strips.iter().find(|grid| grid.strip == strip)
         }
 
-        /// Le masque de clic de son arrivée : l'union de ses dessins (quand elle s'efface, rien ne
-        /// l'attrape).
-        pub fn mask(&self) -> AlphaMask {
-            let grid = self.get(Strip::Arrive);
-            let cells = (0..Strip::Arrive.count())
-                .map(|index| (grid.rgba.as_slice(), grid.width, Strip::Arrive.cell_origin(index)));
-            super::union_mask(Strip::Arrive.cell(), cells)
+        /// Son arrivée et son départ sont-ils là tous les deux ? Sinon, elle apparaît et
+        /// disparaît d'un coup.
+        pub fn appears(&self) -> bool {
+            Strip::APPEAR.iter().all(|&strip| self.get(strip).is_some())
+        }
+
+        /// Le masque de clic d'une planche : l'union de ses dessins (pour son arrivée et son départ,
+        /// ceux de son arrivée seulement : quand elle s'efface, rien ne l'attrape). `None` si elle
+        /// n'est pas là.
+        pub fn mask(&self, strip: Strip) -> Option<AlphaMask> {
+            let strip = if strip == Strip::Leave { Strip::Arrive } else { strip };
+            let grid = self.get(strip)?;
+            let cells =
+                (0..strip.count()).map(|index| (grid.rgba.as_slice(), grid.width, strip.cell_origin(index)));
+            Some(super::union_mask(strip.cell(), cells))
         }
     }
 
-    /// **Tolérant** : s'il en manque une, si l'une est illisible ou n'a pas la taille attendue,
-    /// rend `None` (une ligne dans le journal, sans rien d'autre que le nom du fichier et des
-    /// nombres), et elle apparaît et disparaît d'un coup, comme avant. Environ 10 Mo en mémoire
-    /// une fois lues : à lâcher dès qu'elles sont confiées au GPU.
+    /// Ce que l'absence d'une planche change, pour le journal.
+    fn without(strip: Strip) -> &'static str {
+        match strip {
+            Strip::Arrive | Strip::Leave => "elle apparaîtra et disparaîtra d'un coup",
+            Strip::Walk => "elle changera de place sans marcher",
+            Strip::Dangle => "tenue, elle gardera sa boucle debout",
+            Strip::Glitch => "lâchée, elle ne se relèvera pas",
+            Strip::Grin => "elle ne sourira pas",
+        }
+    }
+
+    /// **Tolérant**, planche par planche : une absente, illisible ou qui n'a pas la taille
+    /// attendue est laissée de côté (une ligne dans le journal, sans rien d'autre que le nom du
+    /// fichier, des nombres et ce que son absence change) ; `None` s'il n'y en a aucune. Environ
+    /// 10 Mo en mémoire pour l'arrivée et le départ, 23 Mo pour les quatre autres, une fois lues :
+    /// à lâcher dès qu'elles sont confiées au GPU.
     pub fn load() -> Option<LifeSheets> {
         load_from(&super::assets_dir()?)
     }
 
     pub(super) fn load_from(dir: &Path) -> Option<LifeSheets> {
         let folder = dir.join(life::DIR);
-        let mut strips = Vec::with_capacity(Strip::ALL.len());
-        for strip in Strip::ALL {
-            let path = folder.join(strip.file());
-            if !path.is_file() {
-                log::info!("planches de vie : {} absente, elle apparaîtra d'un coup", strip.file());
-                return None;
-            }
-            let image = match image::open(&path) {
-                Ok(image) => image.to_rgba8(),
-                Err(err) => {
-                    log::warn!(
-                        "planches de vie : {} illisible ({err}), elle apparaîtra d'un coup",
-                        strip.file()
-                    );
-                    return None;
-                }
-            };
-            let (width, height) = image.dimensions();
-            match life::repack(strip, width, height, image.as_raw()) {
-                Ok(rgba) => {
-                    let width = strip.grid_size().0;
-                    strips.push(LifeStrip { strip, width, rgba });
-                }
-                Err(wrong) => {
-                    log::warn!(
-                        "planches de vie : {} mesure {} × {} au lieu de {} × {}, elle apparaîtra d'un coup",
-                        strip.file(),
-                        wrong.found.0,
-                        wrong.found.1,
-                        wrong.expected.0,
-                        wrong.expected.1
-                    );
-                    return None;
-                }
-            }
-        }
-        log::info!("planches de vie : {} planches", strips.len());
-        Some(LifeSheets { strips })
+        let strips: Vec<LifeStrip> = Strip::ALL
+            .into_iter()
+            .filter_map(|strip| {
+                let repack = |width, height, rgba: &[u8]| life::repack(strip, width, height, rgba);
+                let rgba = super::optional(&folder, strip.file(), "planches de vie", without(strip), repack)?;
+                Some(LifeStrip { strip, width: strip.grid_size().0, rgba })
+            })
+            .collect();
+        log::info!("planches de vie : {} sur {}", strips.len(), Strip::ALL.len());
+        (!strips.is_empty()).then_some(LifeSheets { strips })
     }
 }
 
@@ -494,11 +569,24 @@ mod tests {
     #[test]
     fn complete_sheets_are_put_in_grids() {
         let dir = directory("completes");
-        for strip in Strip::ALL {
+        for strip in Strip::SET {
+            write(&dir, strip, strip.strip_size());
+        }
+        // ses planches facultatives : l'une de la mauvaise taille, l'autre absente ; sa pose
+        // assise est là quand même
+        write(&dir, Strip::PerchGlitch, (220, 420));
+        let sheets = perch::load_from(&dir).expect("toutes les planches nécessaires");
+        assert!(Strip::EXTRA.iter().all(|&strip| sheets.extra(strip).is_none()));
+        for strip in Strip::EXTRA {
             write(&dir, strip, strip.strip_size());
         }
         let sheets = perch::load_from(&dir).expect("toutes les planches");
-        for strip in Strip::ALL {
+        for strip in Strip::EXTRA {
+            let grid = sheets.extra(strip).expect("là");
+            assert_eq!((grid.strip, grid.width), (strip, strip.grid_size().0));
+            assert_eq!(grid.rgba[..4], [255, 0, 0, 255], "la première case reste en haut à gauche");
+        }
+        for strip in Strip::SET {
             let grid = sheets.get(strip);
             assert_eq!(grid.strip, strip);
             let (width, height) = strip.grid_size();
@@ -514,7 +602,7 @@ mod tests {
     #[test]
     fn the_real_sheets_match_their_description_when_present() {
         let Some(dir) = super::assets_dir() else { return };
-        if !Strip::ALL.iter().all(|strip| dir.join(sheets::DIR).join(strip.file()).is_file()) {
+        if !Strip::SET.iter().all(|strip| dir.join(sheets::DIR).join(strip.file()).is_file()) {
             return;
         }
         let sheets = perch::load_from(&dir).expect("les vraies planches ont la taille décrite");
@@ -828,11 +916,21 @@ mod tests {
         #[test]
         fn complete_sheets_are_put_in_grids() {
             let dir = directory("debout-completes");
-            for strip in Strip::ALL {
+            for strip in Strip::SET {
                 write(&dir, strip, strip.strip_size());
             }
+            // sans la variante de son clignement : sa pose debout quand même
+            let sheets = loader::load_from(&dir).expect("toutes les planches nécessaires");
+            assert!(sheets.extra(Strip::StandBlinkGlitch).is_none());
+            std::fs::write(dir.join(stand::DIR).join(Strip::StandBlinkGlitch.file()), b"pas une image")
+                .unwrap();
+            let sheets = loader::load_from(&dir).expect("une variante illisible ne change rien");
+            assert!(sheets.extra(Strip::StandBlinkGlitch).is_none());
+            write(&dir, Strip::StandBlinkGlitch, Strip::StandBlinkGlitch.strip_size());
             let sheets = loader::load_from(&dir).expect("toutes les planches");
-            for strip in Strip::ALL {
+            let glitchy = sheets.extra(Strip::StandBlinkGlitch).expect("là");
+            assert_eq!(glitchy.rgba.len(), (Strip::StandBlinkGlitch.grid_size().0 * 384 * 4) as usize);
+            for strip in Strip::SET {
                 let grid = sheets.get(strip);
                 assert_eq!(grid.strip, strip);
                 let (width, height) = strip.grid_size();
@@ -848,7 +946,7 @@ mod tests {
         #[test]
         fn the_real_sheets_match_their_measures_when_present() {
             let Some(dir) = super::super::assets_dir() else { return };
-            if !Strip::ALL.iter().all(|strip| dir.join(stand::DIR).join(strip.file()).is_file()) {
+            if !Strip::SET.iter().all(|strip| dir.join(stand::DIR).join(strip.file()).is_file()) {
                 return;
             }
             let sheets = loader::load_from(&dir).expect("les vraies planches ont la taille décrite");
@@ -955,11 +1053,31 @@ mod tests {
             let dir = directory("vie-incompletes");
             assert!(loader::load_from(&dir).is_none(), "aucune planche");
             write(&dir, Strip::Arrive, Strip::Arrive.strip_size());
-            assert!(loader::load_from(&dir).is_none(), "il manque le départ");
+            let alone = loader::load_from(&dir).expect("son arrivée seule");
+            assert!(!alone.appears(), "il manque le départ");
             write(&dir, Strip::Leave, (220, 420));
-            assert!(loader::load_from(&dir).is_none(), "une planche de la mauvaise taille");
+            assert!(!loader::load_from(&dir).unwrap().appears(), "une planche de la mauvaise taille");
             std::fs::write(dir.join(life::DIR).join(Strip::Leave.file()), b"pas une image").unwrap();
-            assert!(loader::load_from(&dir).is_none(), "une planche illisible");
+            assert!(!loader::load_from(&dir).unwrap().appears(), "une planche illisible");
+            let _ = std::fs::remove_dir_all(&dir);
+        }
+
+        #[test]
+        fn each_move_is_loaded_on_its_own() {
+            let dir = directory("vie-gestes");
+            // sa planche en l'air seule, sans son arrivée ni son départ : elle est là quand même
+            write(&dir, Strip::Dangle, Strip::Dangle.strip_size());
+            write(&dir, Strip::Walk, (220, 420));
+            std::fs::write(dir.join(life::DIR).join(Strip::Grin.file()), b"pas une image").unwrap();
+            let sheets = loader::load_from(&dir).expect("une planche");
+            assert!(!sheets.appears());
+            assert!(sheets.get(Strip::Dangle).is_some() && sheets.mask(Strip::Dangle).is_some());
+            for strip in [Strip::Walk, Strip::Glitch, Strip::Grin, Strip::Arrive, Strip::Leave] {
+                assert!(sheets.get(strip).is_none() && sheets.mask(strip).is_none(), "{strip:?}");
+            }
+            let mask = sheets.mask(Strip::Dangle).unwrap();
+            assert_eq!(mask.size(), (CELL_WIDTH, 384));
+            assert!(mask.hit(capri_core::Vec2::new(0.0, 0.0)), "la marque du coin de sa première case");
             let _ = std::fs::remove_dir_all(&dir);
         }
 
@@ -985,8 +1103,9 @@ mod tests {
             write_marked(&dir, Strip::Arrive, Strip::Arrive.strip_size(), &arrive);
             write_marked(&dir, Strip::Leave, Strip::Leave.strip_size(), &leave);
             let sheets = loader::load_from(&dir).expect("toutes les planches");
+            assert!(sheets.appears());
             for (strip, (x, y)) in [(Strip::Arrive, arrive[0]), (Strip::Leave, leave[0])] {
-                let grid = sheets.get(strip);
+                let grid = sheets.get(strip).expect("là");
                 assert_eq!(grid.strip, strip);
                 let (width, height) = strip.grid_size();
                 assert_eq!(grid.width, width);
@@ -998,8 +1117,14 @@ mod tests {
                     "{strip:?} : la première case reste en haut à gauche"
                 );
             }
-            // le masque : l'union de toutes les cases de son arrivée, et seulement d'elle
-            let mask = sheets.mask();
+            // le masque : l'union de toutes les cases de son arrivée, et seulement d'elle (celui de
+            // son départ aussi : quand elle s'efface, rien d'autre ne l'attrape)
+            let mask = sheets.mask(Strip::Arrive).expect("là");
+            let leaving = sheets.mask(Strip::Leave).expect("là");
+            for (x, y) in arrive.into_iter().chain(leave) {
+                let uv = capri_core::Vec2::new((x % CELL_WIDTH) as f32 / CELL_WIDTH as f32, y as f32 / 384.0);
+                assert_eq!(mask.hit(uv), leaving.hit(uv));
+            }
             assert_eq!(mask.size(), (CELL_WIDTH, 384));
             let uv = |x: u32, y: u32| {
                 capri_core::Vec2::new((x % CELL_WIDTH) as f32 / CELL_WIDTH as f32, y as f32 / 384.0)
@@ -1054,15 +1179,16 @@ mod tests {
         fn the_real_life_sheets_match_their_measures_when_present() {
             let Some(dir) = super::super::assets_dir() else { return };
             let present = |folder: &str, file: &str| dir.join(folder).join(file).is_file();
-            if !Strip::ALL.iter().all(|strip| present(life::DIR, strip.file()))
+            if !Strip::APPEAR.iter().all(|strip| present(life::DIR, strip.file()))
                 || !stand::Strip::ALL.iter().all(|strip| present(stand::DIR, strip.file()))
             {
                 return;
             }
             let sheets = loader::load_from(&dir).expect("les vraies planches ont la taille décrite");
             let standing = stand_loader::load_from(&dir).expect("les vraies planches debout");
-            let cell =
-                |strip: Strip, index: u32| life::cell_pixels(strip, &sheets.get(strip).rgba, index).unwrap();
+            let cell = |strip: Strip, index: u32| {
+                life::cell_pixels(strip, &sheets.get(strip).expect("là").rgba, index).unwrap()
+            };
             let loop_cell = |index: u32| {
                 stand::cell_pixels(stand::Strip::Stand, &standing.get(stand::Strip::Stand).rgba, index)
                     .unwrap()
@@ -1112,10 +1238,210 @@ mod tests {
             assert!((lx - ex).abs() < 1.0 && (ly - ey).abs() < 1.0, "({lx}, {ly})");
 
             // le masque de son arrivée l'attrape sur elle, pas dans le coin
-            let mask = sheets.mask();
+            let mask = sheets.mask(Strip::Arrive).expect("là");
             let uv = |x: f32, y: f32| capri_core::Vec2::new(x / CELL_WIDTH as f32, y / 384.0);
             assert!(mask.hit(uv(life::EYES.0, life::EYES.1)), "son visage");
             assert!(!mask.hit(uv(2.0, 380.0)), "le coin de la case");
+        }
+
+        /// Les pixels pleins (alpha > 96) d'une case de `width` px de large.
+        fn solid(pixels: &[u8], width: u32) -> std::collections::HashSet<(i32, i32)> {
+            (0..384u32)
+                .flat_map(|y| (0..width).map(move |x| (x, y)))
+                .filter(|&(x, y)| pixels[((y * width + x) * 4 + 3) as usize] > 96)
+                .map(|(x, y)| (x as i32, y as i32))
+                .collect()
+        }
+
+        /// Combien de pixels pleins diffèrent entre `a` et `b` décalé de `dx`.
+        fn apart(
+            a: &std::collections::HashSet<(i32, i32)>,
+            b: &std::collections::HashSet<(i32, i32)>,
+            dx: i32,
+        ) -> usize {
+            let moved: std::collections::HashSet<(i32, i32)> = b.iter().map(|&(x, y)| (x + dx, y)).collect();
+            a.symmetric_difference(&moved).count()
+        }
+
+        /// Le pied le plus bas parmi les colonnes `columns` : (milieu, ligne), alpha > 96.
+        fn foot(pixels: &[u8], columns: std::ops::Range<u32>) -> (f32, u32) {
+            let full = |x: u32, y: u32| pixels[((y * CELL_WIDTH + x) * 4 + 3) as usize] > 96;
+            let row = (0..384).rev().find(|&y| columns.clone().any(|x| full(x, y))).expect("un pied");
+            let hit: Vec<u32> = columns.filter(|&x| full(x, row)).collect();
+            ((hit[0] + hit[hit.len() - 1] + 1) as f32 / 2.0, row)
+        }
+
+        /// Les vraies planches de ses gestes, si `tools/fetch-assets.sh` les a téléchargées (rien
+        /// n'est téléchargé ici) : les mesures de `capri_core::sheets::life`, `sheets` et
+        /// `sheets::stand` doivent leur correspondre. Elles s'alignent sur sa pose debout comme son
+        /// arrivée (ses yeux au même endroit) ; sa marche se fait sur place, l'écart de ses pieds
+        /// au sol est un pas, et elle regarde vers la gauche ; tenue en l'air, la mèche par où on la
+        /// tient est au même endroit dans tous ses dessins ; ses variantes prennent la place des
+        /// dessins qu'elles remplacent.
+        #[test]
+        fn the_real_moves_match_their_measures_when_present() {
+            use capri_core::sheets::{self as perch, life::Facing};
+
+            let Some(dir) = super::super::assets_dir() else { return };
+            let present = |folder: &str, file: &str| dir.join(folder).join(file).is_file();
+            let moves_here = Strip::ALL.iter().all(|strip| present(life::DIR, strip.file()))
+                && perch::Strip::ALL.iter().all(|strip| present(perch::DIR, strip.file()))
+                && stand::Strip::ALL.iter().all(|strip| present(stand::DIR, strip.file()));
+            if !moves_here {
+                return;
+            }
+            let sheets = loader::load_from(&dir).expect("les vraies planches ont la taille décrite");
+            assert!(Strip::ALL.iter().all(|&strip| sheets.get(strip).is_some()));
+            let cell = |strip: Strip, index: u32| {
+                life::cell_pixels(strip, &sheets.get(strip).expect("là").rgba, index).unwrap()
+            };
+
+            // sur la toile de son arrivée : ses yeux au même endroit, au pixel près
+            for (strip, index) in [(Strip::Walk, 0), (Strip::Glitch, 9), (Strip::Grin, 0), (Strip::Grin, 15)]
+            {
+                let (x, y) = eyes(&cell(strip, index), CELL_WIDTH);
+                assert!(
+                    (x - life::EYES.0).abs() < 1.5 && (y - life::EYES.1).abs() < 1.5,
+                    "{strip:?} {index} : ({x}, {y})"
+                );
+            }
+            // le glitch finit sur la fin de son arrivée, à quelques pixels près ; son sourire aussi
+            let end = solid(&cell(Strip::Arrive, 13), CELL_WIDTH);
+            for (strip, index, most) in [(Strip::Glitch, 9, 0.02), (Strip::Grin, 0, 0.08)] {
+                let differ = apart(&solid(&cell(strip, index), CELL_WIDTH), &end, 0);
+                assert!((differ as f64) < most * end.len() as f64, "{strip:?} {index} : {differ}");
+            }
+
+            // sa marche : sur place. Le pied posé ne bouge pas pendant que l'autre se lève
+            let (left, right) = (0..145, 145..CELL_WIDTH);
+            for index in 1..=5 {
+                let (x, _) = foot(&cell(Strip::Walk, index), right.clone());
+                assert!((164.0..=166.5).contains(&x), "dessin {index} : pied droit en {x}");
+            }
+            for index in 7..=11 {
+                let (x, _) = foot(&cell(Strip::Walk, index), left.clone());
+                assert!((127.0..=130.0).contains(&x), "dessin {index} : pied gauche en {x}");
+            }
+            // un pas : l'écart de ses pieds quand tous deux touchent le sol, aux mêmes places aux
+            // dessins 0 et 6 (le pied levé retombe là d'où il est parti)
+            for index in [0, 6] {
+                let contact = cell(Strip::Walk, index);
+                let ((lx, ly), (rx, ry)) = (foot(&contact, left.clone()), foot(&contact, right.clone()));
+                assert_eq!((lx, ly, rx, ry), (126.5, 363, 168.0, 362), "dessin {index}");
+                assert_eq!(rx - lx, life::WALK_STEP);
+            }
+            // elle regarde vers la gauche : dans le masque vert de son visage, son œil gauche (le
+            // plus loin, en trois quarts) est plus petit que l'autre et collé au bord du masque
+            let pixels = cell(Strip::Walk, 0);
+            let (mut mask, mut near, mut far) = (Vec::new(), Vec::new(), Vec::new());
+            for y in 110..135 {
+                for x in 110..160 {
+                    let p = &pixels[((y * CELL_WIDTH + x) * 4) as usize..][..4];
+                    if p[3] > 200 && p[1] > 150 && p[0] < 140 && p[2] < 190 {
+                        mask.push(x);
+                    }
+                    if p[3] > 200 && p[2] > 150 && p[0] < 120 && i32::from(p[2]) > i32::from(p[1]) + 20 {
+                        if x < 132 { far.push(x) } else { near.push(x) }
+                    }
+                }
+            }
+            let (left, right) = (mask.iter().min().copied().unwrap(), mask.iter().max().copied().unwrap());
+            let (far_edge, near_edge) =
+                (far.iter().min().copied().unwrap(), near.iter().max().copied().unwrap());
+            assert!(far.len() < near.len(), "son œil gauche {} px, le droit {} px", far.len(), near.len());
+            assert!(
+                far_edge - left < right - near_edge,
+                "son œil gauche à {} px du bord du masque, le droit à {} px",
+                far_edge - left,
+                right - near_edge
+            );
+            assert_eq!(life::FACING, Facing::Left);
+
+            // tenue en l'air : la mèche commune à ses 24 dessins, en haut
+            let all: Vec<_> = (0..Strip::Dangle.count())
+                .map(|index| solid(&cell(Strip::Dangle, index), CELL_WIDTH))
+                .collect();
+            let common: Vec<(i32, i32)> = all[0]
+                .iter()
+                .filter(|&&(x, y)| (20..41).contains(&y) && all.iter().all(|cells| cells.contains(&(x, y))))
+                .cloned()
+                .collect();
+            let n = common.len() as f32;
+            let grip = (
+                common.iter().map(|&(x, _)| x as f32).sum::<f32>() / n,
+                common.iter().map(|&(_, y)| y as f32).sum::<f32>() / n,
+            );
+            assert_eq!(common.len(), 119);
+            assert!((grip.0 - life::GRIP.0).abs() < 0.1 && (grip.1 - life::GRIP.1).abs() < 0.1, "{grip:?}");
+            assert_eq!(common.iter().map(|&(_, y)| y).min(), Some(28));
+            // sept dessins identiques à d'autres
+            for (a, b) in [(0, 12), (4, 16), (5, 17), (6, 18), (8, 20), (9, 21), (11, 23)] {
+                assert_eq!(cell(Strip::Dangle, a), cell(Strip::Dangle, b), "{a} et {b}");
+            }
+
+            // son éclat assise : la même case large que son arrivée, finissant sur son dessin 0
+            let perched = super::super::perch::load_from(&dir).expect("sa pose assise");
+            let glitch = perched.extra(perch::Strip::PerchGlitch).expect("son éclat");
+            let last =
+                solid(&perch::cell_pixels(perch::Strip::PerchGlitch, &glitch.rgba, 9).unwrap(), perch::WIDE);
+            let seated = solid(
+                &perch::cell_pixels(perch::Strip::Perch, &perched.get(perch::Strip::Perch).rgba, 0).unwrap(),
+                perch::NARROW,
+            );
+            let at = |dx: i32| apart(&last, &seated, dx);
+            let shift = perch::WIDE_SHIFT as i32;
+            assert!(
+                at(shift) < at(shift - 6) && at(shift) < at(shift + 6),
+                "{} {} {}",
+                at(shift - 6),
+                at(shift),
+                at(shift + 6)
+            );
+            assert!((at(shift) as f64) < 0.15 * last.len() as f64, "{}", at(shift));
+            // ses clignements glitchés : chaque case la plus proche du dessin qu'elle remplace
+            let closest = |pixels: &[u8], width: u32, of: &dyn Fn(u32) -> Vec<u8>, count: u32| {
+                let cells = solid(pixels, width);
+                (0..count).min_by_key(|&index| apart(&cells, &solid(&of(index), width), 0)).unwrap()
+            };
+            let glitchy = perched.extra(perch::Strip::PerchBlinkGlitch).expect("son clignement glitché");
+            let sitting = |index| {
+                perch::cell_pixels(perch::Strip::Perch, &perched.get(perch::Strip::Perch).rgba, index)
+                    .unwrap()
+            };
+            for index in 0..8 {
+                let pixels =
+                    perch::cell_pixels(perch::Strip::PerchBlinkGlitch, &glitchy.rgba, index).unwrap();
+                assert_eq!(
+                    closest(&pixels, perch::NARROW, &sitting, 60),
+                    perch::BLINK_FROM + index,
+                    "assise, case {index}"
+                );
+            }
+            let standing = super::super::stand::load_from(&dir).expect("sa pose debout");
+            let glitchy = standing.extra(stand::Strip::StandBlinkGlitch).expect("son clignement glitché");
+            let idle = |index| {
+                stand::cell_pixels(stand::Strip::Stand, &standing.get(stand::Strip::Stand).rgba, index)
+                    .unwrap()
+            };
+            for index in 0..8 {
+                let pixels =
+                    stand::cell_pixels(stand::Strip::StandBlinkGlitch, &glitchy.rgba, index).unwrap();
+                assert_eq!(
+                    closest(&pixels, stand::CELL_WIDTH, &idle, 60),
+                    stand::BLINK_FROM + index,
+                    "debout, case {index}"
+                );
+            }
+
+            // leurs masques de clic : sur elle, pas dans le coin
+            for strip in Strip::MOVES {
+                let mask = sheets.mask(strip).expect("là");
+                assert!(
+                    mask.hit(capri_core::Vec2::new(life::EYES.0 / 240.0, life::EYES.1 / 384.0)),
+                    "{strip:?}"
+                );
+                assert!(!mask.hit(capri_core::Vec2::new(2.0 / 240.0, 380.0 / 384.0)), "{strip:?}");
+            }
         }
     }
 }

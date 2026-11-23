@@ -61,11 +61,18 @@ IMAGES=(
   capri/perch/perch_music.png
   capri/perch/perch_arrive.png
   capri/perch/perch_leave.png
+  capri/perch/perch_glitch.png
+  capri/perch/perch_blink_glitch.png
   capri/stand/idle.png
   capri/stand/idle_blink.png
   capri/stand/idle_mouth.png
+  capri/stand/idle_blink_glitch.png
   capri/life/arrive.png
   capri/life/leave.png
+  capri/life/walk.png
+  capri/life/dangle.png
+  capri/life/glitch.png
+  capri/life/grin.png
   capri/intro/01.png
   capri/intro/02.png
   capri/intro/03.png

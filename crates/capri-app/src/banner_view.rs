@@ -156,6 +156,8 @@ impl BannerView {
     pub fn listen_only(&mut self) {
         if let Some(feed) = &mut self.feed {
             feed.pump();
+            // une fin de tour pendant qu'elle n'est pas là ne la fera pas sourire à son retour
+            feed.take_turn_end();
         }
         self.chat.pump();
         self.pump_ear();
@@ -392,6 +394,12 @@ impl BannerView {
         log::debug!("Claude Code lui fait dire {} caractères", said.text().chars().count());
         self.chat.relay(said.text());
         self.refresh = true;
+    }
+
+    /// La session principale de Claude Code a-t-elle fini son tour depuis le dernier appel (voir
+    /// `Feed::take_turn_end`) ? Rendu une seule fois.
+    pub fn take_turn_end(&mut self) -> bool {
+        self.feed.as_mut().is_some_and(Feed::take_turn_end)
     }
 
     /// Bouge-t-elle les lèvres (voir `Chat::is_talking`) ?

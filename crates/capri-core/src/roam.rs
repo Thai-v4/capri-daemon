@@ -39,12 +39,29 @@
 //! compte jamais comme un bord perdu ([`Roamer::touched`]), et la montrer après l'avoir cachée ne
 //! raccourcit jamais une attente en cours ([`Roamer::came_back`]).
 //!
+//! **Elle marche** : debout en bas de l'écran, quand elle va debout ailleurs en bas de l'écran
+//! ([`Choice::Floor`]), dans le sens où regarde le dessin de sa marche
+//! ([`crate::sheets::life::FACING`]), et pas plus de [`WALK_LONGEST`], elle y va en marchant
+//! ([`Look::walk`]) au lieu de s'effacer ; sinon (sans sa planche de marche, ou dans l'autre sens),
+//! elle s'efface et réapparaît, comme avant. Attrapée en chemin, elle pend et reste où on la
+//! lâche ; cachée, elle s'arrête et s'efface ; quand on lui parle, elle s'arrête là
+//! ([`Event::Halted`]) et reprend sa boucle. « Changer de place » pendant qu'elle marche est refusé
+//! ([`Hold::Walking`]) : elle arrive bientôt.
+//!
+//! **Elle varie** : assise et libre, de temps en temps ([`FIDGET`], tiré d'un hasard à part mais
+//! de la même graine, pour que ses départs restent ceux d'avant), un éclat ([`Look::fidget`]) ;
+//! jamais pendant qu'on se parle, qu'elle se balance ou que la musique joue, ni pendant un autre
+//! geste ; retenue, il recule de [`PATIENCE`]. Seulement quand elle vit sa vie (la case cochée, et
+//! jamais pendant une répétition). Un geste en cours retient ses départs le temps qu'il finisse
+//! (4 s au plus, [`crate::look::LONGEST_GESTURE`]), sans les reculer : elle part juste après.
+//!
 //! Les distances sont en fractions de sa hauteur debout, comme dans `body.rs` et `perch.rs`.
 
 use crate::body::{Capri, Stance};
 use crate::geom::{Rect, Vec2};
 use crate::look::Look;
 use crate::perch::{self, Bench, Perch, Reach, Seen, Stature};
+use crate::sheets::life;
 
 /// Une plage de durées, en secondes : un moment y est tiré au sort, uniformément.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -84,6 +101,15 @@ pub const NOWHERE: Span = Span::new(30.0, 30.0);
 /// Ce qui la retenait vient de cesser (on lui parlait, la musique, le curseur sur elle) : elle
 /// attend encore au moins ça avant de partir d'elle-même. Pas de départ juste après une réponse.
 pub const PATIENCE: f64 = 10.0;
+/// Assise, un éclat de temps en temps : de 1 à 4 minutes après le précédent, ou après qu'elle s'est
+/// assise.
+pub const FIDGET: Span = Span::new(60.0, 240.0);
+/// Elle ne marche pas plus longtemps que ça (en secondes) : plus loin, elle s'efface et réapparaît
+/// (à sa taille d'origine sur un écran Retina, 143,5 px par seconde : 1 435 px au plus).
+pub const WALK_LONGEST: f64 = 10.0;
+/// Le hasard de ses éclats : sa graine, mêlée à ce nombre (« fidget »), pour ne rien changer au
+/// hasard de ses départs.
+const FIDGET_SEED: u64 = 0x6669_6467_6574;
 
 /// Elle n'apparaît pas sous la main de l'utilisateur : le curseur reste à plus de cette marge
 /// (0,5 de sa hauteur debout) de la place qu'elle occupera.
@@ -392,6 +418,8 @@ pub enum Hold {
     Talking,
     /// Elle se balance sur la musique.
     Music,
+    /// Elle marche vers sa nouvelle place.
+    Walking,
 }
 
 impl Hold {
@@ -402,6 +430,7 @@ impl Hold {
             Hold::Away => "elle apparaît, s'efface ou est cachée",
             Hold::Talking => "on se parle",
             Hold::Music => "elle se balance sur la musique",
+            Hold::Walking => "elle marche",
         }
     }
 }
@@ -429,8 +458,9 @@ pub trait World {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Event {
     /// Elle part vers `to` (un bord, ou debout en bas de l'écran ; jamais `Choice::Stay`) ;
-    /// `benches` : les morceaux de bord où elle tiendrait ; `asked` : « Changer de place ».
-    Leaves { to: Choice, benches: usize, asked: bool },
+    /// `benches` : les morceaux de bord où elle tiendrait ; `asked` : « Changer de place » ;
+    /// `walking` : elle y va en marchant (sinon elle s'efface).
+    Leaves { to: Choice, benches: usize, asked: bool, walking: bool },
     /// Aucune autre place : elle reste.
     Stays { benches: usize, asked: bool },
     /// Arrivée, assise ou debout ; `lost` : debout parce que le bord où elle allait n'y était plus.
@@ -438,6 +468,10 @@ pub enum Event {
     /// On lui parle pendant qu'elle s'efface pour partir : elle revient sur ses pas, là où elle
     /// était, et n'ira pas plus loin.
     TurnedBack,
+    /// On lui parle pendant qu'elle marche : elle s'arrête là, et n'ira pas plus loin.
+    Halted,
+    /// Assise, un éclat.
+    Fidgeted,
     /// « Changer de place » demandé, et quelque chose l'en empêche.
     Refused(Hold),
 }
@@ -460,6 +494,19 @@ pub struct Roamer {
     /// Au pas précédent : on la tenait ou elle volait ; elle était posée.
     was_carried: bool,
     was_perched: bool,
+    /// Où elle va en marchant, pendant qu'elle marche.
+    walk: Option<Vec2>,
+    /// Ses éclats, assise.
+    fidget: Fidget,
+}
+
+/// Quand elle a un éclat, assise : un hasard à part ([`FIDGET_SEED`]), l'heure du prochain, et si
+/// elle était assise au pas précédent (s'asseoir remet l'attente à zéro).
+#[derive(Clone, Debug)]
+struct Fidget {
+    rng: Rng,
+    next: f64,
+    seated: bool,
 }
 
 impl Roamer {
@@ -474,6 +521,8 @@ impl Roamer {
             floor_next: now,
             was_carried: false,
             was_perched: false,
+            walk: None,
+            fidget: Fidget { rng: Rng::new(seed ^ FIDGET_SEED), next: now, seated: false },
         }
     }
 
@@ -501,6 +550,8 @@ impl Roamer {
     /// pendant qu'elle était cachée est oublié.
     pub fn came_back(&mut self, now: f64, capri: &Capri) {
         self.asked = false;
+        // cachée en marchant : sa marche s'est arrêtée là, ce n'est pas une arrivée
+        self.walk = None;
         let why = if capri.perched().is_some() { Stay::Seated } else { Stay::Standing };
         // revenir ne raccourcit jamais une attente en cours (posée à la main, par exemple)
         let waiting = self.roam.next;
@@ -518,11 +569,17 @@ impl Roamer {
         self.trip
     }
 
+    /// Où elle va, pendant qu'elle y marche.
+    pub fn walking_to(&self) -> Option<Vec2> {
+        self.walk
+    }
+
     /// Un pas, à l'instant `now` et à l'image d'animation `frame` : après `Look::update`, dans
     /// l'ordre de la boucle. Effacée pour changer de place, elle est déplacée et apparaît là-bas ;
-    /// sinon, s'il est temps (ou qu'on le lui demande) et que rien ne la retient, elle choisit où
-    /// aller (la seule lecture des fenêtres qu'elle demande, [`World::seen`]) et commence à
-    /// s'effacer.
+    /// en marche, elle arrive, ou s'arrête si on lui parle ; sinon, s'il est temps (ou qu'on le lui
+    /// demande) et que rien ne la retient, elle choisit où aller (la seule lecture des fenêtres
+    /// qu'elle demande, [`World::seen`]) et commence à s'effacer, ou à marcher. Si rien de cela,
+    /// assise, peut-être un éclat.
     pub fn step(
         &mut self,
         look: &mut Look,
@@ -532,6 +589,76 @@ impl Roamer {
         now: f64,
         frame: u64,
     ) -> Vec<Event> {
+        let mut events = self.decide(look, capri, world, busy, now, frame);
+        if events.is_empty() && self.fidgets(look, capri, busy, now, frame) {
+            events.push(Event::Fidgeted);
+        }
+        events
+    }
+
+    /// Assise et libre, un éclat s'il est temps ; voir le module.
+    fn fidgets(&mut self, look: &mut Look, capri: &mut Capri, busy: Busy, now: f64, frame: u64) -> bool {
+        let seated = self.enabled && look.is_seated(capri) && capri.perched().is_some() && !look.is_away();
+        if !seated {
+            self.fidget.seated = false;
+            return false;
+        }
+        if !std::mem::replace(&mut self.fidget.seated, true) {
+            // elle vient de s'asseoir (ou de se remettre à vivre sa vie) : l'attente commence
+            self.fidget.next = now + FIDGET.pick(&mut self.fidget.rng);
+            return false;
+        }
+        let held = !look.is_here() || busy.talking || look.is_grooving() || look.gesture().is_some();
+        if held || self.trip.is_some() {
+            self.fidget.next = self.fidget.next.max(now + PATIENCE);
+            return false;
+        }
+        // un instant qui n'est pas un nombre ne fait rien
+        if now.is_nan() || now < self.fidget.next {
+            return false;
+        }
+        if look.fidget(capri, frame) {
+            self.fidget.next = now + FIDGET.pick(&mut self.fidget.rng);
+            true
+        } else {
+            // la musique, ou sans la planche : plus tard
+            self.fidget.next = now + PATIENCE;
+            false
+        }
+    }
+
+    /// Ce qui peut la faire changer de place à ce pas (voir [`Roamer::step`]).
+    fn decide(
+        &mut self,
+        look: &mut Look,
+        capri: &mut Capri,
+        world: &mut dyn World,
+        busy: Busy,
+        now: f64,
+        frame: u64,
+    ) -> Vec<Event> {
+        // en marche : elle arrive, ou s'arrête si on lui parle ; « Changer de place » attend
+        if self.walk.is_some() {
+            if look.is_walking(capri) {
+                if busy.talking {
+                    look.halt(capri);
+                    self.walk = None;
+                    self.roam.stay(now, Stay::Standing);
+                    return vec![Event::Halted];
+                }
+                if std::mem::take(&mut self.asked) {
+                    return vec![Event::Refused(Hold::Walking)];
+                }
+                return Vec::new();
+            }
+            self.walk = None;
+            // arrivée, ou arrêtée par le bord de l'écran ou une nouvelle taille : c'est une arrivée
+            // debout, et elle s'y repose ; attrapée, ou cachée, en chemin : la suite, comme d'habitude
+            let carried = matches!(capri.stance(), Stance::Held { .. } | Stance::Thrown { .. });
+            if !carried && look.is_here() {
+                return vec![self.walked(now)];
+            }
+        }
         // on lui parle pendant qu'elle s'efface pour partir (le champ de saisie, ou le micro, s'est
         // ouvert là où elle est) : elle revient sur ses pas, et n'ira pas plus loin
         if look.is_traveling() && busy.talking {
@@ -568,6 +695,11 @@ impl Roamer {
         } else {
             None
         };
+        // un geste en cours retient ses départs le temps qu'il finisse (quelques secondes au plus),
+        // sans reculer le prochain ni oublier une demande : elle part juste après
+        if hold.is_none() && look.gesture().is_some() {
+            return Vec::new();
+        }
         if std::mem::take(&mut self.asked) {
             return match hold {
                 Some(hold) => vec![Event::Refused(hold)],
@@ -636,17 +768,49 @@ impl Roamer {
             }
             return vec![Event::Stays { benches: count, asked }];
         }
+        // debout en bas de l'écran, vers un autre endroit du bas, dans le sens où elle regarde, et
+        // pas trop loin : elle y va en marchant
+        if let Choice::Floor(to) = choice
+            && self.walkable(look, capri, to)
+            && look.walk(capri, frame, to.x)
+        {
+            self.walk = Some(to);
+            return vec![Event::Leaves { to: choice, benches: count, asked, walking: true }];
+        }
         if choice == Choice::Stay || !look.travel(capri, frame) {
             self.roam.stay(now, Stay::Nowhere);
             return vec![Event::Stays { benches: count, asked }];
         }
         self.trip = Some(choice);
-        let leaves = Event::Leaves { to: choice, benches: count, asked };
+        let leaves = Event::Leaves { to: choice, benches: count, asked, walking: false };
         // sans ses planches de vie, elle est déjà effacée : elle apparaît là-bas tout de suite
         if look.is_between() {
             return vec![leaves, self.arrive(look, capri, world, now, frame)];
         }
         vec![leaves]
+    }
+
+    /// Peut-elle aller en marchant jusqu'à `to` ? Debout en flottant, déjà en bas de l'écran (ses
+    /// pieds à la hauteur de `to`, au pixel près), dans le sens où elle regarde, en
+    /// [`WALK_LONGEST`] au plus, et sa planche de marche là.
+    fn walkable(&self, look: &Look, capri: &Capri, to: Vec2) -> bool {
+        let Some(speed) = look.walk_speed() else { return false };
+        let feet = capri.feet();
+        let dx = to.x - feet.x;
+        capri.stance() == Stance::Floating
+            && (to.y - feet.y).abs() <= 1.0
+            && life::FACING.allows(dx)
+            && f64::from(dx.abs() / speed) <= WALK_LONGEST
+    }
+
+    /// Arrivée en marchant : elle y reste un moment, debout, et ne change pas de place debout
+    /// d'elle-même avant longtemps, comme arrivée en s'effaçant.
+    fn walked(&mut self, now: f64) -> Event {
+        self.floor_next = now + SEATED.pick(&mut self.roam.rng);
+        self.roam.stay(now, Stay::Standing);
+        self.was_carried = false;
+        self.was_perched = false;
+        Event::Arrived { seated: false, lost: false }
     }
 
     /// Effacée : déplacée là où elle allait (sa fenêtre relue, s'il s'agit d'un bord), elle y
@@ -691,7 +855,7 @@ impl Roamer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::look::{PerchMasks, Wardrobe};
+    use crate::look::{Moves, PerchMasks, Wardrobe};
     use crate::mask::AlphaMask;
     use crate::sheets::{self, life, stand};
 
@@ -960,6 +1124,7 @@ mod tests {
                     wide: full(sheets::WIDE, sheets::CELL_HEIGHT),
                 }),
                 life: life_sheets.then(|| full(life::CELL_WIDTH, sheets::CELL_HEIGHT)),
+                moves: Moves::default(),
             },
             HEIGHT,
         )
@@ -1032,7 +1197,8 @@ mod tests {
         let mut events = Vec::new();
         for frame in frames {
             capri.step(1.0 / 24.0, frame);
-            look.update(capri, frame, false, music && look.wants_music(capri));
+            let music = music && look.wants_music(capri);
+            look.update(capri, frame, false, music);
             let now = frame as f64 / 24.0;
             events.extend(
                 roamer.step(look, capri, desk, busy, now, frame).into_iter().map(|event| (now, event)),
@@ -1044,7 +1210,9 @@ mod tests {
     /// Un départ, réduit à : vers un bord ?, combien de bords, demandé ?
     fn ledge(event: &Event) -> Option<(bool, usize, bool)> {
         match *event {
-            Event::Leaves { to, benches, asked } => Some((matches!(to, Choice::Ledge(_)), benches, asked)),
+            Event::Leaves { to, benches, asked, .. } => {
+                Some((matches!(to, Choice::Ledge(_)), benches, asked))
+            }
             _ => None,
         }
     }
@@ -1411,5 +1579,314 @@ mod tests {
             (roamer.next(), capri.seat())
         };
         assert_eq!(ledge(77), ledge(77));
+    }
+
+    // --- sa marche, ses éclats ---
+
+    /// Avec toutes ses planches de gestes.
+    fn moving() -> Look {
+        moving_with(true)
+    }
+
+    /// Avec toutes ses planches de gestes, avec ou sans ses planches pour apparaître et s'effacer.
+    fn moving_with(life_sheets: bool) -> Look {
+        Look::new(
+            Wardrobe {
+                cutout: full(220, 420),
+                stand: Some(full(stand::CELL_WIDTH, sheets::CELL_HEIGHT)),
+                perch: Some(PerchMasks {
+                    narrow: full(sheets::NARROW, sheets::CELL_HEIGHT),
+                    wide: full(sheets::WIDE, sheets::CELL_HEIGHT),
+                }),
+                life: life_sheets.then(|| full(life::CELL_WIDTH, sheets::CELL_HEIGHT)),
+                moves: Moves {
+                    walk: Some(full(life::CELL_WIDTH, sheets::CELL_HEIGHT)),
+                    dangle: Some(full(life::CELL_WIDTH, sheets::CELL_HEIGHT)),
+                    glitch: Some(full(life::CELL_WIDTH, sheets::CELL_HEIGHT)),
+                    grin: Some(full(life::CELL_WIDTH, sheets::CELL_HEIGHT)),
+                    perch_glitch: true,
+                    perch_blink_glitch: true,
+                    stand_blink_glitch: true,
+                },
+            },
+            HEIGHT,
+        )
+    }
+
+    /// Lancée à l'image 0, là, avec toutes ses planches de gestes.
+    fn launched_moving(seed: u64, enabled: bool) -> (Roamer, Look, Capri) {
+        let mut look = moving();
+        let mut capri = body(&look);
+        capri.step(0.0, 0);
+        look.enter(&mut capri, 0);
+        (Roamer::new(seed, 0.0, enabled), look, capri)
+    }
+
+    /// « Changer de place » jusqu'à ce qu'elle parte en marchant (sans bord, debout en bas de
+    /// l'écran) ; rend l'image où elle part, et où elle va.
+    fn until_she_walks(
+        roamer: &mut Roamer,
+        look: &mut Look,
+        capri: &mut Capri,
+        desk: &mut Desk,
+        from: u64,
+    ) -> (u64, Vec2) {
+        for round in 0..60 {
+            let start = from + round * 400;
+            roamer.ask();
+            let events = run(roamer, look, capri, desk, Busy::default(), start..start + 1);
+            if let [Event::Leaves { to: Choice::Floor(to), walking: true, .. }] = events[..] {
+                return (start, to);
+            }
+            run(roamer, look, capri, desk, Busy::default(), start + 1..start + 400);
+        }
+        panic!("elle ne part jamais en marchant");
+    }
+
+    #[test]
+    fn at_the_bottom_she_walks_left_to_her_new_place_and_fades_otherwise() {
+        let (mut roamer, mut look, mut capri) = launched_moving(4, false);
+        let mut desk = Desk { perch: false, ..world() };
+        run(&mut roamer, &mut look, &mut capri, &mut desk, Busy::default(), 1..100);
+        let speed = look.walk_speed().expect("sa planche de marche");
+        let (mut walked, mut faded, mut faded_at_floor) = (0, 0, 0);
+        for round in 0..60 {
+            let start = 100 + round * 400;
+            let feet = capri.feet();
+            roamer.ask();
+            let events =
+                run(&mut roamer, &mut look, &mut capri, &mut desk, Busy::default(), start..start + 1);
+            let [Event::Leaves { to: Choice::Floor(to), walking, .. }] = events[..] else {
+                panic!("{events:?}")
+            };
+            let at_floor = (feet.y - to.y).abs() <= 1.0;
+            if walking {
+                walked += 1;
+                assert!(at_floor && to.x < feet.x, "de là où elle est, vers la gauche : {feet:?} → {to:?}");
+                assert!(f64::from((feet.x - to.x) / speed) <= WALK_LONGEST);
+                assert_eq!((roamer.walking_to(), roamer.heading()), (Some(to), None));
+                assert!(look.is_walking(&capri) && look.is_here() && !look.is_traveling());
+                let mut last = capri.feet().x;
+                let mut arrived = Vec::new();
+                for frame in start + 1..start + 400 {
+                    arrived =
+                        run(&mut roamer, &mut look, &mut capri, &mut desk, Busy::default(), frame..frame + 1);
+                    assert!(capri.feet().x <= last + 1e-3, "jamais à reculons, image {frame}");
+                    assert!(look.is_here() && !look.is_gone(), "toujours là, image {frame}");
+                    last = capri.feet().x;
+                    if !arrived.is_empty() {
+                        break;
+                    }
+                }
+                assert_eq!(arrived, [Event::Arrived { seated: false, lost: false }]);
+                assert!((capri.feet().x - to.x).abs() <= 1.0 && !look.is_walking(&capri));
+                assert_eq!(roamer.walking_to(), None);
+            } else {
+                faded += 1;
+                if at_floor {
+                    faded_at_floor += 1;
+                    // vers la droite (elle regarde à gauche), ou trop loin pour y marcher
+                    assert!(
+                        to.x > feet.x || f64::from((feet.x - to.x) / speed) > WALK_LONGEST,
+                        "{feet:?} → {to:?}"
+                    );
+                }
+                assert!(look.is_traveling());
+            }
+            run(&mut roamer, &mut look, &mut capri, &mut desk, Busy::default(), start + 1..start + 400);
+            assert!(look.is_here() && !look.is_walking(&capri));
+        }
+        assert!(walked >= 5 && faded >= 5 && faded_at_floor >= 3, "{walked} {faded} {faded_at_floor}");
+
+        // sans sa planche de marche : elle s'efface toujours, comme avant
+        let (mut roamer, mut look, mut capri) = launched(4, false);
+        let mut desk = Desk { perch: false, ..world() };
+        for round in 0..20 {
+            let start = 100 + round * 400;
+            roamer.ask();
+            let events =
+                run(&mut roamer, &mut look, &mut capri, &mut desk, Busy::default(), start..start + 1);
+            assert!(matches!(events[..], [Event::Leaves { walking: false, .. }]), "{events:?}");
+            run(&mut roamer, &mut look, &mut capri, &mut desk, Busy::default(), start + 1..start + 400);
+        }
+    }
+
+    #[test]
+    fn talked_to_while_walking_she_stops_there_and_asked_she_refuses() {
+        let (mut roamer, mut look, mut capri) = launched_moving(4, false);
+        let mut desk = Desk { perch: false, ..world() };
+        run(&mut roamer, &mut look, &mut capri, &mut desk, Busy::default(), 1..100);
+        let (start, to) = until_she_walks(&mut roamer, &mut look, &mut capri, &mut desk, 100);
+        run(&mut roamer, &mut look, &mut capri, &mut desk, Busy::default(), start + 1..start + 12);
+        roamer.ask();
+        let events =
+            run(&mut roamer, &mut look, &mut capri, &mut desk, Busy::default(), start + 12..start + 13);
+        assert_eq!(events, [Event::Refused(Hold::Walking)]);
+        assert!(look.is_walking(&capri));
+        // on lui parle : elle s'arrête là, sa boucle reprend, et n'arrive jamais
+        let talking = Busy { talking: true, hovered: false };
+        let events = run(&mut roamer, &mut look, &mut capri, &mut desk, talking, start + 13..start + 14);
+        assert_eq!(events, [Event::Halted]);
+        let x = capri.feet().x;
+        assert!(x > to.x + 1.0 && !look.is_walking(&capri) && roamer.walking_to().is_none());
+        let events =
+            run(&mut roamer, &mut look, &mut capri, &mut desk, Busy::default(), start + 14..start + 400);
+        assert!(events.is_empty(), "{events:?}");
+        assert_eq!(capri.feet().x, x);
+        assert!(look.is_here() && capri.stance() == Stance::Floating);
+
+        // attrapée en marche : elle pend ; lâchée, elle reste là où on la met (5 minutes)
+        let (start, _) = until_she_walks(&mut roamer, &mut look, &mut capri, &mut desk, start + 400);
+        run(&mut roamer, &mut look, &mut capri, &mut desk, Busy::default(), start + 1..start + 6);
+        let cursor = capri.position() + Vec2::new(50.0, 50.0);
+        let grab = crate::input::Grab { at: cursor, since: (start + 6) as f64 / 24.0, trail: Vec::new() };
+        assert!(look.hold(&mut capri, &grab));
+        let events =
+            run(&mut roamer, &mut look, &mut capri, &mut desk, Busy::default(), start + 6..start + 30);
+        assert!(events.is_empty() && look.is_dangling(&capri) && roamer.walking_to().is_none(), "{events:?}");
+        capri.release((start + 300) as f64 / 24.0);
+        run(&mut roamer, &mut look, &mut capri, &mut desk, Busy::default(), start + 30..start + 31);
+        let now = (start + 30) as f64 / 24.0;
+        assert!((roamer.next() - (now + BY_HAND.min)).abs() < 1e-6, "{}", roamer.next());
+        assert_eq!(look.gesture(), Some(crate::look::Gesture::Rise), "lâchée, elle se relève");
+    }
+
+    #[test]
+    fn seated_she_fidgets_now_and_then_never_while_held_back() {
+        let seated = |busy: Busy, music: bool, enabled: bool| {
+            let (mut roamer, mut look, mut capri) = launched_moving(8, enabled);
+            // une seule fenêtre, assez courte pour qu'elle n'en reparte que debout, ou pas
+            let mut desk = Desk { windows: vec![seen(1, rect(800.0, 1000.0, 500.0, 800.0))], ..world() };
+            run(&mut roamer, &mut look, &mut capri, &mut desk, Busy::default(), 1..40);
+            let bench = perch::benches(&desk.windows, SCREEN, sitting())[0];
+            capri.set_on(bench.at(1050.0));
+            timed(&mut roamer, &mut look, &mut capri, &mut desk, busy, music, 40..24 * 60 * 30)
+                .into_iter()
+                .filter(|(_, event)| *event == Event::Fidgeted)
+                .map(|(at, _)| at)
+                .collect::<Vec<f64>>()
+        };
+        let free = seated(Busy::default(), false, true);
+        assert!(free.len() >= 5, "en 30 minutes : {free:?}");
+        assert!(free[0] >= 40.0 / 24.0 + FIDGET.min - 1.0, "{free:?}");
+        for pair in free.windows(2) {
+            assert!(pair[1] - pair[0] >= FIDGET.min, "{free:?}");
+            assert!(pair[1] - pair[0] <= FIDGET.max + PATIENCE + 5.0, "{free:?}");
+        }
+        assert!(seated(Busy { talking: true, hovered: false }, false, true).is_empty(), "on se parle");
+        assert!(seated(Busy::default(), true, true).is_empty(), "la musique");
+        assert!(seated(Busy::default(), false, false).is_empty(), "elle ne vit pas sa vie");
+        // la même graine, les mêmes éclats
+        assert_eq!(free, seated(Busy::default(), false, true));
+    }
+
+    #[test]
+    fn a_walk_stopped_by_the_edge_or_a_new_size_is_an_arrival_and_she_rests() {
+        for stop in ["bord", "taille"] {
+            let (mut roamer, mut look, mut capri) = launched_moving(4, false);
+            let mut desk = Desk { perch: false, ..world() };
+            run(&mut roamer, &mut look, &mut capri, &mut desk, Busy::default(), 1..100);
+            let (start, to) = until_she_walks(&mut roamer, &mut look, &mut capri, &mut desk, 100);
+            roamer.set_enabled(true, start as f64 / 24.0);
+            run(&mut roamer, &mut look, &mut capri, &mut desk, Busy::default(), start + 1..start + 12);
+            assert!(look.is_walking(&capri));
+            let x = capri.feet().x;
+            if stop == "bord" {
+                // l'écran rétrécit : son bord passe entre elle et là où elle va
+                let left = (x + to.x) / 2.0 - capri.size().x * look.standing_feet().x;
+                capri.set_bounds(Rect::new(
+                    Vec2::new(left, 0.0),
+                    Vec2::new(SCREEN.size.x - left, SCREEN.size.y),
+                ));
+            } else {
+                // elle grandit en marchant : elle s'arrête là, sans glisser
+                look.set_height(HEIGHT * 1.2);
+                capri.set_size(look.standing_size());
+            }
+            let events = timed(
+                &mut roamer,
+                &mut look,
+                &mut capri,
+                &mut desk,
+                Busy::default(),
+                false,
+                start + 12..start + 12 + 24 * 20,
+            );
+            assert_eq!(
+                events.first().map(|(_, event)| *event),
+                Some(Event::Arrived { seated: false, lost: false }),
+                "{stop} : {events:?}"
+            );
+            assert!(events.len() == 1, "{stop} : elle se repose là, sans repartir : {events:?}");
+            assert!(!look.is_walking(&capri) && look.is_here() && roamer.walking_to().is_none());
+            let feet = capri.feet().x;
+            if stop == "bord" {
+                assert!(feet < x && feet > to.x + 1.0, "arrêtée en chemin, par le bord : {feet}");
+            } else {
+                assert!((feet - x).abs() < 1e-3, "arrêtée là, sans glisser : {feet} contre {x}");
+            }
+        }
+    }
+
+    #[test]
+    fn hidden_while_walking_she_stops_and_shown_again_it_is_no_arrival() {
+        for life_sheets in [true, false] {
+            let mut look = moving_with(life_sheets);
+            let mut capri = body(&look);
+            capri.step(0.0, 0);
+            look.enter(&mut capri, 0);
+            let mut roamer = Roamer::new(4, 0.0, false);
+            let mut desk = Desk { perch: false, ..world() };
+            run(&mut roamer, &mut look, &mut capri, &mut desk, Busy::default(), 1..100);
+            let (start, _) = until_she_walks(&mut roamer, &mut look, &mut capri, &mut desk, 100);
+            run(&mut roamer, &mut look, &mut capri, &mut desk, Busy::default(), start + 1..start + 10);
+            let x = capri.feet().x;
+            look.vanish(&mut capri, start + 10);
+            // la boucle ne fait plus de pas une fois qu'elle est partie
+            let mut frame = start + 10;
+            while !look.is_gone() {
+                run(&mut roamer, &mut look, &mut capri, &mut desk, Busy::default(), frame..frame + 1);
+                frame += 1;
+            }
+            assert!(!capri.is_walking(), "vie {life_sheets}");
+            // montrée bien plus tard, pendant qu'on lui parle : ni arrivée, ni départ
+            capri.step(0.0, start + 500);
+            look.appear(&mut capri, start + 500);
+            roamer.came_back((start + 500) as f64 / 24.0, &capri);
+            let talking = Busy { talking: true, hovered: false };
+            let events =
+                run(&mut roamer, &mut look, &mut capri, &mut desk, talking, start + 500..start + 600);
+            assert!(events.is_empty(), "vie {life_sheets} : {events:?}");
+            assert_eq!(capri.feet().x, x, "vie {life_sheets} : là où elle s'est arrêtée");
+            assert_eq!(roamer.walking_to(), None);
+        }
+    }
+
+    #[test]
+    fn a_gesture_holds_her_departure_only_while_it_plays() {
+        let (mut roamer, mut look, mut capri) = launched_moving(4, true);
+        let mut desk = world();
+        let first = (roamer.next() * 24.0).ceil() as u64;
+        run(&mut roamer, &mut look, &mut capri, &mut desk, Busy::default(), 1..first - 1);
+        // elle sourit juste avant de partir
+        assert!(look.poke(&mut capri, first - 1).is_some());
+        let next = roamer.next();
+        let events = timed(
+            &mut roamer,
+            &mut look,
+            &mut capri,
+            &mut desk,
+            Busy::default(),
+            false,
+            first - 1..first + 200,
+        );
+        let (at, event) = events.first().copied().expect("elle part");
+        assert!(matches!(event, Event::Leaves { .. }), "{event:?}");
+        let ends = (first - 1 + crate::look::LONGEST_GESTURE) as f64 / 24.0;
+        assert!(
+            at >= next && at <= ends + 1.0 / 24.0,
+            "partie à {at}, prévu à {next}, le geste fini à {ends}"
+        );
+        assert!((at - ends).abs() <= 1.0 / 24.0, "juste après son sourire : {at} contre {ends}");
     }
 }

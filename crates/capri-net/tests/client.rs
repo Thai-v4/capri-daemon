@@ -401,7 +401,12 @@ fn https_never_falls_back_to_plain_text() {
     std::thread::spawn(move || {
         for _ in 0..2 {
             let Ok((mut stream, _)) = listener.accept() else { return };
-            let _ = stream.set_read_timeout(Some(Duration::from_millis(500)));
+            // le client parle le premier (son message de négociation), mais pas toujours tout de
+            // suite : sur une machine chargée, le TLS du système met parfois plus d'une
+            // demi-seconde à l'envoyer, et le serveur, lassé, ne relevait alors rien (l'essai
+            // échouait une fois sur trois le 23 novembre 2026). Il attend donc aussi longtemps
+            // que l'essai lui-même.
+            let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
             let mut bytes = vec![0u8; 16 * 1024];
             let length = stream.read(&mut bytes).unwrap_or(0);
             bytes.truncate(length);

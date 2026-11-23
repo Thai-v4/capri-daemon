@@ -5,7 +5,8 @@
 # - mochiiwuff/capri-desktop : le dessin debout, les visages, l'introduction (assets/capri/) ;
 # - lachydotmcg/capri-desktop : sa pose assise et sa pose debout, dessinées par l'artiste de ce
 #   projet (assets/capri/perch/, assets/capri/stand/), les planches de sa vie (elle apparaît,
-#   elle s'efface : assets/capri/life/) et l'intro « Up close » du lancement
+#   elle s'efface, elle marche, elle pend, elle se relève, elle sourit : assets/capri/life/) et
+#   l'intro « Up close » du lancement
 #   (assets/capri/intro/), dont ce dépôt ne nomme pas l'auteur. PolyForm Noncommercial 1.0.0 :
 #   usage non commercial seulement. Jamais les planches ni l'intro que ce dépôt crédite à
 #   quelqu'un d'autre.
@@ -73,6 +74,8 @@ bb67abb8470fb0e006daba804d120d846805da55431691d05fbb95cd99800233  perch_blink.pn
 61027b971f66b966e99247283636a8545070ad7d33fa5d7cf797536d1386ab78  perch_leave.png
 358a49b783ada47453f3a64113310121a2e6379749492109f31a5c943fe0cf15  perch_music.png
 0f2cdeb193b805dd379d05cb8fc6a8ea1dcba1b197ad3c0731204d91862069d7  perch_talk.png
+195c2e1b0c87a8ac0f37438f899e8fee9248fa488f3437f7e001b1a88e2ccb1f  perch_glitch.png
+57d521c58fd3e6fe55e44d602a3cb34479d23fc39435093fe8193a1cb7ae8348  perch_blink_glitch.png
 LIST
 
 # même dépôt, même révision ; seulement sa pose debout, la boucle que le dépôt attribue à l'artiste
@@ -80,14 +83,20 @@ fetch lachydotmcg/capri-desktop b40fc2ed271976545c7a06ef78038a07a38f1dd5 assets/
 a3657cdd00c8b730b215510a8ed3599b6c646a4b2e953d68399ac8afaf9cd0a1  idle.png
 16dddd29ff55790654f974298845f43f28d978ea18c21a28727fafb531a9a178  idle_blink.png
 e8c3e5fbdeb1647406da3149e4f24ff129d723e905d4b42585fca89efdcba75f  idle_mouth.png
+34b25c40e7d1d39b8bc236855221f7f46ef49f9cccbf14eba5d27db7088cd4b6  idle_blink_glitch.png
 LIST
 
-# même dépôt, même révision ; les planches de sa vie : elle apparaît, elle s'efface. Le dépôt ne
-# nomme pas leur auteur ; sa licence dit que tout son dessin est de son artiste, et son README ne
-# les range pas parmi les parties faites par d'autres (voir CREDITS.md)
+# même dépôt, même révision ; les planches de sa vie : elle apparaît, elle s'efface, elle marche,
+# elle pend (tenue), elle se relève, elle sourit. Le dépôt ne nomme pas leur auteur ; sa licence
+# dit que tout son dessin est de son artiste, et son README ne les range pas parmi les parties
+# faites par d'autres (voir CREDITS.md)
 fetch lachydotmcg/capri-desktop b40fc2ed271976545c7a06ef78038a07a38f1dd5 assets/sprites "$DEST/life" <<'LIST'
 be03a983e65d2de7fc9ef3f992759610431ee5f4a750af580d36dfe607ca51c7  arrive.png
 40b52533b57ab33c896a050f9968f639dcea8203d61ab717e1e0140d59b18d58  leave.png
+68d8cc71cde4a240447f190136a075e10ef6f71520015cdee8ceefc202b2aebd  walk.png
+0d92f9ece48e0c0ccc728cb49322227c73f34458b14eb32606020bf3c5c98b5f  dangle.png
+f108f696a36db25de2162b128982ef30ae1c066b6594885b284bab8b22d80252  glitch.png
+760e8f9378389d6776f9e2477ffcb9e2c62a0a56bffce328c5d8c6710b21dbd4  grin.png
 LIST
 
 # même dépôt, même révision ; l'intro « Up close » du lancement (22 images de 1920 × 1080 : elle

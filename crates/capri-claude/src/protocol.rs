@@ -39,7 +39,9 @@ pub struct Message {
     pub cwd: Option<String>,
     /// Heure de l'événement vue par le hook, en millisecondes depuis 1970.
     pub at_ms: u64,
-    /// Type du sous-agent dans lequel l'événement s'est produit, s'il y en a un.
+    /// Type du sous-agent ou du coéquipier dans lequel l'événement s'est produit, s'il y en a un
+    /// (vide s'il n'en a pas) ; jamais pour la session principale, même lancée avec `--agent`
+    /// (`hook_input::in_an_agent`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent: Option<String>,
     #[serde(flatten)]
@@ -189,6 +191,16 @@ pub enum ProtocolError {
 }
 
 impl Message {
+    /// Claude vient-il de finir son tour dans la session principale ? Un `Stop` (jamais
+    /// `SubagentStop`, qui est un autre événement), hors d'un sous-agent ou d'un coéquipier : le
+    /// hook ne nomme un agent ([`Message::agent`]) que si l'événement porte un `agent_id`, la même
+    /// règle que pour le miroir (`hook_input::in_an_agent`). Une session lancée avec `--agent`
+    /// compte. (Un hook d'avant cette règle nommait aussi l'agent de `--agent` : ses fins de tour ne
+    /// comptent pas.)
+    pub fn ends_main_turn(&self) -> bool {
+        matches!(self.event, Event::TurnEnd { .. }) && self.agent.is_none()
+    }
+
     /// La ligne à envoyer, saut de ligne final compris.
     pub fn encode(&self) -> Result<String, ProtocolError> {
         let mut line = serde_json::to_string(self)?;
@@ -426,6 +438,24 @@ mod tests {
             at_ms: 1_731_250_000_000,
             agent: None,
             event,
+        }
+    }
+
+    #[test]
+    fn only_a_stop_of_the_main_session_ends_its_turn() {
+        assert!(message(Event::TurnEnd { said: None }).ends_main_turn());
+        assert!(message(Event::TurnEnd { said: Some(Said::new("Fini.".into())) }).ends_main_turn());
+        // dans un coéquipier (ou une session lancée avec --agent : pas distinguée, pas comptée)
+        let inside = Message { agent: Some("Explore".into()), ..message(Event::TurnEnd { said: None }) };
+        assert!(!inside.ends_main_turn());
+        // un sous-agent qui finit, un tour qui échoue, un outil qui finit : non
+        for event in [
+            Event::AgentEnd { agent_type: Some("Explore".into()), agent_id: Some("a1".into()) },
+            Event::TurnFailed { error: None },
+            Event::ToolEnd { tool: "Bash".into(), id: None, duration_ms: None },
+            Event::TurnStart,
+        ] {
+            assert!(!message(event).ends_main_turn());
         }
     }
 

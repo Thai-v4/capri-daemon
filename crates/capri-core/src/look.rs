@@ -51,12 +51,52 @@
 //! ([`Look::is_traveling`]) ne se confondent jamais ; ni l'une ni l'autre n'est libre
 //! ([`Look::is_away`]).
 //!
-//! **Le temps** : l'image d'animation à 24 i/s ; tous ses dessins sont tenus deux images (12 par
-//! seconde). Rien n'est tiré au hasard : la même image donne toujours le même dessin.
+//! **Ses gestes** ([`Gesture`]) : une suite jouée une fois par-dessus sa boucle, puis sa boucle
+//! reprend, par une coupe franche. Lâchée debout après avoir été tenue ou lancée, elle se relève
+//! ([`life::rising`], dans `update`) ; un clic sur elle ([`Look::poke`]) la fait sourire debout
+//! ([`life::grinning`], deux tours) ou lui donne un éclat assise ([`sheets::glitching`]) ; quand
+//! Claude Code finit son tour, elle sourit, debout seulement, pas plus d'une fois par
+//! [`CHEER_EVERY`] ([`Look::cheer`]) ; assise, sa vie lui donne de temps en temps un éclat
+//! ([`Look::fidget`], appelée par `roam`). Debout, son tour s'arrête le temps du geste (elle ne
+//! flotte pas), puis reprend là où il était ; assise, sa boucle repart de son dessin 0, sur lequel
+//! l'éclat finit. **Les priorités** : une prise passe avant tout (le geste s'arrête net, elle pend) ;
+//! puis ce qu'on lui dit et ce qu'elle répond (`talking`, [`Look::set_conversing`] : le geste
+//! s'arrête, elle parle avec sa boucle et sa bouche, et rien ne commence) ; puis ses gestes ; puis
+//! sa boucle. Jamais deux gestes à la fois : un geste demandé pendant un autre ne se joue pas. Un
+//! geste ne se joue que si elle est là ([`Look::is_here`]), et finit toujours, au plus tard après
+//! [`LONGEST_GESTURE`] images.
+//!
+//! **Tenue ou lancée** : avec sa planche en l'air ([`life::dangling`]), elle pend, tenue par sa
+//! mèche ([`life::GRIP`]), et garde ce dessin en vol ; sans, sa boucle debout écrasée et étirée,
+//! comme avant. La prise ([`Look::hold`]) ne la fait pas sauter : son corps ne bouge pas quand on
+//! l'attrape (assise, elle se lève sous le curseur, comme avant), puis, à mesure que le curseur
+//! bouge, elle glisse pour amener sa mèche sous lui (`Capri::hold_toward`) ; [`Look::grip`] dit où
+//! sa mèche est dessinée.
+//!
+//! **Elle marche** ([`Look::walk`], décidé par `roam`) : sa planche de marche ([`life::walking`]),
+//! par-dessus son image debout, son tour arrêté ; sa position avance à la cadence de l'écran
+//! (`Capri::walk_to`), à la vitesse de [`life::walk_speed`], dans le sens où elle regarde
+//! ([`life::FACING`]). Attrapée, elle pend ; cachée, elle s'arrête et s'efface ; quand on lui
+//! parle, `roam` l'arrête ([`Look::halt`]) et elle reprend sa boucle.
+//!
+//! **Ses clignements** : aux tours de [`BLINKS`] ; au tour [`GLITCHY_BLINK`] de chaque série (le
+//! dernier des quatre clignements, toutes les 20 s), la variante glitchée de sa planche, debout
+//! comme assise, si elle est là.
+//!
+//! **Le repli** : chacune de ces planches est facultative ([`Moves`]) ; sans l'une, ce qu'elle porte
+//! ne se joue pas, et le reste est comme avant : sans sa planche en l'air, elle est tenue comme
+//! avant ; sans sa marche, elle change de place en s'effaçant ; sans le glitch ou le sourire, rien
+//! ne se joue ; sans les variantes, ses clignements d'avant. Ses planches de vie de 240 px
+//! s'alignent sur sa pose debout : sans elle, aucune ne sert.
+//!
+//! **Le temps** : l'image d'animation à 24 i/s ; ses dessins sont tenus deux images (12 par
+//! seconde), son sourire trois (8 par seconde, sa cadence d'origine). Rien n'est tiré au hasard :
+//! la même image donne toujours le même dessin.
 
 use crate::anim::Sheet;
-use crate::body::Capri;
+use crate::body::{Capri, Stance};
 use crate::geom::{Rect, Vec2};
+use crate::input::Grab;
 use crate::mask::AlphaMask;
 use crate::perch::{FOOT, Reach, Stature};
 use crate::sheets::{self, life, stand};
@@ -72,6 +112,61 @@ pub const BLINKS: [bool; 8] = [true, false, true, true, false, true, false, fals
 pub fn blinks(tour: u64) -> bool {
     BLINKS[(tour % BLINKS.len() as u64) as usize]
 }
+
+/// Le tour de chaque série de [`BLINKS`] où elle cligne avec la variante glitchée de son
+/// clignement (s'il y en a une) : le dernier des quatre clignements, une fois toutes les 20 s. Une
+/// règle fixe, comme ses clignements : la même image donne le même dessin.
+pub const GLITCHY_BLINK: u64 = 5;
+
+/// Cligne-t-elle avec la variante glitchée au tour n° `tour` ?
+pub fn blinks_glitchy(tour: u64) -> bool {
+    tour % BLINKS.len() as u64 == GLITCHY_BLINK
+}
+
+/// Quand Claude Code finit son tour, elle ne sourit pas plus d'une fois en tant d'images : une
+/// minute.
+pub const CHEER_EVERY: u64 = 60 * 24;
+
+/// Un geste : une suite jouée une fois par-dessus sa boucle (voir le module).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Gesture {
+    /// Debout, lâchée après avoir été tenue ou lancée : elle se relève ([`life::rising`]).
+    Rise,
+    /// Debout : elle sourit ([`life::grinning`], deux tours).
+    Grin,
+    /// Assise : un éclat ([`sheets::glitching`]).
+    PerchGlitch,
+}
+
+impl Gesture {
+    pub const ALL: [Gesture; 3] = [Gesture::Rise, Gesture::Grin, Gesture::PerchGlitch];
+
+    /// Combien d'images il dure, joué jusqu'au bout.
+    pub fn frames(self) -> u64 {
+        match self {
+            Gesture::Rise => u64::from(life::Strip::Glitch.count() * life::Strip::Glitch.hold()),
+            Gesture::Grin => life::grin_frames(),
+            Gesture::PerchGlitch => u64::from(sheets::Strip::PerchGlitch.count() * sheets::HOLD),
+        }
+    }
+
+    /// Se joue-t-il assise ?
+    pub fn seated(self) -> bool {
+        matches!(self, Gesture::PerchGlitch)
+    }
+
+    /// Pour le journal.
+    pub fn describe(self) -> &'static str {
+        match self {
+            Gesture::Rise => "elle se relève",
+            Gesture::Grin => "elle sourit",
+            Gesture::PerchGlitch => "un éclat, assise",
+        }
+    }
+}
+
+/// Le plus long de ses gestes, en images : son sourire, 4 s. Aucun ne dure plus.
+pub const LONGEST_GESTURE: u64 = 96;
 
 /// Un dessin d'elle.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -118,6 +213,28 @@ pub struct Wardrobe {
     /// Ses planches de vie : l'union des dessins de son arrivée (rien ne l'attrape quand elle
     /// s'efface).
     pub life: Option<AlphaMask>,
+    /// Ses gestes et ses variantes, chacun facultatif.
+    pub moves: Moves,
+}
+
+/// Ses gestes et ses variantes : chaque planche est là ou non, une à une (voir le module). Celles
+/// de sa vie, de 240 px, ont chacune le masque de clic de ses dessins (l'union de ses cases) ;
+/// celles de ses poses prennent le masque de leur pose.
+#[derive(Default)]
+pub struct Moves {
+    /// Elle marche.
+    pub walk: Option<AlphaMask>,
+    /// Tenue ou lancée, elle pend.
+    pub dangle: Option<AlphaMask>,
+    /// Lâchée, elle se relève.
+    pub glitch: Option<AlphaMask>,
+    /// Elle sourit.
+    pub grin: Option<AlphaMask>,
+    /// Assise, un éclat (dans des cases larges : le masque des cases larges de sa pose assise).
+    pub perch_glitch: bool,
+    /// Les variantes glitchées de ses clignements, assise et debout.
+    pub perch_blink_glitch: bool,
+    pub stand_blink_glitch: bool,
 }
 
 /// Une suite jouée une fois pour apparaître ou s'effacer : ses planches de vie, par-dessus son
@@ -223,15 +340,22 @@ enum Seat {
 struct Sheets {
     standing: Sheet<stand::Cell>,
     standing_blink: Sheet<stand::Cell>,
+    standing_glitchy: Sheet<stand::Cell>,
     mouth: Sheet<stand::Cell>,
     sitting: Sheet<sheets::Cell>,
     sitting_blink: Sheet<sheets::Cell>,
+    sitting_glitchy: Sheet<sheets::Cell>,
     talking: Sheet<sheets::Cell>,
     music: Sheet<sheets::Cell>,
     arriving: Sheet<sheets::Cell>,
     leaving: Sheet<sheets::Cell>,
+    perch_glitch: Sheet<sheets::Cell>,
     life_arriving: Sheet<life::Cell>,
     life_leaving: Sheet<life::Cell>,
+    walk: Sheet<life::Cell>,
+    dangle: Sheet<life::Cell>,
+    rise: Sheet<life::Cell>,
+    grin: Sheet<life::Cell>,
 }
 
 pub struct Look {
@@ -247,6 +371,19 @@ pub struct Look {
     talking: bool,
     /// Assise, elle se balance (la musique se prend et se quitte au début d'un tour).
     grooving: bool,
+    /// De la musique joue (que sa boucle l'ait déjà prise ou pas encore).
+    music: bool,
+    /// On se parle (au micro ou par écrit ; elle parle, répond ou va répondre) : un geste s'arrête,
+    /// et rien ne commence ([`Look::set_conversing`]).
+    conversing: bool,
+    /// Le geste en cours, et l'image où il a commencé.
+    act: Option<(Gesture, u64)>,
+    /// Depuis quelle image on la tient (ou qu'elle vole) : le tour de sa planche en l'air.
+    carried: Option<u64>,
+    /// Depuis quelle image elle marche.
+    walking: Option<u64>,
+    /// La dernière fois qu'elle a souri parce que Claude Code finissait son tour.
+    cheered: Option<u64>,
     sheets: Sheets,
 }
 
@@ -263,18 +400,31 @@ impl Look {
             frame: 0,
             talking: false,
             grooving: false,
+            music: false,
+            conversing: false,
+            act: None,
+            carried: None,
+            walking: None,
+            cheered: None,
             sheets: Sheets {
                 standing: stand::standing(false),
                 standing_blink: stand::standing(true),
+                standing_glitchy: stand::standing_glitchy(),
                 mouth: stand::talking(),
                 sitting: sheets::sitting(false),
                 sitting_blink: sheets::sitting(true),
+                sitting_glitchy: sheets::sitting_glitchy(),
                 talking: sheets::talking(),
                 music: sheets::music(),
                 arriving: sheets::arriving(),
                 leaving: sheets::leaving(),
+                perch_glitch: sheets::glitching(),
                 life_arriving: life::arriving(),
                 life_leaving: life::leaving(),
+                walk: life::walking(),
+                dangle: life::dangling(),
+                rise: life::rising(),
+                grin: life::grinning(),
             },
         }
     }
@@ -339,6 +489,10 @@ impl Look {
     pub fn vanish(&mut self, capri: &mut Capri, frame: u64) {
         let picture = self.picture(capri);
         self.frame = self.frame.max(frame);
+        if self.is_here() {
+            // son geste s'arrête, sa marche aussi : elle s'efface de là où elle est
+            self.stop(capri);
+        }
         self.presence = match self.presence {
             Presence::Vanishing(_, Exit::Hidden) | Presence::Gone(_, Exit::Hidden) => return,
             Presence::Vanishing(run, Exit::Trip) => Presence::Vanishing(run, Exit::Hidden),
@@ -359,6 +513,7 @@ impl Look {
     /// ([`Look::appear`]), elle se matérialise comme au lancement.
     pub fn hide_unseen(&mut self, frame: u64) {
         self.frame = self.frame.max(frame);
+        self.act = None;
         self.presence = Presence::Gone(None, Exit::Hidden);
     }
 
@@ -373,6 +528,7 @@ impl Look {
         }
         let picture = self.picture(capri);
         self.frame = self.frame.max(frame);
+        self.stop(capri);
         self.presence = if self.has_life() {
             Presence::Vanishing(self.exit(capri, picture.drawing, frame), Exit::Trip)
         } else {
@@ -389,6 +545,8 @@ impl Look {
             return;
         }
         self.frame = self.frame.max(frame);
+        self.act = None;
+        self.walking = None;
         // ce qu'elle faisait là où elle était ne compte plus : ni un départ de son bord à finir,
         // ni une boucle assise à reprendre
         match capri.seat().filter(|_| self.has_perch()) {
@@ -436,10 +594,24 @@ impl Look {
         matches!(self.presence, Presence::Gone(_, Exit::Trip))
     }
 
+    /// Son geste et sa marche s'arrêtent là, et son tour reprend s'ils l'avaient arrêté (s'effacer
+    /// l'arrête de nouveau, voir [`Look::exit`]).
+    fn stop(&mut self, capri: &mut Capri) {
+        let standing = self.act.take().is_some_and(|(gesture, _)| !gesture.seated());
+        let walked = self.walking.take().is_some();
+        if walked {
+            capri.halt();
+        }
+        if standing || walked {
+            capri.unstill();
+        }
+    }
+
     /// Comment elle apparaît : assise sur son bord si elle y est posée (avec ses planches
     /// assises), sinon debout, son tour arrêté le temps de son arrivée ; d'un coup sans ses
     /// planches de vie.
     fn entrance(&mut self, capri: &mut Capri, frame: u64) -> Presence {
+        self.act = None;
         if !self.has_life() {
             return Presence::Here;
         }
@@ -506,6 +678,181 @@ impl Look {
         self.wardrobe.perch.is_some()
     }
 
+    /// Cette planche de sa vie est-elle là, avec sa pose debout sur laquelle elle s'aligne ?
+    pub fn has_move(&self, strip: life::Strip) -> bool {
+        self.has_stand() && self.life_mask(strip).is_some()
+    }
+
+    /// Ses gestes et ses variantes, tels que chargés.
+    pub fn moves(&self) -> &Moves {
+        &self.wardrobe.moves
+    }
+
+    /// Le masque de clic d'une planche de sa vie, si elle est là.
+    fn life_mask(&self, strip: life::Strip) -> Option<&AlphaMask> {
+        let moves = &self.wardrobe.moves;
+        match strip {
+            life::Strip::Arrive | life::Strip::Leave => self.wardrobe.life.as_ref(),
+            life::Strip::Walk => moves.walk.as_ref(),
+            life::Strip::Dangle => moves.dangle.as_ref(),
+            life::Strip::Glitch => moves.glitch.as_ref(),
+            life::Strip::Grin => moves.grin.as_ref(),
+        }
+    }
+
+    /// Ce geste peut-il se jouer (sa planche est-elle là) ?
+    pub fn can(&self, gesture: Gesture) -> bool {
+        match gesture {
+            Gesture::Rise => self.has_move(life::Strip::Glitch),
+            Gesture::Grin => self.has_move(life::Strip::Grin),
+            Gesture::PerchGlitch => self.has_perch() && self.wardrobe.moves.perch_glitch,
+        }
+    }
+
+    /// Le geste en cours, s'il y en a un.
+    pub fn gesture(&self) -> Option<Gesture> {
+        self.act.map(|(gesture, _)| gesture)
+    }
+
+    /// L'image où le geste en cours a commencé, s'il y en a un.
+    pub fn gesture_since(&self) -> Option<u64> {
+        self.act.map(|(_, since)| since)
+    }
+
+    /// On se parle (on lui parle au micro ou par écrit, elle parle, répond ou va répondre) : un
+    /// geste en cours s'arrête au prochain pas, et aucun ne commence. À dire avant chaque pas.
+    pub fn set_conversing(&mut self, conversing: bool) {
+        self.conversing = conversing;
+    }
+
+    /// Libre pour un geste ou une marche : là, aucun geste en cours, on ne se parle pas, ni tenue,
+    /// ni lancée, ni en marche.
+    fn free(&self, capri: &Capri) -> bool {
+        self.is_here()
+            && self.act.is_none()
+            && !self.talking
+            && !self.conversing
+            && !carried(capri)
+            && !capri.is_walking()
+    }
+
+    /// Assise (avec ses planches), sa boucle en cours : ni en train d'arriver ni de repartir.
+    fn is_sitting(&self, capri: &Capri) -> bool {
+        matches!(self.seat, Seat::Sitting { .. }) && self.has_perch() && capri.seat().is_some()
+    }
+
+    /// Debout et immobile : elle flotte, ou se tient debout sur un bord faute de pose assise.
+    fn standing_still(&self, capri: &Capri) -> bool {
+        matches!(self.seat, Seat::Standing)
+            && match capri.stance() {
+                Stance::Floating => true,
+                Stance::Perched { .. } => !self.has_perch(),
+                Stance::Held { .. } | Stance::Thrown { .. } | Stance::Walking { .. } => false,
+            }
+    }
+
+    /// Le geste `gesture` commence à l'image `frame`, si sa planche est là et qu'elle est libre ;
+    /// debout, son tour s'arrête le temps du geste.
+    fn begin(&mut self, capri: &mut Capri, gesture: Gesture, frame: u64) -> bool {
+        let posed = if gesture.seated() { self.is_sitting(capri) } else { self.standing_still(capri) };
+        if !posed || !self.can(gesture) || !self.free(capri) {
+            return false;
+        }
+        self.frame = self.frame.max(frame);
+        self.act = Some((gesture, frame));
+        if !gesture.seated() {
+            capri.still(Some(frame + gesture.frames()));
+        }
+        true
+    }
+
+    /// Un clic sur elle (un appui bref, relâché sans la déplacer), à l'image `frame` : assise, un
+    /// éclat ; debout, elle sourit. Seulement si elle est libre et que la planche est là. Rend le
+    /// geste joué.
+    pub fn poke(&mut self, capri: &mut Capri, frame: u64) -> Option<Gesture> {
+        let gesture = if self.is_sitting(capri) { Gesture::PerchGlitch } else { Gesture::Grin };
+        self.begin(capri, gesture, frame).then_some(gesture)
+    }
+
+    /// Claude Code vient de finir son tour (dans la session principale), à l'image `frame` :
+    /// debout et libre, elle sourit, pas plus d'une fois par [`CHEER_EVERY`] ; assise, rien. Rend
+    /// `true` si elle sourit.
+    pub fn cheer(&mut self, capri: &mut Capri, frame: u64) -> bool {
+        if self.cheered.is_some_and(|at| frame < at.saturating_add(CHEER_EVERY)) {
+            return false;
+        }
+        let cheered = self.begin(capri, Gesture::Grin, frame);
+        if cheered {
+            self.cheered = Some(frame);
+        }
+        cheered
+    }
+
+    /// Assise et libre, sans musique : un éclat, à l'image `frame` (sa vie le lui fait faire de
+    /// temps en temps, voir `roam`). Rend `true` s'il se joue.
+    pub fn fidget(&mut self, capri: &mut Capri, frame: u64) -> bool {
+        !self.music && !self.grooving && self.begin(capri, Gesture::PerchGlitch, frame)
+    }
+
+    /// Sa vitesse de marche, en pixels par seconde, si elle sait marcher (sa planche est là).
+    pub fn walk_speed(&self) -> Option<f32> {
+        self.has_move(life::Strip::Walk).then(|| life::walk_speed(self.height))
+    }
+
+    /// Elle marche jusqu'à ce que ses pieds soient en x = `to`, à partir de l'image `frame` :
+    /// seulement debout, libre, en flottant, et si elle sait marcher. Son tour s'arrête le temps de
+    /// la marche. Rend `false` sinon, et rien ne change.
+    pub fn walk(&mut self, capri: &mut Capri, frame: u64, to: f32) -> bool {
+        let Some(speed) = self.walk_speed() else { return false };
+        if !self.free(capri) || capri.stance() != Stance::Floating || !matches!(self.seat, Seat::Standing) {
+            return false;
+        }
+        if !capri.walk_to(to, speed) {
+            return false;
+        }
+        self.frame = self.frame.max(frame);
+        capri.still(None);
+        self.walking = Some(frame);
+        true
+    }
+
+    /// Marche-t-elle ?
+    pub fn is_walking(&self, capri: &Capri) -> bool {
+        self.walking.is_some() && capri.is_walking()
+    }
+
+    /// Elle s'arrête de marcher là où elle est, et reprend sa boucle (on lui parle). Sans effet si
+    /// elle ne marche pas.
+    pub fn halt(&mut self, capri: &mut Capri) {
+        if self.walking.take().is_some() {
+            capri.halt();
+            if !capri.is_held() {
+                capri.unstill();
+            }
+        }
+    }
+
+    /// Tenue ou lancée, avec sa planche en l'air : elle pend.
+    pub fn is_dangling(&self, capri: &Capri) -> bool {
+        carried(capri) && self.has_move(life::Strip::Dangle) && self.is_here()
+    }
+
+    /// Tenue ou lancée, avec sa planche en l'air : là où est dessiné le point par où on la tient
+    /// ([`life::GRIP`]), qui doit être sous le curseur quand on la tient.
+    pub fn grip(&self, capri: &Capri) -> Option<Vec2> {
+        if !self.is_dangling(capri) {
+            return None;
+        }
+        let rect = life::over_stand(capri.pose().rect);
+        Some(
+            rect.min
+                + Vec2::new(
+                    life::GRIP.0 * rect.size.x / life::CELL_WIDTH as f32,
+                    life::GRIP.1 * rect.size.y / sheets::CELL_HEIGHT as f32,
+                ),
+        )
+    }
+
     /// Sa hauteur debout a changé (sa taille, ou la densité de l'écran).
     pub fn set_height(&mut self, height: f32) {
         self.height = height;
@@ -551,14 +898,20 @@ impl Look {
 
     /// Se balance-t-elle en ce moment ?
     pub fn is_grooving(&self) -> bool {
-        self.grooving && matches!(self.seat, Seat::Sitting { .. }) && !self.talking && self.is_here()
+        self.grooving
+            && matches!(self.seat, Seat::Sitting { .. })
+            && !self.talking
+            && self.is_here()
+            && self.act.is_none()
     }
 
     /// À chaque pas, après celui de Capri et le suivi de sa fenêtre : l'image d'animation
-    /// `frame`, si elle parle, et si de la musique joue.
-    pub fn update(&mut self, capri: &Capri, frame: u64, talking: bool, music: bool) {
+    /// `frame`, si elle parle, et si de la musique joue. Son geste finit ou s'arrête ici, et, lâchée
+    /// debout après avoir été tenue ou lancée, elle se relève.
+    pub fn update(&mut self, capri: &mut Capri, frame: u64, talking: bool, music: bool) {
         let previous = std::mem::replace(&mut self.frame, frame);
         self.talking = talking;
+        self.music = music;
         let seat = capri.seat().filter(|_| self.has_perch());
         let (arrive, leave) = (self.sheets.arriving.len(), self.sheets.leaving.len());
         self.seat = match (self.seat, seat) {
@@ -587,6 +940,7 @@ impl Look {
             Presence::Vanishing(run, exit) if run.left(frame) == 0 => Presence::Gone(Some(run), exit),
             unchanged => unchanged,
         };
+        self.gestures(capri, frame, talking);
         // la musique se prend et se quitte au début d'un tour de sa boucle ; en parlant, elle ne
         // se balance pas, et n'y revient qu'au tour suivant
         match self.seat {
@@ -601,6 +955,50 @@ impl Look {
         }
     }
 
+    /// Un pas de ses gestes, dans `update` : tenue ou lancée, depuis quand ; sa marche finie ; le
+    /// geste en cours fini ou interrompu (une prise, on se parle, elle n'est plus là, ou plus dans
+    /// la pose du geste) ; lâchée debout, elle se relève.
+    fn gestures(&mut self, capri: &mut Capri, frame: u64, talking: bool) {
+        let carried = carried(capri);
+        let released = match (self.carried, carried) {
+            (None, true) => {
+                self.carried = Some(frame);
+                false
+            }
+            (Some(_), false) => {
+                self.carried = None;
+                true
+            }
+            _ => false,
+        };
+        // arrivée, arrêtée au bord de l'écran, attrapée : sa marche est finie, et son tour reprend
+        if self.walking.is_some() && !capri.is_walking() {
+            self.walking = None;
+            if self.is_here() && !carried {
+                capri.unstill();
+            }
+        }
+        if let Some((gesture, since)) = self.act {
+            let end = since.saturating_add(gesture.frames());
+            let sitting = matches!(self.seat, Seat::Sitting { .. });
+            let posed = if gesture.seated() { sitting } else { matches!(self.seat, Seat::Standing) };
+            let cut = carried || talking || self.conversing || !self.is_here() || !posed;
+            if cut || frame >= end {
+                self.act = None;
+                if gesture.seated() && sitting {
+                    // sa boucle repart de son dessin 0, sur lequel l'éclat finit
+                    self.seat = Seat::Sitting { since: end.min(frame) };
+                } else if !gesture.seated() && cut && !carried && self.is_here() {
+                    // fini plus tôt : son tour reprend tout de suite (une prise l'a déjà repris)
+                    capri.unstill();
+                }
+            }
+        }
+        if released && capri.stance() == Stance::Floating && self.act.is_none() {
+            self.begin(capri, Gesture::Rise, frame);
+        }
+    }
+
     /// Ce qu'on dessine maintenant.
     pub fn picture(&self, capri: &Capri) -> Picture {
         let frame = self.frame;
@@ -610,6 +1008,11 @@ impl Look {
             Presence::Vanishing(run, _) | Presence::Gone(Some(run), _) => return self.played(capri, run),
             _ => {}
         }
+        // tenue ou lancée : elle pend, tenue par sa mèche
+        if carried(capri) && self.has_move(life::Strip::Dangle) {
+            let since = self.carried.unwrap_or(frame);
+            return self.alive(capri, self.sheets.dangle.at(frame.saturating_sub(since)));
+        }
         if !capri.is_held() {
             let at = capri.seat().or(self.last_seat);
             match (self.seat, at) {
@@ -618,12 +1021,19 @@ impl Look {
                     return self.seated(at, cell);
                 }
                 (Seat::Sitting { since }, Some(at)) => {
+                    if let Some((Gesture::PerchGlitch, start)) = self.act {
+                        let cell = at_most(&self.sheets.perch_glitch, frame.saturating_sub(start));
+                        return self.seated(at, cell);
+                    }
                     let f = frame.saturating_sub(since);
+                    let tour = f / TOUR;
                     let sheet = if self.talking {
                         &self.sheets.talking
                     } else if self.grooving {
                         &self.sheets.music
-                    } else if blinks(f / TOUR) {
+                    } else if blinks_glitchy(tour) && self.wardrobe.moves.perch_blink_glitch {
+                        &self.sheets.sitting_glitchy
+                    } else if blinks(tour) {
                         &self.sheets.sitting_blink
                     } else {
                         &self.sheets.sitting
@@ -660,7 +1070,7 @@ impl Look {
                 Some(masks) => &masks.narrow,
                 None => cutout,
             },
-            Drawing::Life(_) => match &self.wardrobe.life {
+            Drawing::Life(cell) => match self.life_mask(cell.strip) {
                 Some(mask) => mask,
                 None => return false,
             },
@@ -684,6 +1094,27 @@ impl Look {
         }
         let (top, tall) = self.standing_content();
         Rect::new(capri.position() + Vec2::new(0.0, top), Vec2::new(capri.size().x, tall))
+    }
+
+    /// Une prise (`input::Grab`, faite par l'app au moment où un appui en devient une) : là où
+    /// l'appui a commencé, son corps sans bouger (assise, elle se lève sous le curseur :
+    /// [`Look::grab_origin`]) ; avec sa planche en l'air, elle glisse ensuite vers sa mèche sous le
+    /// curseur ([`Look::grip_offset`]). Rien si elle s'efface ou est partie (rien ne l'attrape
+    /// alors) : rend `false`.
+    pub fn hold(&self, capri: &mut Capri, grab: &Grab) -> bool {
+        if self.is_away() {
+            return false;
+        }
+        let origin = self.grab_origin(capri, grab.at);
+        let toward = self.grip_offset(capri);
+        grab.take(capri, origin, toward);
+        true
+    }
+
+    /// Avec sa planche en l'air : l'écart entre le curseur et le coin haut gauche de son image
+    /// debout qui met sa mèche sous le curseur ([`life::grip`]).
+    pub fn grip_offset(&self, capri: &Capri) -> Option<Vec2> {
+        self.has_move(life::Strip::Dangle).then(|| life::grip(capri.size()))
     }
 
     /// On l'attrape assise, le curseur en `cursor` : où mettre le coin haut gauche de son image
@@ -737,10 +1168,28 @@ impl Look {
                 ghost: pose.ghost,
             };
         }
+        // en marche, ou un geste : ses planches de vie, par-dessus son image debout
+        if let Some(since) = self.walking.filter(|_| capri.is_walking() && self.has_move(life::Strip::Walk)) {
+            return self.alive(capri, self.sheets.walk.at(self.frame.saturating_sub(since)));
+        }
+        if let Some((gesture, since)) = self.act {
+            let f = self.frame.saturating_sub(since).min(gesture.frames().saturating_sub(1));
+            match gesture {
+                Gesture::Rise => return self.alive(capri, at_most(&self.sheets.rise, f)),
+                Gesture::Grin => return self.alive(capri, self.sheets.grin.at(f)),
+                Gesture::PerchGlitch => {}
+            }
+        }
         // la boucle suit son tour, que partage son flottement (il s'arrête quand elle apparaît ou
         // s'efface) ; sa bouche, l'image d'animation
         let tour = capri.tour();
-        let sheet = if blinks(tour / TOUR) { &self.sheets.standing_blink } else { &self.sheets.standing };
+        let sheet = if blinks_glitchy(tour / TOUR) && self.wardrobe.moves.stand_blink_glitch {
+            &self.sheets.standing_glitchy
+        } else if blinks(tour / TOUR) {
+            &self.sheets.standing_blink
+        } else {
+            &self.sheets.standing
+        };
         Picture {
             drawing: Drawing::Stand(sheet.at(tour)),
             rect: pose.rect,
@@ -813,14 +1262,20 @@ pub fn seated_stature(height: f32) -> Stature {
 }
 
 /// Une suite jouée une fois : le dessin de l'image `frame`, ou le dernier une fois finie.
-fn at_most(sheet: &Sheet<sheets::Cell>, frame: u64) -> sheets::Cell {
+fn at_most<T: Copy>(sheet: &Sheet<T>, frame: u64) -> T {
     sheet.at(frame.min(sheet.len() - 1))
+}
+
+/// Tenue, ou lancée.
+fn carried(capri: &Capri) -> bool {
+    matches!(capri.stance(), Stance::Held { .. } | Stance::Thrown { .. })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::body::Stance;
+    use crate::input::Grab;
     use crate::perch::{Perch, Spot};
     use crate::sheets::Strip;
     use crate::sheets::stand::Strip as StandStrip;
@@ -851,6 +1306,7 @@ mod tests {
             }),
             // l'union de son arrivée : plein de (30, 15) à (210, 370), comme les vraies planches
             life: life.then(|| block(life::CELL_WIDTH, sheets::CELL_HEIGHT, (30, 15, 210, 370))),
+            moves: Moves::default(),
         }
     }
 
@@ -902,7 +1358,7 @@ mod tests {
         assert_eq!(blinked_tours, [0, 2, 3, 5], "quatre clignements en 20 s, toujours aux mêmes tours");
         // la même image donne le même dessin
         let again = look.picture(&c);
-        look.update(&c, look.frame, false, false);
+        look.update(&mut c, look.frame, false, false);
         assert_eq!(look.picture(&c), again);
     }
 
@@ -982,7 +1438,7 @@ mod tests {
         let seated_rect = look.picture(&c).rect;
         // sa fenêtre se ferme : elle s'efface là où elle était, puis flotte debout
         c.take_off();
-        look.update(&c, sitting, false, false);
+        look.update(&mut c, sitting, false, false);
         let leave = sheets::leaving().len();
         for frame in sitting..sitting + leave {
             let picture = at(&mut look, &mut c, frame, false, false);
@@ -1394,7 +1850,7 @@ mod tests {
         land(&mut look, &mut c, 0);
         at(&mut look, &mut c, 100, false, false);
         c.take_off();
-        look.update(&c, 100, false, false);
+        look.update(&mut c, 100, false, false);
         at(&mut look, &mut c, 110, false, false);
         look.vanish(&mut c, 110);
         assert_eq!(
@@ -1463,7 +1919,7 @@ mod tests {
         c.step(0.0, 105);
         c.release(10.0);
         c.land(Perch { spot: SPOT, feet: EDGE });
-        look.update(&c, 105, false, false);
+        look.update(&mut c, 105, false, false);
         at(&mut look, &mut c, 140, false, false);
         assert!(look.is_gone());
         // montrée, toujours posée : elle réapparaît assise
@@ -1473,7 +1929,7 @@ mod tests {
         assert!(look.is_here() && look.is_seated(&c));
         // sa fenêtre se ferme : debout, elle flotte de nouveau, sa boucle et son tour avancent
         c.take_off();
-        look.update(&c, 600, false, false);
+        look.update(&mut c, 600, false, false);
         let picture = at(&mut look, &mut c, 640, false, false);
         let tour = c.tour();
         let later = at(&mut look, &mut c, 700, false, false);
@@ -1500,12 +1956,12 @@ mod tests {
         look.vanish(&mut c, 100);
         c.step(0.0, 104);
         c.ride(Perch { spot: SPOT, feet: moved });
-        look.update(&c, 104, false, false);
+        look.update(&mut c, 104, false, false);
         assert!((seat_line(&look.picture(&c)) - moved).length() <= 1.0, "elle suit son bord");
         c.step(0.0, 106);
         c.take_off();
         assert!((seat_line(&look.picture(&c)) - moved).length() <= 1.0, "avant le pas suivant");
-        look.update(&c, 106, false, false);
+        look.update(&mut c, 106, false, false);
         let picture = look.picture(&c);
         assert!((seat_line(&picture) - moved).length() <= 1.0, "là où il est allé : {picture:?}");
 
@@ -1517,9 +1973,9 @@ mod tests {
         at(&mut look, &mut c, 9, false, false);
         look.vanish(&mut c, 9);
         c.ride(Perch { spot: SPOT, feet: moved });
-        look.update(&c, 10, false, false);
+        look.update(&mut c, 10, false, false);
         c.take_off();
-        look.update(&c, 11, false, false);
+        look.update(&mut c, 11, false, false);
         assert!((seat_line(&look.picture(&c)) - moved).length() <= 1.0);
     }
 
@@ -1700,5 +2156,597 @@ mod tests {
         assert_eq!((back.left(15), back.left(20), back.left(21)), (6, 1, 0));
         let again = back.turned(17);
         assert_eq!((again.position(17), again.position(18), again.left(17)), (3, 4, 21));
+    }
+
+    // --- ses gestes, tenue en l'air, sa marche ---
+
+    /// Toutes ses planches de gestes et de variantes, ou aucune.
+    fn every_move(all: bool) -> Moves {
+        let body = || block(life::CELL_WIDTH, sheets::CELL_HEIGHT, (30, 15, 210, 370));
+        Moves {
+            walk: all.then(body),
+            dangle: all.then(body),
+            glitch: all.then(body),
+            grin: all.then(body),
+            perch_glitch: all,
+            perch_blink_glitch: all,
+            stand_blink_glitch: all,
+        }
+    }
+
+    /// Debout et assise, ses planches de vie, et ses gestes.
+    fn moving() -> Look {
+        let mut wardrobe = wardrobe(true, true, true);
+        wardrobe.moves = every_move(true);
+        Look::new(wardrobe, HEIGHT)
+    }
+
+    /// Le dessin de ses planches de vie : (planche, case).
+    fn life_of(picture: &Picture) -> Option<(life::Strip, u32)> {
+        life_cell(picture).map(|cell| (cell.strip, cell.index))
+    }
+
+    /// Une prise faite à l'appui même (aucun pas entre l'appui et la prise).
+    fn grab_at(at: Vec2, since: f64) -> Grab {
+        Grab { at, since, trail: Vec::new() }
+    }
+
+    /// Le curseur va de `cursor` par pas de `step`, de l'image `from` à l'image `to` : sa mèche
+    /// s'en approche à chaque pas sans jamais s'en éloigner, son corps bouge à chaque pas, et sa
+    /// planche en l'air tourne, tenue en deux depuis l'image `since`. Rend le curseur, et l'écart
+    /// de sa mèche à la fin.
+    fn drag(
+        look: &mut Look,
+        c: &mut Capri,
+        cursor: Vec2,
+        step: Vec2,
+        frames: std::ops::Range<u64>,
+        since: u64,
+    ) -> (Vec2, f32) {
+        let mut cursor = cursor;
+        let mut gap = (look.grip(c).expect("elle pend") - cursor).length();
+        for frame in frames {
+            let before = c.position();
+            cursor += step;
+            c.drag_to(cursor, frame as f64 / 24.0);
+            let picture = at(look, c, frame, false, false);
+            assert_eq!(
+                life_of(&picture),
+                Some((life::Strip::Dangle, ((frame - since) % 48) as u32 / 2)),
+                "image {frame}"
+            );
+            assert_eq!(picture.mouth, None);
+            assert!(c.position() != before, "image {frame} : son corps n'a pas bougé");
+            let now = (look.grip(c).expect("elle pend") - cursor).length();
+            assert!(now <= gap.max(1.5) + 1.5, "image {frame} : sa mèche s'éloigne ({gap} → {now})");
+            gap = now;
+        }
+        (cursor, gap)
+    }
+
+    #[test]
+    fn held_she_dangles_and_glides_until_her_grip_is_under_the_cursor_and_keeps_it_in_flight() {
+        let mut look = moving();
+        let mut c = capri(&look);
+        let before = entered(&mut look, &mut c, 100);
+        // attrapée par les pieds : son corps ne bouge pas, elle pend
+        let cursor = before.rect.min + Vec2::new(100.0, 600.0);
+        assert!(look.is_over(&c, cursor));
+        let position = c.position();
+        assert!(look.hold(&mut c, &grab_at(cursor, 100.0 / 24.0)));
+        assert_eq!(c.position(), position, "pas de saut à la prise");
+        let held = at(&mut look, &mut c, 101, false, false);
+        assert_eq!(life_of(&held), Some((life::Strip::Dangle, 0)));
+        assert_eq!(held.rect, life::over_stand(c.pose().rect), "par-dessus son image debout");
+        assert!(look.is_dangling(&c) && look.is_here());
+        // le curseur l'emmène : elle le suit à chaque pas, et sa mèche finit sous lui
+        let (cursor, gap) = drag(&mut look, &mut c, cursor, Vec2::new(7.0, -3.0), 102..260, 101);
+        assert!(gap <= 1.5, "sa mèche sous le curseur : {gap}");
+        // curseur immobile : elle ne bouge pas
+        let still = c.position();
+        c.drag_to(cursor, 10.82);
+        assert_eq!(c.position(), still);
+        // lancée : sa planche en l'air, étirée dans le sens de sa course
+        c.drag_to(cursor + Vec2::new(400.0, 0.0), 10.87);
+        c.release(10.88);
+        assert!(matches!(c.stance(), Stance::Thrown { .. }));
+        let flying = at(&mut look, &mut c, 260, false, false);
+        assert_eq!(life_of(&flying).map(|(strip, _)| strip), Some(life::Strip::Dangle));
+        assert_eq!(flying.rect, life::over_stand(c.pose().rect));
+        // ce qu'on dit pendant qu'on la tient ne change rien : elle pend
+        c.grab(cursor, 400.0);
+        assert_eq!(
+            life_of(&at(&mut look, &mut c, 261, true, false)).map(|(s, _)| s),
+            Some(life::Strip::Dangle)
+        );
+
+        // assise, on l'attrape : elle se lève sous le curseur (comme avant), pend, puis glisse
+        let mut look = moving();
+        let mut c = capri(&look);
+        land(&mut look, &mut c, 0);
+        at(&mut look, &mut c, 100, false, false);
+        let cursor = look.shown(&c).min + Vec2::new(60.0, 200.0);
+        let origin = look.grab_origin(&c, cursor).expect("assise");
+        assert!(look.hold(&mut c, &grab_at(cursor, 100.0 / 24.0)));
+        assert_eq!(c.position(), origin);
+        at(&mut look, &mut c, 101, false, false);
+        assert!(look.is_dangling(&c) && c.perched().is_none());
+        let (_, gap) = drag(&mut look, &mut c, cursor, Vec2::new(-4.0, -5.0), 102..220, 101);
+        assert!(gap <= 1.5, "sa mèche sous le curseur : {gap}");
+        // s'effaçant, rien ne l'attrape
+        let mut look = moving();
+        let mut c = capri(&look);
+        entered(&mut look, &mut c, 100);
+        look.vanish(&mut c, 100);
+        let grab = grab_at(c.position(), 5.0);
+        assert!(!look.hold(&mut c, &grab) && !c.is_held());
+    }
+
+    #[test]
+    fn grabbed_near_an_edge_she_never_jumps_nor_waits() {
+        let screen = Rect::new(Vec2::ZERO, Vec2::new(3024.0, 1964.0));
+        for dangle in [false, true] {
+            let mut wardrobe = wardrobe(true, true, true);
+            wardrobe.moves = Moves {
+                dangle: dangle.then(|| full(life::CELL_WIDTH, sheets::CELL_HEIGHT)),
+                ..Moves::default()
+            };
+            let mut look = Look::new(wardrobe, HEIGHT);
+            // debout en bas de l'écran, à sa place habituelle : prise de la tête aux pieds
+            let mut c = capri(&look);
+            let floor = Stature::standing(look.standing_size(), look.standing_feet(), HEIGHT);
+            c.set_at(Vec2::new(1500.0, screen.max().y - crate::roam::FLOOR * HEIGHT - floor.reach.down));
+            at(&mut look, &mut c, 0, false, false);
+            for v in [0.2f32, 0.4, 0.6, 0.8, 0.95] {
+                let mut held = c.clone();
+                let before = held.position();
+                let cursor = before + Vec2::new(held.size().x * 0.5, held.size().y * v);
+                assert!(look.hold(&mut held, &grab_at(cursor, 0.0)));
+                assert_eq!(held.position(), before, "en l'air {dangle}, prise à {v} : pas de saut");
+                held.drag_to(cursor - Vec2::new(0.0, 1.0), 0.02);
+                assert!(held.position().y < before.y, "en l'air {dangle}, prise à {v} : elle monte aussitôt");
+            }
+            // assise sur une fenêtre tout en haut de l'écran : prise à mi-corps ou aux pieds, elle
+            // se lève sous le curseur et le suit dès qu'il descend
+            let stature = look.stature();
+            let top = stature.reach.up + 2.0;
+            let mut c = capri(&look);
+            c.step(0.0, 0);
+            c.land(Perch { spot: SPOT, feet: Vec2::new(1500.0, top) });
+            for frame in 0..40 {
+                at(&mut look, &mut c, frame, false, false);
+            }
+            assert!(look.is_seated(&c));
+            let shown = look.shown(&c);
+            for v in [0.5f32, 0.9] {
+                let mut held = c.clone();
+                let cursor = shown.min + Vec2::new(shown.size.x * 0.5, shown.size.y * v);
+                assert!(look.hold(&mut held, &grab_at(cursor, 0.0)));
+                let at_grab = held.position();
+                held.drag_to(cursor + Vec2::new(0.0, 1.0), 0.02);
+                assert!(
+                    held.position().y > at_grab.y,
+                    "en l'air {dangle}, assise, prise à {v} : elle descend aussitôt"
+                );
+            }
+        }
+    }
+
+    /// Tenue à l'image `frame`, par le milieu de son image debout.
+    fn hold(look: &mut Look, c: &mut Capri, frame: u64) -> Vec2 {
+        let picture = at(look, c, frame, false, false);
+        let cursor = picture.rect.min + picture.rect.size * 0.5;
+        assert!(look.hold(c, &grab_at(cursor, frame as f64 / 24.0)));
+        at(look, c, frame, false, false);
+        cursor
+    }
+
+    #[test]
+    fn let_go_standing_she_rises_once_then_her_loop_and_on_an_edge_nothing_changes() {
+        let mut look = moving();
+        let mut c = capri(&look);
+        entered(&mut look, &mut c, 100);
+        hold(&mut look, &mut c, 100);
+        c.release(100.0); // lâchée doucement, bien plus tard
+        let start = at(&mut look, &mut c, 120, false, false);
+        assert_eq!(look.gesture(), Some(Gesture::Rise));
+        assert_eq!(life_of(&start), Some((life::Strip::Glitch, 0)));
+        let (rect, tour, standing) = (start.rect, c.tour(), c.pose().rect);
+        assert_eq!(rect, life::over_stand(standing));
+        for frame in 120..140 {
+            let picture = at(&mut look, &mut c, frame, false, false);
+            assert_eq!(
+                life_of(&picture),
+                Some((life::Strip::Glitch, (frame - 120) as u32 / 2)),
+                "image {frame}"
+            );
+            assert_eq!(picture.rect, rect, "elle ne flotte pas pendant qu'elle se relève");
+            assert!(!look.is_grooving() && look.is_here());
+        }
+        // puis sa boucle, son tour repris là où il était
+        let after = at(&mut look, &mut c, 140, false, false);
+        assert!(matches!(after.drawing, Drawing::Stand(_)), "{after:?}");
+        assert_eq!(look.gesture(), None);
+        assert_eq!(c.tour(), tour);
+        assert_eq!(c.pose().rect, standing, "pas de saut");
+        assert_eq!(at(&mut look, &mut c, 150, false, false).drawing, Drawing::Stand(standing_cell(c.tour())));
+
+        // lancée, elle pend en vol, puis se relève là où elle s'arrête
+        hold(&mut look, &mut c, 200);
+        let grip = c.position() + Vec2::new(10.0, 10.0);
+        c.drag_to(grip + Vec2::new(300.0, -50.0), 200.0 / 24.0 + 0.04);
+        c.release(200.0 / 24.0 + 0.05);
+        assert!(matches!(c.stance(), Stance::Thrown { .. }));
+        let mut frame = 201;
+        while matches!(c.stance(), Stance::Thrown { .. }) {
+            c.step(1.0 / 24.0, frame);
+            look.update(&mut c, frame, false, false);
+            if matches!(c.stance(), Stance::Thrown { .. }) {
+                assert_eq!(life_of(&look.picture(&c)).map(|(s, _)| s), Some(life::Strip::Dangle));
+            }
+            frame += 1;
+            assert!(frame < 600, "le lancer finit");
+        }
+        assert_eq!(look.gesture(), Some(Gesture::Rise));
+
+        // lâchée sur le haut d'une fenêtre : elle s'y pose, comme avant
+        let mut look = moving();
+        let mut c = capri(&look);
+        entered(&mut look, &mut c, 100);
+        hold(&mut look, &mut c, 100);
+        c.release(100.0);
+        c.land(Perch { spot: SPOT, feet: EDGE });
+        let landed = at(&mut look, &mut c, 101, false, false);
+        assert_eq!(look.gesture(), None);
+        assert!(
+            matches!(landed.drawing, Drawing::Perch(cell) if cell.strip == Strip::PerchArrive),
+            "{landed:?}"
+        );
+    }
+
+    /// Le dessin de sa boucle debout au tour `tour`, sans clignement (essais hors des tours où elle
+    /// cligne).
+    fn standing_cell(tour: u64) -> stand::Cell {
+        let sheet = if blinks_glitchy(tour / TOUR) {
+            stand::standing_glitchy()
+        } else {
+            stand::standing(blinks(tour / TOUR))
+        };
+        sheet.at(tour)
+    }
+
+    #[test]
+    fn a_click_makes_her_grin_standing_and_glitch_seated_and_nothing_else_moves() {
+        let mut look = moving();
+        let mut c = capri(&look);
+        let before = entered(&mut look, &mut c, 100);
+        let (position, tour) = (c.position(), c.tour());
+        assert_eq!(look.poke(&mut c, 100), Some(Gesture::Grin));
+        let grin = at(&mut look, &mut c, 100, false, false);
+        let rect = grin.rect;
+        assert_eq!(rect, life::over_stand(before.rect));
+        for frame in 100..100 + Gesture::Grin.frames() {
+            let picture = at(&mut look, &mut c, frame, false, false);
+            // tenu en trois, deux tours
+            assert_eq!(
+                life_of(&picture),
+                Some((life::Strip::Grin, ((frame - 100) % 48) as u32 / 3)),
+                "image {frame}"
+            );
+            assert_eq!(picture.rect, rect);
+            // jamais deux gestes à la fois
+            assert_eq!(look.poke(&mut c, frame), None);
+            assert!(!look.cheer(&mut c, frame));
+        }
+        let after = at(&mut look, &mut c, 196, false, false);
+        assert!(matches!(after.drawing, Drawing::Stand(_)));
+        assert_eq!(
+            (c.position(), c.tour()),
+            (position, tour),
+            "pas déplacée, son tour repris là où il était"
+        );
+        assert_eq!(after.rect, before.rect);
+
+        // assise : un éclat sur son bord, puis sa boucle de son dessin 0 ; elle reste posée
+        land(&mut look, &mut c, 300);
+        at(&mut look, &mut c, 400, false, false);
+        assert_eq!(look.poke(&mut c, 400), Some(Gesture::PerchGlitch));
+        for frame in 400..420 {
+            let picture = at(&mut look, &mut c, frame, false, false);
+            assert_eq!(
+                picture.drawing,
+                Drawing::Perch(sheets::Cell { strip: Strip::PerchGlitch, index: (frame - 400) as u32 / 2 })
+            );
+            assert!((seat_line(&picture) - EDGE).length() <= 1.0, "sur son bord");
+            assert!(
+                look.is_over(&c, seat_line(&picture) - Vec2::new(0.0, 40.0)),
+                "le masque des cases larges"
+            );
+            assert!(!look.is_grooving());
+        }
+        let back = at(&mut look, &mut c, 420, false, false);
+        assert_eq!(back.drawing, Drawing::Perch(sheets::Cell { strip: Strip::Perch, index: 0 }));
+        assert!(c.perched().is_some() && look.gesture().is_none());
+    }
+
+    #[test]
+    fn talking_or_a_grab_stops_a_gesture_at_once_and_none_starts_while_we_talk() {
+        let mut look = moving();
+        let mut c = capri(&look);
+        entered(&mut look, &mut c, 100);
+        let tour = c.tour();
+        assert_eq!(look.poke(&mut c, 100), Some(Gesture::Grin));
+        at(&mut look, &mut c, 110, false, false);
+        // elle parle : sa boucle et sa bouche, tout de suite, et son tour reprend
+        let talking = at(&mut look, &mut c, 111, true, false);
+        assert!(matches!(talking.drawing, Drawing::Stand(_)) && talking.mouth.is_some(), "{talking:?}");
+        assert_eq!(look.gesture(), None);
+        assert_eq!(at(&mut look, &mut c, 121, true, false).drawing, Drawing::Stand(standing_cell(tour + 10)));
+        assert_eq!(c.tour(), tour + 10);
+        // pendant qu'elle parle, ou qu'on lui parle, aucun geste ne commence
+        assert_eq!(look.poke(&mut c, 121), None);
+        at(&mut look, &mut c, 130, false, false);
+        look.set_conversing(true);
+        assert_eq!(look.poke(&mut c, 130), None);
+        assert!(!look.cheer(&mut c, 130));
+        look.set_conversing(false);
+        // on lui parle pendant qu'elle sourit : il s'arrête au pas suivant
+        assert_eq!(look.poke(&mut c, 140), Some(Gesture::Grin));
+        look.set_conversing(true);
+        at(&mut look, &mut c, 141, false, false);
+        assert_eq!(look.gesture(), None);
+        look.set_conversing(false);
+        // une prise : elle pend tout de suite
+        assert_eq!(look.poke(&mut c, 150), Some(Gesture::Grin));
+        hold(&mut look, &mut c, 152);
+        assert_eq!(look.gesture(), None);
+        assert!(look.is_dangling(&c));
+
+        // assise : elle parle pendant son éclat, sa boucle parlante repart de son dessin 0
+        let mut look = moving();
+        let mut c = capri(&look);
+        land(&mut look, &mut c, 0);
+        at(&mut look, &mut c, 100, false, false);
+        assert!(look.fidget(&mut c, 100));
+        at(&mut look, &mut c, 106, false, false);
+        let talk = at(&mut look, &mut c, 107, true, false);
+        assert_eq!(talk.drawing, Drawing::Perch(sheets::Cell { strip: Strip::PerchTalk, index: 0 }));
+        // cachée pendant un éclat : son départ de son bord, de là
+        at(&mut look, &mut c, 150, false, false);
+        assert!(look.fidget(&mut c, 200));
+        at(&mut look, &mut c, 204, false, false);
+        look.vanish(&mut c, 204);
+        assert_eq!(look.gesture(), None);
+        let leaving = at(&mut look, &mut c, 204, false, false);
+        assert_eq!(leaving.drawing, Drawing::Perch(sheets::Cell { strip: Strip::PerchLeave, index: 0 }));
+    }
+
+    #[test]
+    fn when_claude_finishes_she_grins_standing_at_most_once_a_minute() {
+        let mut look = moving();
+        let mut c = capri(&look);
+        entered(&mut look, &mut c, 100);
+        assert!(look.cheer(&mut c, 100));
+        assert_eq!(look.gesture(), Some(Gesture::Grin));
+        at(&mut look, &mut c, 300, false, false);
+        assert_eq!(look.gesture(), None);
+        // moins d'une minute plus tard : rien ; puis de nouveau
+        assert!(!look.cheer(&mut c, 100 + CHEER_EVERY - 1));
+        assert!(look.gesture().is_none());
+        assert!(look.cheer(&mut c, 100 + CHEER_EVERY));
+        // un clic n'y compte pas
+        at(&mut look, &mut c, 100 + CHEER_EVERY + 100, false, false);
+        assert_eq!(look.poke(&mut c, 100 + CHEER_EVERY + 100), Some(Gesture::Grin));
+        // assise, rien
+        let mut look = moving();
+        let mut c = capri(&look);
+        land(&mut look, &mut c, 0);
+        at(&mut look, &mut c, 100, false, false);
+        assert!(!look.cheer(&mut c, 100));
+        assert!(look.gesture().is_none());
+        // en train d'apparaître : pas libre
+        let mut look = moving();
+        let mut c = capri(&look);
+        c.step(0.0, 0);
+        look.enter(&mut c, 0);
+        at(&mut look, &mut c, 5, false, false);
+        assert!(!look.cheer(&mut c, 5));
+    }
+
+    #[test]
+    fn she_fidgets_seated_only_when_free_and_without_music() {
+        let mut look = moving();
+        let mut c = capri(&look);
+        assert!(!look.fidget(&mut c, 0), "debout");
+        land(&mut look, &mut c, 0);
+        at(&mut look, &mut c, 10, false, false);
+        assert!(!look.fidget(&mut c, 10), "elle arrive encore sur son bord");
+        let since = sheets::arriving().len();
+        at(&mut look, &mut c, since + 5, false, true);
+        assert!(!look.fidget(&mut c, since + 5), "la musique joue");
+        at(&mut look, &mut c, since + TOUR + 5, false, true);
+        assert!(look.is_grooving() && !look.fidget(&mut c, since + TOUR + 5));
+        at(&mut look, &mut c, since + 3 * TOUR, false, false);
+        assert!(look.fidget(&mut c, since + 3 * TOUR));
+        assert!(!look.fidget(&mut c, since + 3 * TOUR + 1), "un seul à la fois");
+    }
+
+    #[test]
+    fn her_glitchy_blink_comes_on_its_tour_when_its_sheet_is_there() {
+        for with in [false, true] {
+            let mut wardrobe = wardrobe(true, true, true);
+            wardrobe.moves = Moves { stand_blink_glitch: with, perch_blink_glitch: with, ..Moves::default() };
+            let mut look = Look::new(wardrobe, HEIGHT);
+            let mut c = capri(&look);
+            let mut glitchy = Vec::new();
+            for tour in 0..16 {
+                let frame = tour * TOUR + u64::from(stand::BLINK_FROM) + 2;
+                let Drawing::Stand(cell) = at(&mut look, &mut c, frame, false, false).drawing else {
+                    panic!()
+                };
+                if cell.strip == StandStrip::StandBlinkGlitch {
+                    glitchy.push(tour);
+                }
+                assert_eq!(cell.strip != StandStrip::Stand, blinks(tour), "tour {tour}");
+            }
+            assert_eq!(glitchy, if with { vec![5, 13] } else { vec![] }, "debout");
+            land(&mut look, &mut c, 16 * TOUR);
+            let since = 16 * TOUR + sheets::arriving().len();
+            let mut glitchy = Vec::new();
+            for tour in 0..16 {
+                let frame = since + tour * TOUR + u64::from(sheets::BLINK_FROM) + 2;
+                let Drawing::Perch(cell) = at(&mut look, &mut c, frame, false, false).drawing else {
+                    panic!()
+                };
+                if cell.strip == Strip::PerchBlinkGlitch {
+                    glitchy.push(tour);
+                }
+                assert_eq!(cell.strip != Strip::Perch, blinks(tour), "tour {tour}");
+            }
+            assert_eq!(glitchy, if with { vec![5, 13] } else { vec![] }, "assise");
+        }
+        assert!(blinks(GLITCHY_BLINK), "c'est un tour où elle cligne");
+    }
+
+    #[test]
+    fn she_walks_over_her_standing_image_then_her_loop_resumes() {
+        let mut look = moving();
+        let mut c = capri(&look);
+        let before = entered(&mut look, &mut c, 100);
+        let (tour, feet) = (c.tour(), c.feet());
+        let to = feet.x - 300.0;
+        assert!(look.walk(&mut c, 100, to));
+        assert!(look.is_walking(&c) && c.is_walking());
+        let speed = look.walk_speed().unwrap();
+        let mut last = feet.x;
+        let mut frame = 100;
+        let mut seconds = 0.0;
+        while c.is_walking() {
+            c.step(1.0 / 24.0, frame);
+            seconds += 1.0 / 24.0;
+            look.update(&mut c, frame, false, false);
+            let picture = look.picture(&c);
+            if c.is_walking() {
+                assert_eq!(
+                    life_of(&picture),
+                    Some((life::Strip::Walk, ((frame - 100) % 24) as u32 / 2)),
+                    "image {frame}"
+                );
+                assert_eq!(picture.rect.min.y, life::over_stand(before.rect).min.y, "à la même hauteur");
+                assert!(c.feet().x <= last, "jamais à reculons");
+                assert!(!look.is_over(&c, Vec2::new(-1.0, -1.0)));
+            }
+            last = c.feet().x;
+            frame += 1;
+            assert!(frame < 2000);
+        }
+        assert!((seconds - 300.0 / f64::from(speed)).abs() < 0.1, "{seconds} s à {speed} px/s");
+        assert!((c.feet().x - to).abs() < 1e-3, "{:?}", c.feet());
+        let arrived = at(&mut look, &mut c, frame, false, false);
+        assert!(matches!(arrived.drawing, Drawing::Stand(_)) && !look.is_walking(&c));
+        // son tour a repris là où il était, à l'image de son arrivée (une image plus tôt)
+        assert_eq!(c.tour(), tour + 1);
+        // pas pendant qu'elle parle
+        at(&mut look, &mut c, frame + 1, true, false);
+        assert!(!look.walk(&mut c, frame + 1, to - 100.0), "elle parle");
+
+        // arrêtée en chemin : sa boucle, là
+        let mut look = moving();
+        let mut c = capri(&look);
+        entered(&mut look, &mut c, 100);
+        let to = c.feet().x - 300.0;
+        assert!(look.walk(&mut c, 100, to));
+        for frame in 100..110 {
+            c.step(1.0 / 24.0, frame);
+            look.update(&mut c, frame, false, false);
+        }
+        let x = c.feet().x;
+        look.halt(&mut c);
+        let stopped = at(&mut look, &mut c, 111, false, false);
+        assert!(
+            matches!(stopped.drawing, Drawing::Stand(_)) && c.feet().x == x && c.stance() == Stance::Floating
+        );
+        // attrapée en chemin : elle pend ; cachée en chemin : elle s'efface là
+        let to = c.feet().x - 300.0;
+        assert!(look.walk(&mut c, 120, to));
+        at(&mut look, &mut c, 125, false, false);
+        hold(&mut look, &mut c, 126);
+        assert!(look.is_dangling(&c) && !c.is_walking());
+        c.release(1000.0);
+        at(&mut look, &mut c, 200, false, false);
+        at(&mut look, &mut c, 260, false, false);
+        let to = c.feet().x - 300.0;
+        assert!(look.walk(&mut c, 260, to));
+        at(&mut look, &mut c, 265, false, false);
+        let x = c.feet().x;
+        look.vanish(&mut c, 265);
+        let leaving = at(&mut look, &mut c, 266, false, false);
+        assert_eq!(life_of(&leaving).map(|(s, _)| s), Some(life::Strip::Leave));
+        assert!(!c.is_walking() && c.feet().x == x);
+    }
+
+    #[test]
+    fn every_move_is_optional_one_by_one() {
+        // les sept planches, chacune là ou non, avec ou sans sa pose debout
+        for bits in 0..(1u32 << 7) {
+            for stand_sheets in [true, false] {
+                let on = |bit: u32| bits & (1 << bit) != 0;
+                let body = || block(life::CELL_WIDTH, sheets::CELL_HEIGHT, (30, 15, 210, 370));
+                let mut wardrobe = wardrobe(stand_sheets, true, true);
+                wardrobe.moves = Moves {
+                    walk: on(0).then(body),
+                    dangle: on(1).then(body),
+                    glitch: on(2).then(body),
+                    grin: on(3).then(body),
+                    perch_glitch: on(4),
+                    perch_blink_glitch: on(5),
+                    stand_blink_glitch: on(6),
+                };
+                let case = format!("planches {bits:07b}, debout {stand_sheets}");
+                let mut look = Look::new(wardrobe, HEIGHT);
+                let mut c = capri(&look);
+                entered(&mut look, &mut c, 100);
+                let lives = stand_sheets;
+                // un clic debout : son sourire, ou rien
+                assert_eq!(look.poke(&mut c, 100).is_some(), lives && on(3), "{case}");
+                at(&mut look, &mut c, 300, false, false);
+                // tenue : en l'air, ou sa boucle (ou son dessin d'avant)
+                hold(&mut look, &mut c, 300);
+                let held = look.picture(&c);
+                assert_eq!(life_of(&held).is_some(), lives && on(1), "{case} : {held:?}");
+                assert_eq!(look.grip(&c).is_some(), lives && on(1), "{case}");
+                // lâchée : elle se relève, ou rien
+                c.release(1000.0);
+                at(&mut look, &mut c, 301, false, false);
+                assert_eq!(look.gesture() == Some(Gesture::Rise), lives && on(2), "{case}");
+                at(&mut look, &mut c, 400, false, false);
+                // elle marche, ou pas
+                let to = c.feet().x - 100.0;
+                let walks = look.walk(&mut c, 400, to);
+                assert_eq!(walks, lives && on(0), "{case}");
+                look.halt(&mut c);
+                // assise : un éclat, ou rien
+                land(&mut look, &mut c, 500);
+                at(&mut look, &mut c, 600, false, false);
+                assert_eq!(look.poke(&mut c, 600).is_some(), on(4), "{case}");
+                // rien ne plante, rien ne reste coincé
+                for frame in 600..800 {
+                    let picture = at(&mut look, &mut c, frame, false, false);
+                    if let Drawing::Life(cell) = picture.drawing {
+                        assert!(look.has_move(cell.strip) || look.has_life(), "{case} : {picture:?}");
+                    }
+                }
+                assert!(look.gesture().is_none() && look.is_here(), "{case}");
+            }
+        }
+    }
+
+    #[test]
+    fn no_gesture_lasts_longer_than_the_longest() {
+        let longest = Gesture::ALL.iter().map(|gesture| gesture.frames()).max();
+        assert_eq!(longest, Some(LONGEST_GESTURE));
+        assert_eq!(Gesture::Rise.frames(), life::rising().len());
+        assert_eq!(Gesture::PerchGlitch.frames(), sheets::glitching().len());
+        assert_eq!(Gesture::Grin.frames(), life::grinning().len() * life::GRIN_TOURS);
     }
 }

@@ -5,7 +5,10 @@
 //! elle est et apparaît ailleurs, de préférence assise sur une autre fenêtre (`roam_view`).
 //! Au lancement, avant qu'elle n'apparaisse, une intro prend l'écran (`intro_view`), puis elle se
 //! matérialise à sa place et dit bonjour ; « Intro au démarrage » de son menu la retire
-//! (`intro_setup`).
+//! (`intro_setup`). Elle bouge et réagit (`capri_core::look`) : tenue, elle pend ; lâchée, elle se
+//! relève ; un clic sur elle (un appui bref, relâché sans la déplacer : `capri_core::input::Hand`)
+//! la fait sourire, ou lui donne un éclat assise ; elle sourit quand Claude Code finit son tour ;
+//! elle marche d'une place à l'autre en bas de l'écran.
 //!
 //! Une seule fenêtre transparente, l'overlay de `capri-platform`, couvre l'écran principal. Elle
 //! laisse passer la souris partout, sauf sur Capri elle-même. Le curseur est lu auprès du système
@@ -84,8 +87,9 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use banner_view::BannerView;
+use capri_core::input::{CLICK_SLOP, Hand, Let};
 use capri_core::intro::{Cut, End};
-use capri_core::look::Picture;
+use capri_core::look::{Gesture, Look, Picture};
 use capri_core::{
     Button, Capri, Press, Rect, Scale, Stance, Vec2, frame_at, interpret_press, pace, place_input,
 };
@@ -273,6 +277,13 @@ struct Running {
     scale: Scale,
     /// Changée à la molette et pas encore retenue : depuis quand on n'y a plus touché.
     unsaved_scale: Option<Instant>,
+    /// Sa main sur elle : un appui principal pas encore devenu une prise (relâché vite et sans
+    /// bouger, c'est un clic), ou une prise faite au relâchement, à lâcher à la fin du pas suivant
+    /// (`capri_core::input::Hand`).
+    hand: Hand,
+    /// Le geste qu'elle jouait au pas précédent, et depuis quand, pour n'écrire au journal que
+    /// ceux qui commencent.
+    gesture: Option<(Gesture, u64)>,
 }
 
 impl ApplicationHandler for App {
@@ -373,10 +384,11 @@ impl App {
             figure::Figure::new(sprite, stand, perch, life, standing, |image| renderer.add_image(image))?;
         let look = &figure.look;
         log::info!(
-            "dessins : debout {}, sur les fenêtres {}, elle apparaît {} ; mémoire graphique : {:.1} Mo",
+            "dessins : debout {}, sur les fenêtres {}, elle apparaît {}, ses gestes : {} ; mémoire graphique : {:.1} Mo",
             if look.has_stand() { "ses planches" } else { "son dessin d'avant" },
             if look.has_perch() { "assise" } else { "debout" },
             if look.has_life() { "par ses planches" } else { "d'un coup" },
+            moves_of(look),
             renderer.image_bytes() as f64 / 1_000_000.0
         );
         let body = figure.look.standing_size();
@@ -513,6 +525,8 @@ impl App {
             fallback: now,
             scale,
             unsaved_scale: None,
+            hand: Hand::new(),
+            gesture: None,
         })
     }
 
@@ -546,11 +560,8 @@ impl App {
                         on_her.is_some()
                     );
                     match (press, on_her) {
-                        // assise, elle se lève sous le curseur, tenue par le même endroit d'elle
-                        (Press::Grab, Some(c)) => match r.figure.look.grab_origin(&r.capri, c) {
-                            Some(origin) => r.capri.grab_at(c, origin, r.seconds()),
-                            None => r.capri.grab(c, r.seconds()),
-                        },
+                        // pas encore une prise : relâché vite et sans bouger, ce sera un clic
+                        (Press::Grab, Some(c)) => r.hand.press(c, r.seconds()),
                         (Press::Menu, Some(_)) =>
                         {
                             #[cfg(any(target_os = "macos", windows))]
@@ -564,7 +575,18 @@ impl App {
                 OverlayEvent::Released { button } => {
                     if button == MouseButton::Left {
                         r.read_cursor();
-                        r.capri.release(r.seconds());
+                        let (now, slop, held) = (r.seconds(), r.click_slop(), r.capri.is_held());
+                        match r.hand.release(r.cursor, now, slop, held) {
+                            // relâché vite et sans bouger : un clic
+                            Let::Click => r.click(),
+                            // on la tenait (et un clic la lâche, si elle était restée tenue)
+                            Let::Go => r.capri.release(now),
+                            // déplacé avant le premier pas : une prise, lâchée à la fin du pas
+                            // suivant, pour que tout ce qui suit une prise la voie tenue
+                            Let::Grab(grab) => {
+                                r.figure.look.hold(&mut r.capri, &grab);
+                            }
+                        }
                     }
                 }
                 OverlayEvent::RedrawRequested => {
@@ -1291,6 +1313,7 @@ impl App {
         r.overlay.set_click_through(true);
         r.click_through = true;
         if self.hidden {
+            r.hand.cancel();
             r.overlay.hide_input();
             r.vanish();
         } else {
@@ -1311,6 +1334,18 @@ impl Running {
     fn read_cursor(&mut self) {
         if let Some((x, y)) = self.overlay.cursor() {
             self.cursor = Some(Vec2::new(x as f32, y as f32));
+        }
+    }
+
+    /// La distance (en pixels de l'overlay) au-delà de laquelle un appui devient une prise.
+    fn click_slop(&self) -> f32 {
+        CLICK_SLOP * self.overlay.scale_factor() as f32
+    }
+
+    /// Un clic sur elle : debout, elle sourit ; assise, un éclat ; si elle est libre.
+    fn click(&mut self) {
+        if self.figure.look.poke(&mut self.capri, self.frame).is_some() {
+            self.overlay.request_redraw();
         }
     }
 
@@ -1363,7 +1398,14 @@ impl Running {
         self.last_step = now;
 
         self.read_cursor();
+        // un appui qui dure, ou le curseur qui s'éloigne : c'est une prise, faite là et quand
+        // l'appui a commencé (`Look::hold`, rien si elle s'est mise à s'effacer entre-temps)
+        if let Some(grab) = self.hand.step(self.cursor, self.seconds(), self.click_slop()) {
+            self.figure.look.hold(&mut self.capri, &grab);
+        }
+        // une prise faite au relâchement ne suit plus le curseur : elle sera lâchée à la fin du pas
         if self.capri.is_held()
+            && !self.hand.is_letting_go()
             && let Some(c) = self.cursor
         {
             self.capri.drag_to(c, self.seconds());
@@ -1387,9 +1429,28 @@ impl Running {
         self.perch.tick(&mut self.capri, &self.overlay, seconds, period, stature);
         let talking = self.banner.is_talking();
         let music = self.music.tick(now, self.figure.look.wants_music(&self.capri));
-        self.figure.look.update(&self.capri, self.frame, talking, music);
+        // on se parle : son geste s'arrête, et aucun ne commence
+        let conversing = self.banner.is_engaged() || self.overlay.input_is_open();
+        self.figure.look.set_conversing(conversing);
+        self.figure.look.update(&mut self.capri, self.frame, talking, music);
+        // Claude Code a fini son tour : debout et libre, elle sourit (une fois par minute au plus)
+        if self.banner.take_turn_end() && self.figure.look.cheer(&mut self.capri, self.frame) {
+            log::debug!("Claude Code a fini son tour : elle sourit");
+        }
         // sa vie : elle part d'elle-même ailleurs, ou y apparaît, effacée d'ici
         self.roam_step(seconds);
+        // une prise faite au relâchement même : lâchée maintenant, chacun l'ayant vue tenue à ce pas
+        // (la veille de sa fenêtre, sa vie, son dessin) ; au pas suivant, elle se pose, se relève,
+        // ou reste là où on l'a mise
+        if let Some(at) = self.hand.let_go() {
+            self.capri.release(at);
+        }
+        let look = &self.figure.look;
+        let gesture = look.gesture().zip(look.gesture_since());
+        let previous = std::mem::replace(&mut self.gesture, gesture);
+        if let Some((started, _)) = gesture.filter(|_| gesture != previous) {
+            log::debug!("geste : {}", started.describe());
+        }
         // partie : la fenêtre se cache, et plus rien ne se dessine jusqu'à son retour
         if self.figure.look.is_gone() {
             self.overlay.set_shown(false);
@@ -1398,7 +1459,8 @@ impl Running {
 
         // La souris traverse la fenêtre partout, sauf sur elle ou tant qu'on la tient.
         let over = self.cursor.is_some_and(|c| self.is_over(c));
-        let through = !capri_platform::INTERACTIVE || !(over || self.capri.is_held());
+        let pressed = self.capri.is_held() || self.hand.is_pressing();
+        let through = !capri_platform::INTERACTIVE || !(over || pressed);
         if through != self.click_through {
             self.overlay.set_click_through(through);
             self.click_through = through;
@@ -1524,12 +1586,15 @@ impl Running {
     }
 
     /// Quand se réveiller ensuite. Au repos (elle flotte, ou posée sur une fenêtre immobile), dans
-    /// un pas de 60 Hz, comme avant. Pressée (on la tient, elle vole, ou sa fenêtre bouge), à
-    /// chaque rafraîchissement de l'écran : sur macOS, c'est l'écran qui réveille la boucle ;
-    /// ailleurs, un minuteur à sa fréquence. Cachée, jamais pressée.
+    /// un pas de 60 Hz, comme avant. Pressée (on la tient, elle vole, elle marche, ou sa fenêtre
+    /// bouge), à chaque rafraîchissement de l'écran : sur macOS, c'est l'écran qui réveille la
+    /// boucle ; ailleurs, un minuteur à sa fréquence. Cachée, jamais pressée.
     fn next_wake(&mut self, hidden: bool) -> Instant {
         let now = Instant::now();
-        let carried = matches!(self.capri.stance(), Stance::Held { .. } | Stance::Thrown { .. });
+        let carried = matches!(
+            self.capri.stance(),
+            Stance::Held { .. } | Stance::Thrown { .. } | Stance::Walking { .. }
+        );
         let hurried = !hidden && (carried || self.perch.hurried(&self.capri, self.seconds()));
         self.by_screen = self.overlay.follow_refresh(hurried);
         if !hurried {
@@ -1611,6 +1676,23 @@ enum Scene {
     Her(Picture, Option<SpriteDraw>),
     /// L'intro : sa toile, le numéro de l'image qui y est peinte, et où ; rien avant la première.
     Intro(Option<(ImageId, u32, Rect)>),
+}
+
+/// Ses gestes et ses variantes, tels que chargés, pour le journal du lancement.
+fn moves_of(look: &Look) -> String {
+    use capri_core::sheets::life::Strip;
+    let moves = look.moves();
+    let named = [
+        (look.has_move(Strip::Walk), "elle marche"),
+        (look.has_move(Strip::Dangle), "elle pend"),
+        (look.can(Gesture::Rise), "elle se relève"),
+        (look.can(Gesture::Grin), "elle sourit"),
+        (look.can(Gesture::PerchGlitch), "un éclat assise"),
+        (look.has_stand() && moves.stand_blink_glitch, "clignement glitché debout"),
+        (look.has_perch() && moves.perch_blink_glitch, "clignement glitché assise"),
+    ];
+    let present: Vec<&str> = named.iter().filter(|(here, _)| *here).map(|&(_, name)| name).collect();
+    if present.is_empty() { "aucun".to_owned() } else { present.join(", ") }
 }
 
 /// L'intro du lancement, si ses images sont là (sinon une ligne au journal, et pas d'intro).

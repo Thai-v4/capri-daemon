@@ -16,7 +16,9 @@
 //! 24 i/s (voir [`crate::anim`]).
 //!
 //! **Les planches** sont des bandes horizontales de cases de [`CELL_WIDTH`] × 384 px : la boucle
-//! (60 dessins), le clignement (8) et la bouche (5). Le clignement et la bouche se posent sur la
+//! (60 dessins), le clignement (8) et la bouche (5), toutes trois nécessaires ([`Strip::SET`]) ; et,
+//! facultative ([`Strip::EXTRA`]), une variante glitchée du clignement (8), aux mêmes dessins de la
+//! boucle (sans elle, ses clignements d'avant). Le clignement et la bouche se posent sur la
 //! boucle à la même place : la bouche est un petit morceau de visage, sur fond transparent, à
 //! dessiner par-dessus le dessin de la boucle (son visage ne bouge pas d'un pixel d'un dessin à
 //! l'autre).
@@ -57,7 +59,8 @@ pub const HAIR_DROP: u32 = 10;
 pub const FEET: (f32, f32) = (52.5, 364.0);
 /// Le clignement remplace, dans la boucle, les dessins 24 à 31 (comptés depuis 0). Mesuré : chaque
 /// case du clignement est la plus proche de ces dessins-là, dans l'ordre ; ses cases 1 à 6 ont les
-/// yeux fermés, 0 et 7 ouverts.
+/// yeux fermés, 0 et 7 ouverts. De même chaque case de sa variante glitchée
+/// ([`Strip::StandBlinkGlitch`]).
 pub const BLINK_FROM: u32 = 24;
 /// Où est la bouche dans une case : de (58, 117) à (74, 131) inclus, dans les cinq dessins ;
 /// rien n'est dessiné ailleurs dans sa planche.
@@ -93,10 +96,17 @@ pub enum Strip {
     StandBlink,
     /// Sa bouche quand elle parle : 5 formes, à poser sur n'importe quel dessin des deux autres.
     StandMouth,
+    /// Une variante de son clignement, l'œil brouillé : 8 dessins, à la place des dessins 24 à 31.
+    /// Facultative.
+    StandBlinkGlitch,
 }
 
 impl Strip {
-    pub const ALL: [Strip; 3] = [Strip::Stand, Strip::StandBlink, Strip::StandMouth];
+    pub const ALL: [Strip; 4] = [Strip::Stand, Strip::StandBlink, Strip::StandMouth, Strip::StandBlinkGlitch];
+    /// Sa pose debout : toutes ensemble, ou son dessin d'avant.
+    pub const SET: [Strip; 3] = [Strip::Stand, Strip::StandBlink, Strip::StandMouth];
+    /// Facultative (et seulement avec [`Strip::SET`]).
+    pub const EXTRA: [Strip; 1] = [Strip::StandBlinkGlitch];
 
     /// Le nom du fichier, dans [`DIR`] (le même que dans le dépôt d'origine).
     pub fn file(self) -> &'static str {
@@ -104,6 +114,7 @@ impl Strip {
             Strip::Stand => "idle.png",
             Strip::StandBlink => "idle_blink.png",
             Strip::StandMouth => "idle_mouth.png",
+            Strip::StandBlinkGlitch => "idle_blink_glitch.png",
         }
     }
 
@@ -111,7 +122,7 @@ impl Strip {
     pub fn count(self) -> u32 {
         match self {
             Strip::Stand => 60,
-            Strip::StandBlink => 8,
+            Strip::StandBlink | Strip::StandBlinkGlitch => 8,
             Strip::StandMouth => 5,
         }
     }
@@ -131,7 +142,7 @@ impl Strip {
     pub fn columns(self) -> u32 {
         match self {
             Strip::Stand => 15,
-            Strip::StandBlink => 8,
+            Strip::StandBlink | Strip::StandBlinkGlitch => 8,
             Strip::StandMouth => 5,
         }
     }
@@ -150,11 +161,11 @@ impl Strip {
         Layout { cell: self.cell(), count: self.count(), columns: self.columns() }
     }
 
-    /// Un dessin sur combien est montré : un sur [`STEP`] pour la boucle et le clignement (qui
-    /// remplace les dessins 24 à 31, un sur deux aussi), toutes les formes de la bouche.
+    /// Un dessin sur combien est montré : un sur [`STEP`] pour la boucle et les clignements (qui
+    /// remplacent les dessins 24 à 31, un sur deux aussi), toutes les formes de la bouche.
     pub fn step(self) -> u32 {
         match self {
-            Strip::Stand | Strip::StandBlink => STEP,
+            Strip::Stand | Strip::StandBlink | Strip::StandBlinkGlitch => STEP,
             Strip::StandMouth => 1,
         }
     }
@@ -166,7 +177,7 @@ impl Strip {
 pub fn shown(strip: Strip) -> Shown {
     let columns = match strip {
         Strip::Stand => 15,
-        Strip::StandBlink => 4,
+        Strip::StandBlink | Strip::StandBlinkGlitch => 4,
         Strip::StandMouth => 5,
     };
     Shown::new(strip.layout(), strip.step(), columns)
@@ -197,14 +208,25 @@ pub fn cell_pixels(strip: Strip, grid: &[u8], index: u32) -> Option<Vec<u8>> {
 /// dessins 24 à 31 viennent du clignement : yeux fermés pendant 6 images, 0,25 s) ; sans, les yeux
 /// restent ouverts. À l'appelant de choisir les tours où elle cligne.
 pub fn standing(blink: bool) -> Sheet<Cell> {
-    let blinking = BLINK_FROM..BLINK_FROM + Strip::StandBlink.count();
+    looped(blink.then_some(Strip::StandBlink))
+}
+
+/// Debout, en boucle, et elle cligne avec la variante glitchée de son clignement
+/// ([`Strip::StandBlinkGlitch`]), aux mêmes dessins.
+pub fn standing_glitchy() -> Sheet<Cell> {
+    looped(Some(Strip::StandBlinkGlitch))
+}
+
+/// Sa boucle debout, les dessins 24 à 31 pris dans `blink` s'il y en a un.
+fn looped(blink: Option<Strip>) -> Sheet<Cell> {
     let keys: Vec<(Cell, u32)> = (0..Strip::Stand.count())
         .step_by(STEP as usize)
         .map(|index| {
-            let cell = if blink && blinking.contains(&index) {
-                Cell { strip: Strip::StandBlink, index: index - BLINK_FROM }
-            } else {
-                Cell { strip: Strip::Stand, index }
+            let cell = match blink {
+                Some(strip) if (BLINK_FROM..BLINK_FROM + strip.count()).contains(&index) => {
+                    Cell { strip, index: index - BLINK_FROM }
+                }
+                _ => Cell { strip: Strip::Stand, index },
             };
             (cell, HOLD)
         })
@@ -288,7 +310,9 @@ mod tests {
     #[test]
     fn strips_have_the_measured_sizes() {
         let sizes: Vec<(u32, u32)> = Strip::ALL.iter().map(|s| s.strip_size()).collect();
-        assert_eq!(sizes, [(6960, 384), (928, 384), (580, 384)]);
+        assert_eq!(sizes, [(6960, 384), (928, 384), (580, 384), (928, 384)]);
+        assert!(Strip::SET.iter().all(|strip| !Strip::EXTRA.contains(strip)));
+        assert_eq!(Strip::SET.len() + Strip::EXTRA.len(), Strip::ALL.len());
     }
 
     #[test]
@@ -358,6 +382,14 @@ mod tests {
             }
         }
         assert_eq!(shut, 6, "les yeux fermés 6 images, 0,25 s");
+        // sa variante glitchée : les mêmes dessins, de l'autre planche
+        let glitchy = standing_glitchy();
+        for frame in 0..60 {
+            let (b, g) = (blink.at(frame), glitchy.at(frame));
+            assert_eq!(b.index, g.index, "image {frame}");
+            let expected = if b.strip == Strip::StandBlink { Strip::StandBlinkGlitch } else { b.strip };
+            assert_eq!(g.strip, expected, "image {frame}");
+        }
     }
 
     #[test]
@@ -380,7 +412,7 @@ mod tests {
 
     #[test]
     fn only_the_drawings_shown_are_packed_and_every_one_shown_is_there() {
-        for sheet in [standing(true), standing(false), talking()] {
+        for sheet in [standing(true), standing(false), standing_glitchy(), talking()] {
             for frame in 0..sheet.len() {
                 let cell = sheet.at(frame);
                 assert!(shown(cell.strip).origin(cell.index).is_some(), "{cell:?}");
@@ -403,7 +435,7 @@ mod tests {
 
     #[test]
     fn every_cell_exists() {
-        for sheet in [standing(true), standing(false), talking()] {
+        for sheet in [standing(true), standing(false), standing_glitchy(), talking()] {
             for frame in 0..sheet.len() {
                 let cell = sheet.at(frame);
                 assert!(cell.index < cell.strip.count(), "{cell:?}");

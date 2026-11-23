@@ -36,18 +36,28 @@ ensemble, par le commit `cf3fa56` (« she stands in her artist's new loop at 24 
 licence dit que « Capri's art and animations are by her artist » ; son README ne les range pas parmi
 les parties faites par d'autres. Merci à cette artiste, et à **Lachy** pour le projet.
 
+Trois planches de plus viennent des mêmes jeux, à la même révision : un éclat de glitch quand elle
+est assise (`perch_glitch.png`) et une variante à glitch de son clignement, assise
+(`perch_blink_glitch.png`) et debout (`idle_blink_glitch.png`). Les commits qui les ont mises à
+jour les rattachent aux dessins de son artiste (`163bd619` : « her perch uses her artist's 30 oct
+frames… », `07320d71` : « she blinks on her perch with her artist's own frames 29 to 36… »,
+`cf3fa560`, déjà cité).
+
 Quand les planches de sa pose debout manquent, elle garde son dessin debout d'avant
 (`capri-cutout.png`, de mochiiwuff/capri-desktop, voir plus haut).
 
 ### Les planches de sa vie (`assets/capri/life/`)
 
-Les planches où elle apparaît et où elle s'efface (`arrive.png`, `leave.png`) viennent du même
-projet, à la même révision. **Ce dépôt ne nomme pas leur auteur.** Elles y sont arrivées par le
-commit `eebe1854` du 27 octobre 2026 (« released 0.7.0 … »), sans crédit, et n'ont pas changé
-depuis. Sa licence dit que « Capri's art and animations are by her artist », et que les parties
-faites par d'autres sont listées dans son README : elles n'y figurent pas. Elles montrent un dessin
-plus ancien de Capri que ses poses debout et assise (de face, un bras tendu), et font partie d'un
-jeu de cases de 240 px dont ce projet n'utilise que ces deux planches pour l'instant.
+Six planches viennent du même projet, à la même révision : elle apparaît et s'efface
+(`arrive.png`, `leave.png`), marche (`walk.png`), pend quand on la tient (`dangle.png`), se relève
+(`glitch.png`) et sourit (`grin.png`). **Ce dépôt ne nomme pas leur auteur.** Elles y sont
+arrivées sans crédit, par le commit `79e707d5` du 25 octobre 2026 (« added her animations and
+kept her above games » : `dangle`, `glitch`, `grin`) et par le commit `eebe1854` du 27 octobre
+2026 (« released 0.7.0 … » : `arrive`, `leave`, `walk`, et la dernière version de `dangle`). Sa
+licence dit que « Capri's art and animations are by her artist », et que les parties faites par
+d'autres sont listées dans son README : elles n'y figurent pas. Elles montrent un dessin plus
+ancien de Capri que ses poses debout et assise (de face, un bras tendu), et font partie d'un jeu
+de cases de 240 px dont ce projet n'utilise que ces six planches.
 
 Jusqu'au 23 novembre 2026, ce projet écartait ce jeu de cases, faute d'auteur nommé. Il les prend
 depuis, par décision de son auteur, aux mêmes conditions que ses poses : la même licence, les

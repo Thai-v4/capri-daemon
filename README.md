@@ -14,7 +14,8 @@ Capri, la construct de *Cyberpunk: Edgerunners* saison 2, vit sur ton bureau. É
   « bout » à chaque dessin, une copie violette mal repérée.
 - La souris traverse la fenêtre partout, sauf sur elle, au pixel près.
 - **Attrape-la** au clic gauche pour la déplacer. **Lâche-la** doucement et elle reste là ;
-  **lance-la** et elle file, ralentit et rebondit sur les bords de l'écran.
+  **lance-la** et elle file, ralentit et rebondit sur les bords de l'écran. Depuis « Lui donner
+  vie », un clic bref (relâché vite et sans la bouger) ne l'attrape plus : il la fait sourire.
 - **Clic droit sur elle** (ou Ctrl + clic sur macOS), ou son icône dans la barre des menus
   (macOS) ou la zone de notification (Windows) : la cacher ou quitter.
 - **⌃⌥C** (Ctrl+Alt+C) la cache ou la fait revenir, depuis n'importe quelle app.
@@ -88,7 +89,8 @@ seule sa position suit l'écran. Elle **s'efface du bord**, là où elle était 
 - tu décoches « S'asseoir sur les fenêtres ».
 
 **Attrape-la** : elle se lève tout de suite, sans s'effacer, tenue par le même endroit d'elle (ses
-cheveux, ses pieds…). Debout, elle reprend sa place à l'écran : si le bord est trop près du haut
+cheveux, ses pieds…) ; avec sa planche « tenue en l'air » (voir « Elle bouge et réagit »), elle
+pend par une mèche de ses cheveux, placée sous le curseur. Debout, elle reprend sa place à l'écran : si le bord est trop près du haut
 de l'écran pour qu'elle y tienne debout, elle réapparaît un peu plus bas, devant la fenêtre.
 
 Ne comptent que les fenêtres d'app ordinaires (ni menus, ni Dock, ni panneaux flottants), à
@@ -274,8 +276,9 @@ grilles (81 Mo), puis lâchées une fois confiées à la carte graphique. Seuls 
 vont (un sur deux pour les boucles et le clignement) : 47 Mo de textures. Sur un Mac à puce Apple,
 elles comptent dans la mémoire de l'app (son « empreinte », celle du Moniteur d'activité) : mesuré
 par `footprint`, 253 Mo avec ses planches contre 200 Mo avec son dessin d'avant seulement. Ses deux
-planches de vie (elle apparaît, elle s'efface) y ajoutent 9,6 Mo de textures, d'après le calcul :
-l'empreinte n'a pas été remesurée depuis.
+planches de vie (elle apparaît, elle s'efface) y ajoutent 9,6 Mo de textures, et les sept planches
+de ses gestes 29,2 Mo (85,9 Mo de textures en tout, d'après son journal) : l'empreinte n'a pas
+été remesurée depuis.
 
 **Les deux poses à la même échelle : ce qu'on en sait.** Les deux dessins n'ont pas les mêmes
 proportions, et leurs mesures ne s'accordent pas : du cou à l'entrejambe, il faudrait 1,08 ; pour
@@ -416,6 +419,51 @@ vrai PC ; sous Linux, elle ne change de place que debout.
 Écrit et testé sans écran le 23 novembre 2026 ; regardé par l'utilisateur le soir même, la Capri du dépôt lancée avec ses vrais réglages : vu et jugé bon dans l'ensemble, pas point par point
 (son journal : six changements de place d'elle-même en vingt minutes, assise quand un bord
 existait, debout sinon ; la liste est dans « État de validation »).
+
+### Elle bouge et réagit
+
+Le quatrième lot : sept planches de plus pour des gestes et de la variété.
+
+- **tenue, elle pend** : attrapée ou traînée, elle pend par une mèche de ses cheveux, au lieu de
+  garder sa boucle debout étirée. Elle ne saute pas quand tu la prends : son corps reste où il
+  est, puis sa mèche rejoint ton curseur à mesure que tu la déplaces, même près d'un bord de
+  l'écran. Lancée, elle reste ainsi en vol ;
+- **lâchée, elle se relève** : quand elle s'arrête debout, un glitch, une fois, puis sa boucle.
+  Lâchée sur un bord, elle s'y assoit comme avant ;
+- **un clic bref la fait sourire** : un appui relâché en moins de 0,3 s et sans la bouger de plus
+  de 4 points n'est plus une prise. Debout, elle sourit (deux tours, 4 s) ; assise, un éclat de
+  glitch. Un appui plus long ou un déplacement la prend comme avant, et le clic droit ouvre
+  toujours son menu ;
+- **elle sourit quand Claude Code finit son tour** : la session principale seulement (pas les
+  sous-agents ni les coéquipiers ; une session lancée avec `--agent` compte), debout et libre,
+  une fois par minute au plus ; rien quand elle est assise. La même règle sert au miroir ;
+- **elle marche** : quand elle change de place debout, en bas de l'écran, vers la gauche et pour
+  un trajet de 10 s au plus, elle y va en marchant au lieu de s'effacer. Seulement vers la
+  gauche : c'est le côté où le dessin regarde, et il n'est pas retourné en miroir. Arrivée ou
+  arrêtée par un bord, elle se repose comme après toute arrivée ; changer sa taille l'arrête ;
+- **elle varie** : assise et libre, un éclat de glitch toutes les 1 à 4 minutes (tiré avec la
+  graine de sa vie, jamais pendant qu'on se parle ni pendant la musique) ; et un clignement sur
+  quatre, debout comme assise, est une variante à glitch (toutes les 20 s environ) ;
+- **les priorités** : te laisser la prendre passe avant tout ; puis ce qu'on se dit (un geste en
+  cours s'arrête net) ; puis ses gestes ; puis sa boucle. Jamais deux gestes à la fois.
+
+**Deux dessins, toujours.** Marcher, pendre, se relever et sourire viennent de son ancien dessin
+(de face), comme son apparition ; l'éclat assise et les clignements à glitch sont de son nouveau
+dessin. Chaque passage de l'un à l'autre est une coupe franche.
+
+**Ce qu'on sait de sa marche** (mesuré sur les images) : c'est une marche sur place, le pied posé
+ne recule pas dans le dessin. Ses pieds glissent donc un peu quand elle avance, quelle que soit
+la vitesse ; celle retenue est d'un pas par pied posé, soit 0,24 fois sa hauteur par seconde.
+
+**Chaque planche est facultative** : sans celle où elle pend, elle est tenue comme avant ; sans
+sa marche, elle s'efface et réapparaît ; sans les autres, rien ne se joue. `CREDITS.md` dit d'où
+elles viennent.
+
+**Ce que ça pèse** : +29,2 Mo de textures (85,9 Mo en tout, contre 56,7), d'après son journal ;
+l'empreinte de l'app n'a pas été remesurée.
+
+Écrit et testé sans écran le 23 novembre 2026, images fixes rendues ; **pas encore regardé en
+mouvement** : la liste est dans « État de validation ».
 
 **Essayé et écarté le même jour : des dessins générés.** Trois essais pour ajouter à sa boucle
 debout un coucou de la main par un générateur d'images : le premier changeait son corps d'un
@@ -1429,9 +1477,9 @@ Règle : tout ce qui peut être testé sans écran va dans `capri-core`, `capri-
 
 Vérifié automatiquement :
 
-- formatage, `clippy -D warnings` et 737 tests sur **macOS Apple Silicon** (le 23 novembre 2026 ;
-  736 en version optimisée, un essai de la répétition de la musique n'existant qu'en version de
-  débogage ; plus 21 qui ne
+- formatage, `clippy -D warnings` et 769 tests sur **macOS Apple Silicon** (le 23 novembre 2026 ;
+  768 en version optimisée, un essai de la répétition de la musique n'existant qu'en version de
+  débogage ; plus 22 qui ne
   tournent qu'à la main : ils écrivent des images ou dessinent sur la vraie carte graphique,
   lisent un vrai `settings.json`, touchent au vrai trousseau, créent de vraies voix et un vrai
   moteur audio, sans bruit, lisent la vraie liste des fenêtres, guettent une annonce d'essai
@@ -1667,6 +1715,16 @@ Vérifié automatiquement :
   l'intro jouée en entier hors écran (22 images en 1,85 s). Une relecture indépendante n'y a
   trouvé aucun défaut grave, mais quatre mineurs, corrigés. **Aucun essai ne passe par le
   branchement de l'intro dans la boucle de l'app** : tous ceux qui lancent Capri la coupent ;
+- ses gestes (le 23 novembre 2026) : clic ou prise (délai, déplacement, lancer : un lancer garde
+  exactement la vitesse d'avant, quelle que soit la pause), tenue par sa mèche sans saut ni
+  temps mort, bords de l'écran compris, se relever, sourire, l'éclat assise, la marche (jamais à
+  reculons, toujours finie, arrêtée par un bord ou une nouvelle taille), la fin de tour de la
+  session principale de Claude Code, chaque planche facultative à part (256 combinaisons), et
+  l'essai de gestes au hasard étendu (900 vies). Une relecture indépendante y a trouvé sept
+  points, dont trois régressions de la prise à la souris, tous reproduits puis corrigés ;
+- un essai ancien de `capri-net` échouait une fois sur trois sur une machine chargée (son faux
+  serveur n'attendait le client qu'une demi-seconde) : corrigé le 23 novembre 2026, il passe 25
+  fois sur 25 ;
 - `clippy -D warnings` en compilation croisée pour **Windows x64** et **Linux x64** (le code
   compile, il n'est pas exécuté).
 
@@ -2253,6 +2311,29 @@ par un) :
 15. **à l'usage** : dire si ses durées conviennent (elle part trop souvent, ou pas assez), et si
     elle gêne là où elle s'assoit.
 
+**Elle bouge et réagit : à regarder à la main** (écrit et testé sans écran le 23 novembre 2026 ;
+rien n'a encore été vu en mouvement) :
+
+1. **tenue** : aucun saut quand tu la prends, où que tu la prennes ; puis sa mèche vient sous
+   ton curseur à mesure que tu la déplaces. Prise en bas de l'écran ou assise sur une fenêtre
+   haute : elle te suit tout de suite, sans temps mort ;
+2. **lancée** : elle reste en l'air, puis se relève là où elle s'arrête. Un lancer après une
+   courte pause doit partir aussi fort qu'avant ;
+3. **lâchée doucement** : elle se relève, puis la coupe vers sa boucle ;
+4. **lâchée sur un bord** : elle s'y assoit comme avant, sans se relever ;
+5. **un clic bref** : elle sourit debout, ou a un éclat assise, sans être déplacée. Un appui de
+   plus de 0,3 s ou un déplacement doit toujours la prendre, sans retard gênant. Le clic droit
+   doit toujours ouvrir son menu ;
+6. **Claude Code qui finit son tour**, dans une vraie session : elle sourit debout, une fois par
+   minute au plus ; rien assise ;
+7. **sa marche** : à quel point ses pieds glissent, si sa vitesse convient, et si elle regarde
+   bien vers la gauche. Pour la voir : décoche « S'asseoir sur les fenêtres », puis « Changer de
+   place » jusqu'à ce qu'elle parte vers la gauche ;
+8. **les éclats assise** au fil des minutes, et un clignement à glitch toutes les 20 s environ ;
+9. **lui parler pendant un geste ou une marche** : elle s'arrête net ;
+10. **au repos**, le processeur ne travaille pas plus qu'avant ; en marche, la boucle suit le
+    rafraîchissement de l'écran, comme quand tu la tiens.
+
 **L'ouverture de session : à vérifier à la main** (le 12 novembre 2026, une partie du point 1 et
 du point 4, voir « Vérifié à la main sur un vrai Mac », point 23 : la case cochée dans le vrai
 menu et le fichier écrit, valide ; Capri lancée par l'agent chargé à la main, Ollama lancé par
@@ -2459,7 +2540,9 @@ Points à surveiller :
    apparaît et s'efface~~ (écrit et testé sans écran le 23 novembre 2026, images fixes rendues et
    regardées) ; ~~une intro en plein écran au démarrage, puis elle dit bonjour~~ ; ~~elle va
    s'asseoir seule sur les fenêtres~~ (écrits et testés sans écran le même jour ; les trois
-   regardés par l'utilisateur le soir même, dans l'ensemble, pas point par point) ; elle marche, pend quand on la tient, sourit ; elle
+   regardés par l'utilisateur le soir même, dans l'ensemble, pas point par point) ; ~~elle
+   marche, pend quand on la tient, sourit~~ (écrit et testé sans écran le même jour ; reste à
+   regarder en mouvement) ; elle
    s'allonge, s'endort et se réveille.
 
 ## Licence

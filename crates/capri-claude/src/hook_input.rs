@@ -223,11 +223,12 @@ impl<M: LastMessage> HookInput<M> {
         let tool = name(self.tool_name);
         let id = name(self.tool_use_id);
         let agent_type = name(self.agent_type);
-        let mut inside_agent = agent_type.clone();
         // un sous-agent, ou un coéquipier, porte un identifiant : seule la session principale parle
-        // à Capri
-        let in_an_agent = self.agent_id.as_deref().is_some_and(|id| !id.trim().is_empty());
+        // à Capri, et seule sa fin de tour la fait sourire (`Message::ends_main_turn`) ; une session
+        // lancée avec --agent n'a qu'un type, et c'est la session principale
+        let in_an_agent = in_an_agent(self.agent_id.as_deref());
         let said = self.last_assistant_message.into_said().filter(|_| !in_an_agent);
+        let mut inside_agent = in_an_agent.then(|| agent_type.clone().unwrap_or_default());
 
         let event = match self.hook_event_name.as_deref()? {
             "SessionStart" => Event::SessionStart { source: name(self.source), model: name(self.model) },
@@ -269,6 +270,18 @@ impl<M: LastMessage> HookInput<M> {
             event,
         })
     }
+}
+
+/// L'événement vient-il d'un sous-agent ou d'un coéquipier, et non de la session principale ?
+/// Une seule règle, pour le miroir et pour la fin de tour : il porte un `agent_id`. D'après la
+/// documentation des hooks (<https://code.claude.com/docs/en/hooks>, « Common input fields »),
+/// `agent_id` est l'« Unique identifier for the subagent or in-process teammate the hook fires
+/// in », alors que `agent_type` est « Present when the session uses `--agent` or the hook fires
+/// inside a subagent » : seul l'identifiant distingue un sous-agent ou un coéquipier de la session
+/// principale lancée avec `--agent`. (Et `Stop` « Runs when the main Claude Code agent has
+/// finished responding » : un `Stop` qui porterait un identifiant, on ne le compte pas.)
+pub fn in_an_agent(agent_id: Option<&str>) -> bool {
+    agent_id.is_some_and(|id| !id.trim().is_empty())
 }
 
 impl ToolInput {
@@ -630,10 +643,20 @@ mod tests {
     fn the_mirror_only_speaks_for_the_main_session() {
         // un Stop dans un sous-agent ou un coéquipier (il porte un identifiant d'agent)
         let in_agent = parse_mirrored(&stop(ANSWER, r#","agent_id":"a1","agent_type":"Explore""#), AT);
-        assert_eq!(in_agent.unwrap().unwrap().event, Event::TurnEnd { said: None });
-        // la session lancée avec --agent n'a qu'un type : c'est bien la session principale
+        let in_agent = in_agent.unwrap().unwrap();
+        assert_eq!(in_agent.event, Event::TurnEnd { said: None });
+        assert!(!in_agent.ends_main_turn(), "pas la fin du tour de la session principale");
+        assert_eq!(in_agent.agent.as_deref(), Some("Explore"));
+        // la session lancée avec --agent n'a qu'un type : c'est bien la session principale, pour le
+        // miroir comme pour sa fin de tour
         let with_agent = parse_mirrored(&stop(ANSWER, r#","agent_type":"reviewer""#), AT).unwrap().unwrap();
         assert!(matches!(with_agent.event, Event::TurnEnd { said: Some(_) }));
+        assert!(with_agent.ends_main_turn() && with_agent.agent.is_none());
+        let plain = parse(&stop(ANSWER, r#","agent_type":"reviewer""#), AT).unwrap().unwrap();
+        assert!(plain.ends_main_turn(), "miroir désactivé, la même règle");
+        // un identifiant sans type : un sous-agent quand même
+        let unnamed = parse(&stop(ANSWER, r#","agent_id":"a2""#), AT).unwrap().unwrap();
+        assert!(!unnamed.ends_main_turn());
         // SubagentStop et StopFailure ne disent rien, même avec une ligne marquée
         let subagent = parse_mirrored(
             r#"{"session_id":"s","hook_event_name":"SubagentStop","agent_id":"def456","agent_type":"Explore",

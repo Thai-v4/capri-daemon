@@ -230,12 +230,14 @@ mod tests {
             "capri/stand/idle_blink.png",
             "capri/stand/idle_mouth.png",
         ];
-        /// Au format 2, ses planches de vie en plus (elle apparaît, elle s'efface), et l'intro du
-        /// lancement. Cette liste a pu changer sans que le numéro change : aucune version n'a été
-        /// publiée au format 2 (la 0.2.0, la dernière publiée, le 23 novembre 2026, est au format
-        /// 1), et aucune app installée ne l'attend encore. Une fois une version publiée à ce format,
-        /// elle ne change plus : toute nouvelle image demande le format 3.
-        const FORMAT_2: [&str; 34] = [
+        /// Au format 2, ses planches de vie en plus (elle apparaît, elle s'efface ; elle marche,
+        /// elle pend, elle se relève, elle sourit), ses planches facultatives assises et debout (un
+        /// éclat, ses clignements glitchés), et l'intro du lancement. Cette liste a pu changer sans
+        /// que le numéro change : aucune version n'a été publiée au format 2 (la 0.2.0, la dernière
+        /// publiée, le 23 novembre 2026, est au format 1), et aucune app installée ne l'attend
+        /// encore. Une fois une version publiée à ce format, elle ne change plus : toute nouvelle
+        /// image demande le format 3.
+        const FORMAT_2: [&str; 41] = [
             "capri/capri-cutout.png",
             "capri/perch/perch.png",
             "capri/perch/perch_blink.png",
@@ -243,11 +245,18 @@ mod tests {
             "capri/perch/perch_music.png",
             "capri/perch/perch_arrive.png",
             "capri/perch/perch_leave.png",
+            "capri/perch/perch_glitch.png",
+            "capri/perch/perch_blink_glitch.png",
             "capri/stand/idle.png",
             "capri/stand/idle_blink.png",
             "capri/stand/idle_mouth.png",
+            "capri/stand/idle_blink_glitch.png",
             "capri/life/arrive.png",
             "capri/life/leave.png",
+            "capri/life/walk.png",
+            "capri/life/dangle.png",
+            "capri/life/glitch.png",
+            "capri/life/grin.png",
             "capri/intro/01.png",
             "capri/intro/02.png",
             "capri/intro/03.png",

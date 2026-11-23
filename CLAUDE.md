@@ -81,7 +81,10 @@ son poids mesuré). Les trois ont été regardés par l'utilisateur le soir mêm
 lancée par `cargo run --release` avec ses vrais réglages, pendant une vingtaine de minutes : il
 dit avoir tout vu et que cela lui convient, dans l'ensemble, pas point par point (son journal :
 l'intro jouée, 22 images sur 22 ; six changements de place d'elle-même, assise quand un bord
-existait, debout sinon ; l'écoute au micro refusée hors de son app, comme prévu). Des dessins
+existait, debout sinon ; l'écoute au micro refusée hors de son app, comme prévu). Le quatrième
+(elle pend quand on la tient, se relève, sourit à un clic bref et quand Claude Code finit son
+tour, marche vers la gauche, et varie par des éclats et des clignements à glitch) est écrit et
+testé sans écran le même jour ; pas encore regardé en mouvement. Des dessins
 générés par un outil d'images ont été essayés le même jour pour un coucou de la main, trois
 fois, et écartés : aucun ne se mêlait à ses dessins.
 
@@ -101,10 +104,17 @@ fois, et écartés : aucun ne se mêlait à ses dessins.
   face à la pose assise ; la boucle ne flotte pas, le flottement reste au programme), mesurées sur
   les images ; `shown` serre les seuls dessins montrés (un sur deux pour les boucles et le
   clignement) dans les grilles confiées à la carte graphique. Et dans `sheets::life` les planches
-  de sa vie : des cases de 240 px d'un dessin plus ancien d'elle (de face, un bras tendu), pour
-  l'instant `arrive` et `leave`, à la même échelle que sa pose debout et alignées sur elle par
-  ses pieds et sa hauteur (`STAND_LEFT` : la case de sa boucle commence 73 px plus à droite).
-  Une planche de plus s'y ajoute sans rien refaire (sa doc dit comment).
+  de sa vie : des cases de 240 px d'un dessin plus ancien d'elle (de face, un bras tendu) :
+  `arrive` et `leave` (`APPEAR`, qui vont ensemble), `walk`, `dangle`, `glitch` et `grin`
+  (`MOVES`, chacune facultative à part), à la même échelle que sa pose debout et alignées sur elle
+  par ses pieds et sa hauteur (`STAND_LEFT` : la case de sa boucle commence 73 px plus à droite).
+  Mesuré sur les images : la mèche par où elle pend (`GRIP`), la longueur d'un pas et sa vitesse
+  (`WALK_STEP`, `walk_speed` : sa marche est une marche sur place, ses pieds glissent un peu
+  quelle que soit la vitesse), le côté où elle regarde (`FACING` : la gauche ; jamais retournée
+  en miroir), et la tenue de chaque planche (`hold` : deux images, trois pour son sourire).
+  Une planche de plus s'y ajoute sans rien refaire (sa doc dit comment). Les variantes de son
+  nouveau dessin sont avec leurs jeux : `sheets` (`PerchGlitch`, `PerchBlinkGlitch`) et
+  `sheets::stand` (`StandBlinkGlitch`).
   Et `look` : **son dessin**, quelle case montrer à chaque image (debout, la boucle et ses
   clignements aux tours de `BLINKS`, sa bouche posée par-dessus quand elle parle ; posée,
   l'arrivée, sa boucle assise, parlante ou en musique, le départ), où (sa ligne d'assise sur le
@@ -122,6 +132,19 @@ fois, et écartés : aucun ne se mêlait à ses dessins.
   place à l'autre (`Look::travel`, `arrive` ; `is_traveling`, `is_between`) : elle s'efface ici
   et apparaît là-bas **sans que la fenêtre se cache** ; `is_gone` et `is_hidden` ne valent que
   pour « cachée ». `body` sait aussi la placer d'un coup (`Capri::set_on`, `set_at`).
+  Et ses **gestes** (`look::Gesture` : se relever, sourire, un éclat assise ; `poke` pour un clic,
+  `cheer` pour une fin de tour de Claude Code, `fidget` pour un éclat de sa vie) : un seul à la
+  fois, toujours fini (`LONGEST_GESTURE`), après la prise et la conversation, avant sa boucle ;
+  un clignement sur quatre est la variante à glitch (`blinks_glitchy`, déterministe comme
+  `BLINKS`). Tenue, elle pend (`Look::hold`, `grip_offset`, `Capri::hold_toward`) : **jamais de
+  saut à la prise ni de temps mort**, son corps ne bouge pas quand on la prend, puis sa mèche
+  rejoint le curseur à mesure qu'il se déplace (au plus de la moitié de son chemin à chaque pas),
+  bords de l'écran compris. Elle marche (`Stance::Walking`, `Capri::walk_to`, `halt` ;
+  `Look::walk`) : sa position avance à la cadence de l'écran, toute fin de marche est une arrivée,
+  une nouvelle taille l'arrête. Et `input` : **clic ou prise** (`Hand`, `Grab`, `Let` ;
+  `CLICK_SLOP`, `CLICK_LONGEST`), décidé en code pur que la boucle et l'essai de gestes au hasard
+  appellent tous deux ; le curseur relevé pendant l'attente est rejoué à la prise, pour qu'un
+  lancer garde exactement la vitesse qu'il avait avant que le clic existe.
   Et `roam` : **sa vie**, elle change seule de place. Un générateur pseudo-aléatoire à graine,
   écrit sur place (`Rng`, SplitMix64 : la même graine donne la même vie) ; ses durées, en
   constantes nommées (`FIRST`, `SEATED`, `STANDING`, `BY_HAND`, `LOST`, `NOWHERE`, `PATIENCE`) ;
@@ -182,7 +205,11 @@ fois, et écartés : aucun ne se mêlait à ses dessins.
   `IdentityHash` n'ont pas de `Display`, et leur `Debug` les masque.
 - `capri-claude` : tout ce que Capri sait de Claude Code, lui aussi **sans dépendance système** :
   lecture de l'entrée des hooks, protocole (et la forme pour le journal d'un message,
-  `Message::for_log`), suivi des sessions, édition de `settings.json` de
+  `Message::for_log`), **une seule règle pour « la session principale »**, celle du miroir et
+  celle de son sourire en fin de tour (`hook_input::in_an_agent` : un événement sans `agent_id` ;
+  d'après la documentation des hooks, `agent_id` désigne le sous-agent ou le coéquipier où le hook
+  se déclenche, et `agent_type` est présent aussi dès qu'une session est lancée avec `--agent` ;
+  `Message::ends_main_turn` : un `Stop` de la session principale), suivi des sessions, édition de `settings.json` de
   texte à texte, le style de sortie « Capri » (`style` : son texte, la signature qui reconnaît le
   nôtre), le miroir (`mirror` : son réglage, l'extraction de la ligne `[Capri]`, l'attente d'une
   ligne arrivée pendant qu'elle parle), et où vivent les réglages (`places` : le dossier de Capri
@@ -638,8 +665,8 @@ une fausse commande `security` placée en tête du `PATH`.
   images d'animation).
 - Elle tourne toute la journée : ne redessiner que quand la pose ou la position change, rester
   léger en CPU et en batterie. Au repos, la boucle se réveille à 60 Hz (`pace::REST`) ; pressée
-  seulement (tenue, en vol, ou sa fenêtre qui bouge ou un bouton de la souris enfoncé, plus une
-  demi-seconde), elle suit l'écran : `Overlay::follow_refresh` (sur macOS 14 et suivants, un
+  seulement (tenue, en vol, en marche, ou sa fenêtre qui bouge ou un bouton de la souris enfoncé,
+  plus une demi-seconde), elle suit l'écran : `Overlay::follow_refresh` (sur macOS 14 et suivants, un
   `CADisplayLink` de la vue, en pause le reste du temps ; ailleurs, refus, et un `pace::Clock` à
   la fréquence de `Overlay::refresh_rate`), et seuls les réveils de l'écran
   (`Overlay::refreshed`) refont le pas. Mesurer avant de changer la cadence :
@@ -657,8 +684,10 @@ une fausse commande `security` placée en tête du `PATH`.
   sa vie (`assets/capri/life/`) en viennent aussi : l'ancien jeu de cases de 240 px, dont ce
   dépôt **ne nomme pas l'auteur**, écarté jusque-là et autorisé par l'utilisateur le 23 novembre
   2026 (sa licence dit que tout son dessin est de son artiste, et son README ne les range pas
-  parmi les parties faites par d'autres) : `arrive` et `leave` aujourd'hui, et pour les lots
-  suivants `walk`, `sleep`, `wake`, `dangle`, `glitch`, `grin`. `CREDITS.md` dit ce qu'on en sait,
+  parmi les parties faites par d'autres) : `arrive`, `leave`, `walk`, `dangle`, `glitch` et `grin`
+  aujourd'hui, et pour le lot suivant `sleep` et `wake`. Trois variantes à glitch de son nouveau
+  dessin viennent des jeux de son artiste (`perch_glitch`, `perch_blink_glitch`,
+  `idle_blink_glitch`). `CREDITS.md` dit ce qu'on en sait,
   sans leur prêter un auteur. **Jamais une image que ce dépôt crédite à quelqu'un d'autre**
   (`click.png`, `form.png`, l'intro « Peek », les emotes) : une attribution se vérifie dans son
   README, sa licence et l'historique du fichier, pas de mémoire. Sans ses planches de vie, elle
@@ -667,7 +696,9 @@ une fausse commande `security` placée en tête du `PATH`.
   sans elles, ou s'il en manque une, pas d'intro. **Le repli** : seul `capri-cutout.png` est indispensable ; une
   planche absente, illisible ou refusée par la carte graphique ne fait jamais planter, sa pose
   revient à son dessin d'avant (`look::Wardrobe`), et chaque combinaison (debout, assise, vie :
-  les huit) est testée.
+  les huit) est testée ; chacune des sept planches de ses gestes est facultative à part (sans
+  `dangle`, elle est tenue comme avant ; sans `walk`, elle s'efface et réapparaît ; sans les
+  autres, rien ne se joue), toutes leurs combinaisons essayées.
   Dans un worktree sans images, utiliser `CAPRI_ASSETS=/chemin/vers/assets`.
 - **Une `Capri.app` qui contient les images ne se distribue jamais** : ni téléversée, ni publiée,
   ni partagée, ni jointe à une version, ni fabriquée par la CI. Les images ne sont pas à ce projet
@@ -933,7 +964,15 @@ une fausse commande `security` placée en tête du `PATH`.
   de `look`, `roam`, `body` ou `perch` : `cargo test -p capri-core --test gestes_au_hasard`
   (des gestes tirés au hasard, à graines fixes, dans l'ordre où la boucle les traite : jamais
   coincée invisible ni à moitié effacée, « cachée » et son état toujours d'accord, son tour
-  jamais figé, son dessin assis toujours sur son bord).
+  jamais figé, son dessin assis toujours sur son bord ; depuis ses gestes : jamais deux gestes à
+  la fois, un geste finit toujours, aucun départ pendant une retenue, elle ne marche jamais à
+  reculons et ses marches s'arrêtent, tenue elle n'est jamais immobile quand le curseur s'éloigne
+  d'un bord et sa mèche le rejoint). Ses gestes en font partie : debout et libre, elle marche au
+  lieu de s'effacer quand elle va vers la gauche pour un trajet court (`WALK_LONGEST`) ; assise
+  et libre, un éclat de temps en temps (`FIDGET`, d'un générateur à part, de la même graine).
+  Elle ne sourit pour Claude Code qu'une fois par minute au plus (`CHEER_EVERY`), jamais pendant
+  qu'on se parle, et du `Stop` reçu rien de plus n'est écrit au journal que ce que
+  `Message::for_log` permet.
 - Aucun nom de modèle écrit en dur : il vient de l'utilisateur ou de la liste que donne le
   serveur. Même règle que pour les API : format et adresses d'un fournisseur se vérifient dans sa
   documentation, pas de mémoire (les sources de chaque adresse sont citées dans

@@ -1,5 +1,7 @@
 //! Les planches de sa pose assise : elle s'assoit sur le bord d'une fenêtre, jambes pendantes,
-//! cligne des yeux, parle, se balance sur ta musique, arrive et repart. Celles de sa pose debout,
+//! cligne des yeux, parle, se balance sur ta musique, arrive et repart ; et, facultatives, un éclat
+//! ([`Strip::PerchGlitch`]) et une variante de son clignement ([`Strip::PerchBlinkGlitch`]).
+//! Celles de sa pose debout,
 //! du même artiste, sont décrites dans [`stand`], et celles de sa vie debout hors de sa boucle
 //! (elle se matérialise, elle s'efface) dans [`life`].
 //!
@@ -10,15 +12,20 @@
 //!
 //! **D'où viennent les nombres.** Tous ont été mesurés sur les images elles-mêmes (canal alpha,
 //! colonne par colonne et ligne par ligne), sauf la cadence d'origine, qu'une image ne dit pas :
-//! 30 images par seconde pour les boucles, 15 pour l'arrivée et le départ, d'après le code du
+//! 30 images par seconde pour les boucles, 15 pour l'arrivée, le départ et l'éclat, d'après le code du
 //! dépôt d'origine, lu sans rien en reprendre. Ici, on ne garde pas leur cadence : comme partout
 //! chez Capri, les dessins sont tenus « en deux » à 24 i/s (voir [`crate::anim`]).
 //!
 //! **Les planches** sont des bandes horizontales de 384 px de haut, une image à côté de l'autre.
 //! Les boucles (assise, clignement, parole, musique) ont des cases de 196 px de large ;
-//! l'arrivée et le départ, plus larges à cause de leurs éclats, des cases de 288 px, où le même
-//! dessin est décalé de [`WIDE_SHIFT`] px vers la droite (mesuré : la dernière image de l'arrivée
-//! et la première du départ recouvrent l'image 0 de l'assise, à ce décalage près).
+//! l'arrivée, le départ et l'éclat, plus larges à cause de leurs éclats, des cases de 288 px, où le
+//! même dessin est décalé de [`WIDE_SHIFT`] px vers la droite (mesuré : la dernière image de
+//! l'arrivée et la première du départ recouvrent l'image 0 de l'assise, à ce décalage près ; la
+//! dernière de l'éclat aussi, au même décalage, glitch en plus).
+//!
+//! **Les planches facultatives** ([`Strip::EXTRA`]) : sans elles, sa pose assise est entière (pas
+//! d'éclat, ses clignements d'avant) ; sans les six autres ([`Strip::SET`]), il n'y a pas de pose
+//! assise du tout.
 //!
 //! **Le bord de la fenêtre** passe à [`SEAT_Y`] px du haut de chaque case : c'est la ligne d'où
 //! l'arrivée naît et où le départ s'efface (tous deux commencent ou finissent en un trait
@@ -42,7 +49,7 @@ pub const DIR: &str = "capri/perch";
 pub const CELL_HEIGHT: u32 = 384;
 /// Largeur d'une case des boucles (assise, clignement, parole, musique).
 pub const NARROW: u32 = 196;
-/// Largeur d'une case de l'arrivée et du départ.
+/// Largeur d'une case de l'arrivée, du départ et de l'éclat.
 pub const WIDE: u32 = 288;
 /// Dans une case large, le dessin est décalé d'autant vers la droite.
 pub const WIDE_SHIFT: u32 = 46;
@@ -70,7 +77,8 @@ pub const HOLD: u32 = 2;
 /// tour, au lieu de 2 s à la cadence d'origine).
 pub const STEP: u32 = 2;
 /// Le clignement remplace, dans la boucle de l'assise, les dessins 28 à 35 (comptés depuis 0).
-/// Mesuré : chaque case du clignement est la plus proche de ces dessins-là, dans l'ordre.
+/// Mesuré : chaque case du clignement est la plus proche de ces dessins-là, dans l'ordre ; de même
+/// chaque case de sa variante glitchée ([`Strip::PerchBlinkGlitch`]).
 pub const BLINK_FROM: u32 = 28;
 
 /// Une planche.
@@ -88,10 +96,27 @@ pub enum Strip {
     PerchArrive,
     /// Elle s'efface jusqu'à un trait, puis plus rien : 12 dessins, une seule fois.
     PerchLeave,
+    /// Un éclat : elle se brouille en bandes de couleurs décalées, puis se reforme sur son dessin
+    /// 0. 10 dessins, une seule fois. Facultative.
+    PerchGlitch,
+    /// Une variante de son clignement, l'œil brouillé : 8 dessins, à la place des dessins 28 à 35.
+    /// Facultative.
+    PerchBlinkGlitch,
 }
 
 impl Strip {
-    pub const ALL: [Strip; 6] = [
+    pub const ALL: [Strip; 8] = [
+        Strip::Perch,
+        Strip::PerchBlink,
+        Strip::PerchTalk,
+        Strip::PerchMusic,
+        Strip::PerchArrive,
+        Strip::PerchLeave,
+        Strip::PerchGlitch,
+        Strip::PerchBlinkGlitch,
+    ];
+    /// Sa pose assise : toutes ensemble, ou pas de pose assise.
+    pub const SET: [Strip; 6] = [
         Strip::Perch,
         Strip::PerchBlink,
         Strip::PerchTalk,
@@ -99,6 +124,8 @@ impl Strip {
         Strip::PerchArrive,
         Strip::PerchLeave,
     ];
+    /// Facultatives, chacune à part (et seulement avec [`Strip::SET`]).
+    pub const EXTRA: [Strip; 2] = [Strip::PerchGlitch, Strip::PerchBlinkGlitch];
 
     /// Le nom du fichier, dans [`DIR`] (le même que dans le dépôt d'origine).
     pub fn file(self) -> &'static str {
@@ -109,6 +136,8 @@ impl Strip {
             Strip::PerchMusic => "perch_music.png",
             Strip::PerchArrive => "perch_arrive.png",
             Strip::PerchLeave => "perch_leave.png",
+            Strip::PerchGlitch => "perch_glitch.png",
+            Strip::PerchBlinkGlitch => "perch_blink_glitch.png",
         }
     }
 
@@ -116,16 +145,17 @@ impl Strip {
     pub fn count(self) -> u32 {
         match self {
             Strip::Perch | Strip::PerchTalk | Strip::PerchMusic => 60,
-            Strip::PerchBlink => 8,
+            Strip::PerchBlink | Strip::PerchBlinkGlitch => 8,
             Strip::PerchArrive => 14,
             Strip::PerchLeave => 12,
+            Strip::PerchGlitch => 10,
         }
     }
 
     /// Taille d'une case.
     pub fn cell(self) -> (u32, u32) {
         match self {
-            Strip::PerchArrive | Strip::PerchLeave => (WIDE, CELL_HEIGHT),
+            Strip::PerchArrive | Strip::PerchLeave | Strip::PerchGlitch => (WIDE, CELL_HEIGHT),
             _ => (NARROW, CELL_HEIGHT),
         }
     }
@@ -141,9 +171,10 @@ impl Strip {
     pub fn columns(self) -> u32 {
         match self {
             Strip::Perch | Strip::PerchTalk | Strip::PerchMusic => 10,
-            Strip::PerchBlink => 8,
+            Strip::PerchBlink | Strip::PerchBlinkGlitch => 8,
             Strip::PerchArrive => 7,
             Strip::PerchLeave => 6,
+            Strip::PerchGlitch => 5,
         }
     }
 
@@ -208,20 +239,21 @@ pub fn cell_pixels(strip: Strip, grid: &[u8], index: u32) -> Option<Vec<u8>> {
 pub fn shown(strip: Strip) -> Shown {
     let columns = match strip {
         Strip::Perch | Strip::PerchTalk | Strip::PerchMusic => 10,
-        Strip::PerchBlink => 4,
+        Strip::PerchBlink | Strip::PerchBlinkGlitch => 4,
         Strip::PerchArrive => 7,
         Strip::PerchLeave => 6,
+        Strip::PerchGlitch => 5,
     };
     Shown { full: Layout::of(strip), step: strip.step(), columns }
 }
 
 impl Strip {
-    /// Un dessin sur combien est montré : un sur [`STEP`] pour les boucles et le clignement (qui
-    /// remplace les dessins 28 à 35 de la boucle, un sur deux aussi), tous pour l'arrivée et le
-    /// départ.
+    /// Un dessin sur combien est montré : un sur [`STEP`] pour les boucles et les clignements (qui
+    /// remplacent les dessins 28 à 35 de la boucle, un sur deux aussi), tous pour l'arrivée, le
+    /// départ et l'éclat.
     pub fn step(self) -> u32 {
         match self {
-            Strip::PerchArrive | Strip::PerchLeave => 1,
+            Strip::PerchArrive | Strip::PerchLeave | Strip::PerchGlitch => 1,
             _ => STEP,
         }
     }
@@ -366,12 +398,22 @@ fn once(strip: Strip) -> Sheet<Cell> {
 /// viennent du clignement) ; sans, les yeux restent ouverts. À l'appelant de choisir les tours où
 /// elle cligne, pour qu'elle ne le fasse pas toutes les 2,5 s.
 pub fn sitting(blink: bool) -> Sheet<Cell> {
-    looped(Strip::Perch, |index| {
-        if blink && (BLINK_FROM..BLINK_FROM + Strip::PerchBlink.count()).contains(&index) {
-            Cell { strip: Strip::PerchBlink, index: index - BLINK_FROM }
-        } else {
-            Cell { strip: Strip::Perch, index }
+    blinking(blink.then_some(Strip::PerchBlink))
+}
+
+/// Assise, en boucle, et elle cligne avec la variante glitchée de son clignement
+/// ([`Strip::PerchBlinkGlitch`]), aux mêmes dessins.
+pub fn sitting_glitchy() -> Sheet<Cell> {
+    blinking(Some(Strip::PerchBlinkGlitch))
+}
+
+/// Sa boucle assise, les dessins 28 à 35 pris dans `blink` s'il y en a un.
+fn blinking(blink: Option<Strip>) -> Sheet<Cell> {
+    looped(Strip::Perch, |index| match blink {
+        Some(strip) if (BLINK_FROM..BLINK_FROM + strip.count()).contains(&index) => {
+            Cell { strip, index: index - BLINK_FROM }
         }
+        _ => Cell { strip: Strip::Perch, index },
     })
 }
 
@@ -396,6 +438,12 @@ pub fn leaving() -> Sheet<Cell> {
     once(Strip::PerchLeave)
 }
 
+/// Son éclat, assise (une fois, 20 images : 0,83 s ; 15 dessins par seconde à l'origine, tenus en
+/// deux ici, comme son arrivée). Il finit sur son dessin 0, d'où sa boucle repart.
+pub fn glitching() -> Sheet<Cell> {
+    once(Strip::PerchGlitch)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -404,7 +452,22 @@ mod tests {
     #[test]
     fn strips_have_the_measured_sizes() {
         let sizes: Vec<(u32, u32)> = Strip::ALL.iter().map(|s| s.strip_size()).collect();
-        assert_eq!(sizes, [(11760, 384), (1568, 384), (11760, 384), (11760, 384), (4032, 384), (3456, 384)]);
+        assert_eq!(
+            sizes,
+            [
+                (11760, 384),
+                (1568, 384),
+                (11760, 384),
+                (11760, 384),
+                (4032, 384),
+                (3456, 384),
+                (2880, 384),
+                (1568, 384)
+            ]
+        );
+        // les deux listes, sans rien de commun, font toutes les planches
+        assert!(Strip::SET.iter().all(|strip| !Strip::EXTRA.contains(strip)));
+        assert_eq!(Strip::SET.len() + Strip::EXTRA.len(), Strip::ALL.len());
     }
 
     #[test]
@@ -475,6 +538,8 @@ mod tests {
     fn the_seat_is_the_same_point_of_her_in_every_strip() {
         assert_eq!(Strip::Perch.seat(), (76, 266));
         assert_eq!(Strip::PerchArrive.seat(), (76 + 46, 266));
+        assert_eq!(Strip::PerchGlitch.seat(), Strip::PerchArrive.seat());
+        assert_eq!(Strip::PerchBlinkGlitch.seat(), Strip::Perch.seat());
         for strip in Strip::ALL {
             let (x, y) = strip.seat();
             let (w, h) = strip.cell();
@@ -518,6 +583,20 @@ mod tests {
     }
 
     #[test]
+    fn her_glitchy_blink_takes_the_same_drawings() {
+        let (blink, glitchy) = (sitting(true), sitting_glitchy());
+        for frame in 0..60 {
+            let (b, g) = (blink.at(frame), glitchy.at(frame));
+            assert_eq!(b.index, g.index, "image {frame}");
+            let expected = if b.strip == Strip::PerchBlink { Strip::PerchBlinkGlitch } else { b.strip };
+            assert_eq!(g.strip, expected, "image {frame}");
+        }
+        let glitch = glitching();
+        assert_eq!(glitch.len(), 20);
+        assert_eq!(glitch.at(19), Cell { strip: Strip::PerchGlitch, index: 9 });
+    }
+
+    #[test]
     fn talking_keeps_the_same_drawing_number() {
         let (sit, talk) = (sitting(false), talking());
         for frame in 0..120 {
@@ -538,7 +617,16 @@ mod tests {
     #[test]
     fn only_the_drawings_shown_are_packed_and_every_one_shown_is_there() {
         // chaque dessin que ses feuilles d'exposition montrent est dans la grille serrée
-        for sheet in [sitting(true), sitting(false), talking(), music(), arriving(), leaving()] {
+        for sheet in [
+            sitting(true),
+            sitting(false),
+            sitting_glitchy(),
+            talking(),
+            music(),
+            arriving(),
+            leaving(),
+            glitching(),
+        ] {
             for frame in 0..sheet.len() {
                 let cell = sheet.at(frame);
                 assert!(shown(cell.strip).origin(cell.index).is_some(), "{cell:?}");
@@ -557,10 +645,12 @@ mod tests {
             }
             assert_eq!(seen.len() as u32, grid.count());
             assert_eq!(grid.origin(1).is_some(), strip.step() == 1, "{strip:?}");
-            full += u64::from(strip.grid_size().0 * strip.grid_size().1);
-            packed += u64::from(gw * gh);
+            if Strip::SET.contains(&strip) {
+                full += u64::from(strip.grid_size().0 * strip.grid_size().1);
+                packed += u64::from(gw * gh);
+            }
         }
-        // un peu plus de la moitié de la place : l'arrivée et le départ gardent tout
+        // sa pose assise : un peu plus de la moitié de la place, l'arrivée et le départ gardent tout
         assert!(packed * 100 / full < 60, "{packed} sur {full}");
         assert_eq!(shown(Strip::Perch).grid_size(), (1960, 1152));
 
@@ -583,7 +673,9 @@ mod tests {
 
     #[test]
     fn every_cell_exists() {
-        for sheet in [sitting(true), talking(), music(), arriving(), leaving()] {
+        for sheet in
+            [sitting(true), sitting_glitchy(), talking(), music(), arriving(), leaving(), glitching()]
+        {
             for frame in 0..sheet.len() {
                 let cell = sheet.at(frame);
                 assert!(cell.index < cell.strip.count(), "{cell:?}");
