@@ -2067,7 +2067,9 @@ ne dépendant pas de leur ordre. Le reste de la liste n'a pas été fait) :
 6. avec une clé d'API rangée : à la première réponse, macOS peut demander l'accès au trousseau
    pour la nouvelle app (voir plus haut) ; « Toujours autoriser », puis elle répond ;
 7. `cargo clean` dans le dépôt : elle se relance toujours, avec ses images ;
-8. dans le Finder, `Capri.app` a l'icône générique des apps : elle n'a pas d'icône à elle.
+8. dans le Finder, `Capri.app` porte son icône, son visage (voir « Son icône », plus haut) ; après
+   une réinstallation ou une mise à jour, le Finder peut montrer l'ancienne un moment (pas encore
+   regardé).
 
 Note : jusqu'au 12 novembre 2026, Ollama était lancé à la main par `brew services run`, qui ne
 l'inscrit pas pour les ouvertures de session suivantes : c'est sans doute pour cela qu'il ne
