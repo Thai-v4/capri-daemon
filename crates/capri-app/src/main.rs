@@ -1,7 +1,8 @@
 //! Capri : elle flotte sur ton bureau, on peut l'attraper, la poser et la lancer (jalon 1), un
 //! bandeau au-dessus d'elle dit ce que fait Claude Code (jalon 2), elle s'assoit sur tes fenêtres
 //! (jalon 3), et on peut lui parler : elle répond dans une bulle, avec le modèle qu'on lui a donné,
-//! local ou chez un fournisseur (jalon 4).
+//! local ou chez un fournisseur (jalon 4). Elle vit sa vie : de temps en temps, elle s'efface là où
+//! elle est et apparaît ailleurs, de préférence assise sur une autre fenêtre (`roam_view`).
 //!
 //! Une seule fenêtre transparente, l'overlay de `capri-platform`, couvre l'écran principal. Elle
 //! laisse passer la souris partout, sauf sur Capri elle-même. Le curseur est lu auprès du système
@@ -59,6 +60,8 @@ mod perch_setup;
 mod perch_view;
 #[cfg(test)]
 mod portraits;
+mod roam_setup;
+mod roam_view;
 #[cfg(any(target_os = "macos", windows))]
 mod settings_view;
 mod size_setup;
@@ -235,6 +238,8 @@ struct Running {
     perch: perch_view::PerchView,
     /// Se balancer sur la musique, assise : les annonces des lecteurs, et ce qu'elle en conclut.
     music: music_view::MusicView,
+    /// Vivre sa vie : changer d'elle-même de place, et sur un geste.
+    roam: roam_view::RoamView,
     /// Image d'animation courante.
     frame: u64,
     /// Ce qui est à l'écran : son dessin et, s'il est là, son bandeau.
@@ -375,6 +380,20 @@ impl App {
             log::warn!("réglage « Se balancer sur la musique » illisible, elle s'y balance : {err:#}");
             true
         });
+        let roam_enabled = brain_setup::config_dir().and_then(|directory| roam_setup::load(&directory));
+        let roam_enabled = roam_enabled.unwrap_or_else(|err| {
+            log::warn!("réglage « Vivre sa vie » illisible, elle vit sa vie : {err:#}");
+            true
+        });
+        let rehearsing = roam_setup::rehearsing(|name| std::env::var_os(name));
+        log::info!(
+            "vivre sa vie : {}",
+            match (roam_enabled, rehearsing) {
+                (false, _) => "non",
+                (true, false) => "oui",
+                (true, true) => "pas d'elle-même pendant une répétition",
+            }
+        );
 
         overlay.set_click_through(true);
         overlay.set_shown(true);
@@ -400,6 +419,7 @@ impl App {
             if let Some(menus) = &self.menus {
                 menus.set_perch_enabled(perch_enabled);
                 menus.set_music_enabled(music_enabled);
+                menus.set_roam_enabled(roam_enabled);
                 menus.set_login_registered(registered);
                 menus.set_updates_enabled(self.updates_enabled);
                 menus.set_size(scale);
@@ -443,6 +463,7 @@ impl App {
             banner: BannerView::new(),
             perch: perch_view::PerchView::new(perch_enabled),
             music,
+            roam: roam_view::RoamView::new(roam_enabled, rehearsing, life_seed()),
             frame: 0,
             drawn: None,
             refresh,
@@ -571,6 +592,8 @@ impl App {
                     menu::Action::ToggleVisible => self.toggle_hidden(),
                     menu::Action::TogglePerch => self.toggle_perch(),
                     menu::Action::ToggleMusic => self.toggle_music(),
+                    menu::Action::ToggleRoam => self.toggle_roam(),
+                    menu::Action::Wander => self.wander(),
                     menu::Action::Larger => self.choose_size(Scale::larger),
                     menu::Action::Smaller => self.choose_size(Scale::smaller),
                     menu::Action::OriginalSize => self.choose_size(|_| Scale::ORIGINAL),
@@ -839,6 +862,9 @@ impl App {
         match brain_setup::config_dir().and_then(|directory| perch_setup::save(&directory, enabled)) {
             Ok(_) => {
                 r.perch.set_enabled(enabled, &mut r.capri);
+                // décochée, elle a quitté son bord : c'est un geste, pas un bord perdu
+                let now = r.seconds();
+                r.roam.touched(now, &r.capri);
                 let text = if enabled {
                     "Lâche-moi sur le haut d'une fenêtre : je m'y assiérai"
                 } else {
@@ -885,6 +911,49 @@ impl App {
         }
         if let Some(menus) = &self.menus {
             menus.set_music_enabled(r.music.is_enabled());
+        }
+    }
+
+    /// Lui permet de changer d'elle-même de place de temps en temps, ou le lui interdit ; le
+    /// choix est retenu dans son dossier. Si on ne peut pas le retenir, rien ne change.
+    #[cfg(any(target_os = "macos", windows))]
+    fn toggle_roam(&mut self) {
+        let Some(r) = self.running.as_mut() else { return };
+        let enabled = !r.roam.is_enabled();
+        match brain_setup::config_dir().and_then(|directory| roam_setup::save(&directory, enabled)) {
+            Ok(_) => {
+                let now = r.seconds();
+                r.roam.set_enabled(enabled, now);
+                let text = if enabled {
+                    "Je vais vivre ma vie : je changerai de place de temps en temps"
+                } else {
+                    "Je reste là où tu me mets"
+                };
+                r.banner.notify(text, capri_claude::Tone::Done);
+            }
+            Err(err) => {
+                log::error!("réglage « Vivre sa vie » : {err:#}");
+                r.banner.notify(
+                    "Je n'ai pas pu retenir ce choix, détails dans le journal",
+                    capri_claude::Tone::Failed,
+                );
+            }
+        }
+        if let Some(menus) = &self.menus {
+            menus.set_roam_enabled(r.roam.is_enabled());
+        }
+    }
+
+    /// « Changer de place » : elle part au prochain pas, si rien ne l'en empêche. Cachée, rien :
+    /// on ne la voit pas partir.
+    #[cfg(any(target_os = "macos", windows))]
+    fn wander(&mut self) {
+        if self.hidden {
+            log::debug!("« Changer de place » : elle est cachée, rien ne change");
+            return;
+        }
+        if let Some(r) = self.running.as_mut() {
+            r.roam.ask();
         }
     }
 
@@ -1196,6 +1265,8 @@ impl Running {
             self.perch.tick(&mut self.capri, &self.overlay, seconds, period, stature);
         }
         self.figure.look.appear(&mut self.capri, self.frame);
+        let seconds = self.seconds();
+        self.roam.came_back(seconds, &self.capri);
     }
 
     fn tick(&mut self) {
@@ -1226,6 +1297,8 @@ impl Running {
         let talking = self.banner.is_talking();
         let music = self.music.tick(now, self.figure.look.wants_music(&self.capri));
         self.figure.look.update(&self.capri, self.frame, talking, music);
+        // sa vie : elle part d'elle-même ailleurs, ou y apparaît, effacée d'ici
+        self.roam_step(seconds);
         // partie : la fenêtre se cache, et plus rien ne se dessine jusqu'à son retour
         if self.figure.look.is_gone() {
             self.overlay.set_shown(false);
@@ -1245,6 +1318,21 @@ impl Running {
         }
     }
 
+    /// Un pas de sa vie, à l'instant `now`, après son dessin : changer de place si c'est le moment
+    /// (ou qu'on le lui a demandé) et que rien ne la retient, ou apparaître là où elle allait. Ce
+    /// qu'elle a à en dire passe par son bandeau.
+    fn roam_step(&mut self, now: f64) {
+        let talking = self.banner.is_engaged() || self.overlay.input_is_open();
+        let hovered = self.cursor.is_some_and(|c| self.is_over(c));
+        let mut desk =
+            roam_view::Desk { perch: &mut self.perch, overlay: &self.overlay, now, cursor: self.cursor };
+        let busy = capri_core::roam::Busy { talking, hovered };
+        let said = self.roam.step(&mut self.figure.look, &mut self.capri, &mut desk, busy, now, self.frame);
+        if let Some((text, tone)) = said {
+            self.banner.notify(text, tone);
+        }
+    }
+
     /// Lui donne la taille `scale`, tout de suite : ses pieds restent où ils sont, elle reste
     /// entière à l'écran (`Capri::set_size`), son bandeau et sa bulle se replacent au dessin
     /// suivant ; posée, elle reste sur son bord s'il lui laisse la place, sinon elle repart flotter.
@@ -1258,6 +1346,8 @@ impl Running {
         self.apply_size(self.overlay.scale_factor());
         let (seconds, stature) = (self.seconds(), self.figure.look.stature());
         self.perch.resized(&mut self.capri, &self.overlay, seconds, stature);
+        // trop grande pour son bord, elle l'a quitté : c'est un geste, pas un bord perdu
+        self.roam.touched(seconds, &self.capri);
         true
     }
 
@@ -1363,6 +1453,16 @@ fn core_button(button: MouseButton) -> Button {
         MouseButton::Right => Button::Secondary,
         _ => Button::Other,
     }
+}
+
+/// La graine de sa vie (`capri_core::roam::Rng`), prise à l'horloge du système au lancement : une
+/// vie différente à chaque lancement. Rien de secret : de quoi ne pas refaire chaque jour les mêmes
+/// trajets.
+fn life_seed() -> u64 {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_nanos() as u64);
+    nanos ^ (u64::from(std::process::id()) << 32)
 }
 
 /// Sa hauteur debout à l'écran, en pixels physiques, pour un écran de `density` pixels par point,

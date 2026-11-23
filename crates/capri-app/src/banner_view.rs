@@ -359,6 +359,13 @@ impl BannerView {
         self.chat.is_talking()
     }
 
+    /// Se parle-t-on : on lui parle au micro (ou son dernier mot est encore attendu), ou elle
+    /// parle, répond ou va répondre (`Chat::is_busy`) ? Elle ne change pas de place pendant ce
+    /// temps.
+    pub fn is_engaged(&self) -> bool {
+        self.dictation.is_active() || self.chat.is_busy()
+    }
+
     /// Arrête sa voix tout de suite, sans toucher à sa bulle.
     #[cfg(any(target_os = "macos", windows))]
     pub fn silence(&mut self) {

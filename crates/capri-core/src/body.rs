@@ -244,6 +244,22 @@ impl Capri {
         }
     }
 
+    /// Elle se retrouve posée sur un bord, en `perch.feet`, d'un coup et sans geste : elle y
+    /// change de place en s'y matérialisant (`crate::roam`), elle n'y atterrit pas.
+    pub fn set_on(&mut self, perch: Perch) {
+        self.set_at(perch.feet);
+        self.stance = Stance::Perched { spot: perch.spot, seat: perch.feet };
+    }
+
+    /// Elle se retrouve debout, ses pieds en `feet`, d'un coup et sans geste ; elle y flotte.
+    pub fn set_at(&mut self, feet: Vec2) {
+        self.place_feet(feet);
+        self.stance = Stance::Floating;
+        self.squash = None;
+        self.gesture = None;
+        self.samples.clear();
+    }
+
     /// Elle quitte son bord et se remet à flotter sur place, avec un petit étirement une fois son
     /// départ joué ([`Capri::set_leave_frames`]). Sans effet si elle n'est pas posée.
     pub fn take_off(&mut self) {
@@ -669,6 +685,32 @@ mod tests {
         c.grab(Vec2::new(850.0, 500.0), 0.0);
         c.release(0.01);
         assert_eq!(at(&mut c, 700).0, tour + 76);
+    }
+
+    #[test]
+    fn set_somewhere_else_she_is_there_at_once_without_a_gesture() {
+        let mut c = capri();
+        c.set_leave_frames(24);
+        c.step(0.0, 10);
+        // en plein lancer, puis posée ailleurs d'un coup : ni écrasement, ni rebond
+        c.grab(Vec2::new(850.0, 500.0), 0.0);
+        c.drag_to(Vec2::new(1050.0, 500.0), 0.05);
+        c.release(0.05);
+        assert!(matches!(c.stance(), Stance::Thrown { .. }));
+        c.set_on(perch_at(500.0, 700.0));
+        assert_eq!((c.perched(), c.seat()), (Some(SPOT), Some(Vec2::new(500.0, 700.0))));
+        assert_eq!(c.pose().rect.size, Vec2::new(160.0, 300.0), "pas d'écrasement à l'arrivée");
+        // repartie de son bord, puis debout ailleurs : l'étirement qui attendait est oublié
+        c.take_off();
+        c.set_at(Vec2::new(300.0, 900.0));
+        assert_eq!((c.stance(), c.feet()), (Stance::Floating, Vec2::new(300.0, 900.0)));
+        for frame in 10..60 {
+            c.step(0.0, frame);
+            assert_eq!(c.pose().rect.size, Vec2::new(160.0, 300.0), "image {frame}");
+        }
+        // jamais hors de l'écran
+        c.set_at(Vec2::new(5000.0, 5000.0));
+        assert_eq!(c.position(), Vec2::new(1920.0 - 160.0, 1080.0 - 300.0));
     }
 
     #[test]

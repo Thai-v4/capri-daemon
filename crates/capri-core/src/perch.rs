@@ -323,6 +323,50 @@ pub fn landing(seen: &[Seen], screen: Rect, stature: Stature, feet: Vec2) -> Opt
     best.map(|(_, perch)| perch)
 }
 
+/// Un morceau visible du bord supérieur d'une fenêtre où elle tiendrait, et d'où à où peut aller
+/// le point posé dessus : ce qui repose sur le bord sur le morceau, loin de ses bouts, et elle
+/// entière dans l'écran, comme [`landing`] la poserait. De quoi choisir où aller (`crate::roam`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Bench {
+    /// Sa fenêtre : son numéro et son rectangle, en pixels de l'overlay.
+    pub window: Seen,
+    /// D'où à où peut aller le point posé (`lo` ≤ `hi`).
+    pub lo: f32,
+    pub hi: f32,
+}
+
+impl Bench {
+    /// La hauteur du bord.
+    pub fn y(&self) -> f32 {
+        self.window.rect.min.y
+    }
+
+    /// La place sur ce morceau de bord, le point posé en `x` (borné au morceau).
+    pub fn at(&self, x: f32) -> Perch {
+        let x = if x.is_nan() { self.lo } else { x.clamp(self.lo, self.hi) };
+        Perch { spot: Spot::on(&self.window, x), feet: Vec2::new(x, self.y()) }
+    }
+}
+
+/// Tous les morceaux visibles des bords où elle tiendrait (`stature` : ce qu'il lui faut une fois
+/// posée), de la fenêtre la plus en avant à la plus en arrière. Posée sur l'un d'eux
+/// ([`Bench::at`]), [`follow`] la garde là tant que rien ne bouge.
+pub fn benches(seen: &[Seen], screen: Rect, stature: Stature) -> Vec<Bench> {
+    let (left, right) = stature.rest;
+    let mut benches = Vec::new();
+    for (index, window) in seen.iter().enumerate() {
+        let Some((lo, hi)) = room(window.rect, screen, stature) else { continue };
+        for (from, to) in visible_edge(seen, index, screen) {
+            // `clamp` exige lo <= hi : un morceau trop court pour ce qui repose dessus ne la porte pas
+            let (lo, hi) = (lo.max(from + left), hi.min(to - right));
+            if lo <= hi {
+                benches.push(Bench { window: *window, lo, hi });
+            }
+        }
+    }
+    benches
+}
+
 /// Posée en `spot`, d'après une nouvelle lecture des fenêtres : où mettre ses pieds pour rester à
 /// la même place le long du bord (bornée au bord, loin de ses coins, et elle entière dans
 /// l'écran), ou pourquoi elle repart.
@@ -652,6 +696,45 @@ mod tests {
         let spot = perch.spot;
         let over = seen(4, rect(100.0, 350.0, 220.0, 300.0));
         assert_eq!(follow(&[over, high], screen(), sitting, spot), Err(Leave::Covered));
+    }
+
+    #[test]
+    fn benches_are_the_visible_pieces_where_she_would_land_and_stay() {
+        let sitting = Stature {
+            height: 600.0,
+            reach: Reach { left: 99.0, up: 341.0, right: 169.0, down: 164.0 },
+            rest: (95.0, 95.0),
+        };
+        let back = seen(1, rect(200.0, 1000.0, 1600.0, 800.0));
+        // devant, à cheval sur le milieu du bord de `back`
+        let front = seen(2, rect(800.0, 900.0, 400.0, 400.0));
+        // trop haut pour elle (sa tête sortirait), et une fenêtre trop étroite pour ce qui repose
+        let high = seen(3, rect(2000.0, 100.0, 800.0, 800.0));
+        let slim = seen(4, rect(2400.0, 1200.0, 150.0, 400.0));
+        let found = benches(&[front, back, high, slim], screen(), sitting);
+        assert_eq!(
+            found,
+            [
+                Bench { window: front, lo: 895.0, hi: 1105.0 },
+                Bench { window: back, lo: 295.0, hi: 705.0 },
+                Bench { window: back, lo: 1295.0, hi: 1705.0 },
+            ]
+        );
+        assert_eq!(found[1].y(), 1000.0);
+        // posée n'importe où sur l'un d'eux, elle y reste ; `landing` l'y poserait aussi
+        let windows = [front, back, high, slim];
+        for bench in &found {
+            for x in [bench.lo, (bench.lo + bench.hi) / 2.0, bench.hi] {
+                let perch = bench.at(x);
+                assert_eq!(perch.feet, Vec2::new(x, bench.y()));
+                assert_eq!(follow(&windows, screen(), sitting, perch.spot), Ok(perch), "{bench:?} en {x}");
+                assert_eq!(landing(&windows, screen(), sitting, perch.feet), Some(perch));
+            }
+        }
+        // bornée au morceau, et jamais un point qui n'est pas un nombre
+        assert_eq!(found[0].at(0.0).feet.x, 895.0);
+        assert_eq!(found[0].at(9999.0).feet.x, 1105.0);
+        assert_eq!(found[0].at(f32::NAN).feet.x, 895.0);
     }
 
     #[test]

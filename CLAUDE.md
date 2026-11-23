@@ -73,7 +73,11 @@ Avant l'installeur, « lui donner vie », demandé par l'utilisateur le 23 novem
 lots : elle apparaît et s'efface ; une intro en plein écran au démarrage ; elle va s'asseoir
 seule sur les fenêtres ; elle bouge et réagit ; elle se repose. Le premier est écrit et testé
 sans écran le même jour (ses planches `arrive` et `leave`, au lancement et quand on la masque ou
-la montre ; portraits rendus et regardés) ; pas encore regardé en mouvement.
+la montre ; portraits rendus et regardés) ; pas encore regardé en mouvement. Le troisième aussi
+(`roam` : elle choisit seule un bord de fenêtre, s'efface où elle est et apparaît là-bas ; la case
+« Vivre sa vie » et la ligne « Changer de place » de son menu) ; pas regardé en mouvement non
+plus. Des dessins générés par un outil d'images ont été essayés le même jour pour un coucou de
+la main, trois fois, et écartés : aucun ne se mêlait à ses dessins.
 
 ## Architecture : où va quoi
 
@@ -108,7 +112,20 @@ la montre ; portraits rendus et regardés) ; pas encore regardé en mouvement.
   sans ses planches de vie, tout est immédiat, comme avant. `body` ne connaît que son image
   debout, le point posé sur le bord (`Capri::seat`), combien d'images dure son départ, et le tour
   que partagent son flottement et sa boucle debout (`Capri::tour`, `still`, `unstill` : arrêté
-  pendant qu'elle apparaît ou s'efface, il reprend où il s'était arrêté).
+  pendant qu'elle apparaît ou s'efface, il reprend où il s'était arrêté). Et son trajet d'une
+  place à l'autre (`Look::travel`, `arrive` ; `is_traveling`, `is_between`) : elle s'efface ici
+  et apparaît là-bas **sans que la fenêtre se cache** ; `is_gone` et `is_hidden` ne valent que
+  pour « cachée ». `body` sait aussi la placer d'un coup (`Capri::set_on`, `set_at`).
+  Et `roam` : **sa vie**, elle change seule de place. Un générateur pseudo-aléatoire à graine,
+  écrit sur place (`Rng`, SplitMix64 : la même graine donne la même vie) ; ses durées, en
+  constantes nommées (`FIRST`, `SEATED`, `STANDING`, `BY_HAND`, `LOST`, `NOWHERE`, `PATIENCE`) ;
+  le choix (`choose` : un morceau de bord où elle tient, `perch::Bench`, tiré au sort avec des
+  poids, jamais le même deux fois de suite quand un autre existe, de préférence sur une autre
+  fenêtre, loin du curseur ; debout en bas de l'écran seulement si elle part debout et qu'aucun
+  bord ne convient) ; ce qui la retient (`Busy`, `Hold` : tenue, en vol, on se parle, la musique,
+  cachée, en train d'apparaître, le curseur sur elle) ; et `Roamer`, qui pilote le tout dans
+  l'ordre de la boucle, derrière un trait `World` (l'écran, le curseur, les fenêtres déjà triées)
+  et une horloge passée en paramètre. Il ne sait rien du système.
   Et `scale` : **sa taille**, choisie par l'utilisateur, est une échelle `Scale` rapportée à sa
   hauteur **debout** d'origine (300 points pour sa silhouette, `stand::STATURE`, pas pour la case),
   de 40 % à 140 % (borne choisie pour son dessin d'avant, agrandi 2 fois à 140 % sur un écran
@@ -347,6 +364,12 @@ la montre ; portraits rendus et regardés) ; pas encore regardé en mouvement.
   `capri_core::perch` ; `perch_setup` lit et écrit `perch.json` (la case « S'asseoir sur les
   fenêtres » de son menu). `perch_rehearsal` (version de débogage seulement) est `capri perch
   rehearse` : la vraie liste, lue et triée sans rien afficher, qui n'imprime que des nombres.
+  `roam_view` lui donne de quoi vivre sa vie (`capri_core::roam` décide) : la liste des fenêtres
+  par `perch_view`, l'overlay, le curseur, une graine prise à l'horloge du système au lancement ;
+  il écrit au journal ce qu'elle décide, en nombres, et rend la phrase qu'elle dit quand on lui
+  demande de changer de place et qu'elle ne le peut pas. `roam_setup` lit et écrit `roam.json`
+  (la case « Vivre sa vie » de son menu, cochée par défaut ; la ligne « Changer de place » la
+  fait partir sur un geste, case cochée ou non).
   `figure` confie ses images à la carte graphique (les planches lues par `assets`, puis lâchées),
   fait les masques de clic, et traduit ce que décide `capri_core::look` en dessins pour le rendu ;
   `portraits` (essais ignorés) rend de vraies images de chaque pose par ce même code, pour les
@@ -473,6 +496,10 @@ d'ouverture de session, `<CAPRI_CONFIG_DIR>/LaunchAgents` : rien n'est lu ni éc
 fenêtres, les annonces des vrais lecteurs si la musique est permise, ses raccourcis globaux, son
 icône dans la barre des menus), ses images (`CAPRI_ASSETS`), et, dans la fenêtre de réglages,
 la liste des modèles qu'elle demande d'elle-même à un serveur de cette machine.
+
+Pendant une répétition (`update_setup::REHEARSALS`), elle ne change jamais de place d'elle-même
+(`roam_setup::rehearsing`) : cela fausserait ce que la répétition mesure ; avec `CAPRI_CONFIG_DIR`
+seule, elle vit sa vie.
 
 Pendant une répétition (ou avec `CAPRI_CONFIG_DIR`), elle ne regarde jamais les versions : ni
 l'app, ni `capri update check`. Une nouvelle répétition de la vraie app s'inscrit dans
@@ -841,9 +868,33 @@ une fausse commande `security` placée en tête du `PATH`.
   et `capri perch rehearse` ne disent que des nombres (le test ignoré `fenetres_du_bureau` le
   vérifie : à relancer après tout changement de la liste,
   `cargo test -p capri-app --test fenetres_du_bureau -- --ignored`). La liste n'est lue que
-  quand elle sert (au lâcher, puis posée, à la cadence de `perch::Watch`), jamais quand elle est
-  cachée ; son coût se mesure avec le test ignoré `liste_des_fenetres` de `capri-platform`, en
-  version optimisée, avant de changer une cadence.
+  quand elle sert (au lâcher, puis posée, à la cadence de `perch::Watch` ; et, depuis qu'elle vit
+  sa vie, une fois par décision quand elle choisit où aller, sa fenêtre étant relue juste avant
+  qu'elle apparaisse sur son bord), jamais quand elle est cachée ; son coût se mesure avec le
+  test ignoré `liste_des_fenetres` de `capri-platform`, en version optimisée, avant de changer
+  une cadence.
+- **Sa vie** (`capri_core::roam`, la case « Vivre sa vie », cochée par défaut). Elle ne déplace
+  qu'elle-même : jamais une fenêtre, jamais le focus, aucune permission de plus, et de la liste
+  des fenêtres rien d'autre que ce que dit la règle précédente. Elle ne part pas pendant qu'on
+  la tient ou qu'elle vole, qu'on lui parle, qu'elle parle, que le champ de saisie est ouvert,
+  qu'elle se balance sur la musique, que le curseur est sur elle, ni cachée ; si on lui parle
+  pendant qu'elle s'efface pour partir, elle revient sur ses pas (`Look::turn_back`). Posée ou
+  lâchée à la main, elle y reste `BY_HAND` (5 min) ; un geste qui la fait descendre de son bord
+  (sa taille, la case « S'asseoir » décochée : `Roamer::touched`) vaut de même, et seul un bord
+  parti sous elle sans geste vaut `LOST` ; la montrer ne raccourcit jamais une attente. Debout,
+  elle cherche un bord à la cadence `STANDING` sans bouger, et ne change de place debout
+  qu'après `SEATED`. Sur une demande (« Changer de place »), sans autre bord, elle va debout.
+  Ses durées sont des constantes nommées, pas des réglages. Limite connue : ses propres panneaux
+  ne cachent pas les bords (`perch::sift` écarte ses fenêtres ; les compter pour ce qu'elles
+  cachent la ferait aussi quitter un bord que ses réglages recouvrent : pas décidé). Elle préfère être assise : d'un bord à l'autre on ne voit que son nouveau dessin, et
+  `arrive` et `leave` montrent l'ancien. Le hasard vient d'une graine prise à l'horloge du
+  système au lancement, jamais écrite ; les essais ont des graines fixes. Aucun réveil de la
+  boucle ni thread de plus : à chaque pas, elle compare une heure. Le journal n'en dit que ce
+  qu'elle décide et des nombres. Décochée, elle se comporte comme avant. Après tout changement
+  de `look`, `roam`, `body` ou `perch` : `cargo test -p capri-core --test gestes_au_hasard`
+  (des gestes tirés au hasard, à graines fixes, dans l'ordre où la boucle les traite : jamais
+  coincée invisible ni à moitié effacée, « cachée » et son état toujours d'accord, son tour
+  jamais figé, son dessin assis toujours sur son bord).
 - Aucun nom de modèle écrit en dur : il vient de l'utilisateur ou de la liste que donne le
   serveur. Même règle que pour les API : format et adresses d'un fournisseur se vérifient dans sa
   documentation, pas de mémoire (les sources de chaque adresse sont citées dans

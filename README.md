@@ -105,8 +105,10 @@ fenêtre, des rectangles et leur ordre, le temps de décider.
 
 **Ce que ça coûte.** La liste n'est lue que quand elle sert : une fois quand elle s'arrête ; posée,
 4 fois par seconde quand rien ne bouge ; à chaque rafraîchissement de l'écran pendant que sa fenêtre
-bouge ou qu'un bouton de la souris est enfoncé, et encore une demi-seconde après. Jamais quand elle
-est cachée, tenue ou en vol, ni quand c'est désactivé. Au repos, la boucle de l'app se réveille
+bouge ou qu'un bouton de la souris est enfoncé, et encore une demi-seconde après ; et, depuis
+qu'elle vit sa vie, une fois chaque fois qu'elle choisit où aller (toutes les quelques minutes).
+Jamais quand elle est cachée, tenue ou en vol, ni quand c'est désactivé. Au repos, la boucle de
+l'app se réveille
 60 fois par seconde, comme avant ; pressée, c'est l'écran qui la réveille (sur macOS 14 et suivants,
 un `CADisplayLink`, en pause le reste du temps). Elle ne se redessine que quand sa pose ou sa
 position change. Mesuré le 11 novembre 2026 sur un MacBook Pro M5 Pro (écran à 120 Hz), processeur
@@ -323,6 +325,62 @@ faudra `tools/install-macos.sh`, et la ligne de son menu le dira.
 
 Écrit et testé sans écran le 23 novembre 2026, images fixes rendues et regardées ; **pas encore
 regardé en mouvement** : la liste est dans « État de validation ».
+
+### Elle vit sa vie : elle va s'asseoir seule sur tes fenêtres
+
+Le troisième lot. Tu n'as plus à la déposer : elle choisit seule où aller.
+
+- **Ce qu'elle fait** : après un moment, elle choisit un morceau visible du bord haut d'une de
+  tes fenêtres, s'efface là où elle est et apparaît assise dessus. Quelques minutes plus tard,
+  elle va ailleurs. La fenêtre où elle vit ne se cache pas pendant le trajet ;
+- **elle préfère être assise** : d'un bord à un autre, on ne voit que ses dessins assis, de son
+  nouveau dessin. Elle ne se tient debout, en bas de l'écran, que si elle part debout et
+  qu'aucun bord ne convient ;
+- **elle varie** : le bord est tiré au sort, les plus larges ayant plus de chances, jamais deux
+  fois de suite le même quand un autre existe, de préférence sur une autre fenêtre que la sienne,
+  et loin du curseur de ta souris. Les durées aussi sont tirées au sort : assise, 3 à 8 minutes ;
+  son premier départ, 20 à 40 secondes après son lancement. Debout, elle cherche un bord toutes
+  les 30 secondes à 2 minutes, sans bouger tant qu'il n'y en a pas, et ne change de place debout
+  que toutes les 3 à 8 minutes ;
+- **elle te respecte** : elle ne part pas pendant que tu la tiens ou qu'elle vole, que tu lui
+  parles, qu'elle te répond, que le champ de saisie est ouvert, qu'elle se balance sur ta
+  musique, ni quand ton curseur est sur elle. Si tu lui parles pendant qu'elle s'efface pour
+  partir, elle revient sur ses pas. Posée ou lâchée à la main, elle y reste 5 minutes ; de même
+  si tu changes sa taille ou décoches « S'asseoir sur les fenêtres » et que cela la fait
+  descendre de son bord. La masquer puis la montrer ne raccourcit jamais cette attente ;
+- **si sa fenêtre disparaît**, elle repart d'elle-même 5 à 20 secondes plus tard. Si le bord où
+  elle allait n'existe plus quand elle arrive, elle apparaît debout ;
+- **son menu** (clic droit sur elle, ou son icône) : la case **« Vivre sa vie »**, cochée par
+  défaut et retenue d'un lancement à l'autre (`roam.json`, dans son dossier) : décochée, elle
+  reste où tu la mets, comme avant. Et **« Changer de place »**, qui la fait partir tout de
+  suite, case cochée ou non : vers un autre bord, ou, s'il n'y en a pas d'autre, debout en bas de
+  l'écran. Si elle ne le peut pas, elle te dit pourquoi (« Pas pendant qu'on se parle », « Pas
+  maintenant, j'écoute ta musique », et « Je ne vois pas d'autre place où aller » seulement
+  quand même le bas de l'écran est impossible). Sans « S'asseoir sur les fenêtres », elle ne
+  change de place que debout.
+
+**Ce qu'elle regarde de tes fenêtres** ne change pas : des numéros et des rectangles, jamais un
+titre ni le nom d'une app, aucune permission. La liste est lue une fois de plus par décision,
+quand elle choisit où aller (0,16 ms en médiane sur ce Mac, mesuré le 23 novembre 2026 avec 15
+fenêtres) : toutes les quelques minutes assise, toutes les 30 secondes à 2 minutes au pire,
+quand elle est debout et cherche un bord. Jamais quand elle est masquée, ni quand « S'asseoir sur
+les fenêtres » est décochée. Elle ne déplace qu'elle-même : jamais une fenêtre,
+jamais le focus. Son journal n'en dit que ce qu'elle décide et des nombres (« elle change de
+place : 4 bords possibles, elle va s'asseoir sur l'un d'eux »).
+
+**Le hasard** vient d'une graine prise à l'horloge au lancement, qui n'est écrite nulle part.
+Aucun réveil de sa boucle ni thread de plus : à chaque pas, elle compare une heure.
+
+**Limites connues** : le curseur n'est pas regardé de nouveau à l'arrivée (s'il a bougé pendant
+la seconde où elle s'efface, il peut se trouver sur elle) ; ses propres panneaux ne cachent pas
+les bords (sa fenêtre de réglages ouverte, elle peut aller s'asseoir sur un bord caché derrière,
+et y être dessinée par-dessus) ; debout en bas de l'écran, elle peut se trouver sur le Dock aux
+petites tailles, comme à son lancement ; plusieurs écrans ne sont pas gérés
+(elle ne vit que sur l'écran principal) ; Windows a le même comportement, jamais exécuté sur un
+vrai PC ; sous Linux, elle ne change de place que debout.
+
+Écrit et testé sans écran le 23 novembre 2026 ; **pas encore regardé en mouvement** : la liste
+est dans « État de validation ».
 
 **Essayé et écarté le même jour : des dessins générés.** Trois essais pour ajouter à sa boucle
 debout un coucou de la main par un générateur d'images : le premier changeait son corps d'un
@@ -1335,8 +1393,8 @@ Règle : tout ce qui peut être testé sans écran va dans `capri-core`, `capri-
 
 Vérifié automatiquement :
 
-- formatage, `clippy -D warnings` et 676 tests sur **macOS Apple Silicon** (le 23 novembre 2026 ;
-  675 en version optimisée, un essai de la répétition de la musique n'existant qu'en version de
+- formatage, `clippy -D warnings` et 711 tests sur **macOS Apple Silicon** (le 23 novembre 2026 ;
+  710 en version optimisée, un essai de la répétition de la musique n'existant qu'en version de
   débogage ; plus 16 qui ne
   tournent qu'à la main : ils écrivent des images ou dessinent sur la vraie carte graphique,
   lisent un vrai `settings.json`, touchent au vrai trousseau, créent de vraies voix et un vrai
@@ -1550,6 +1608,18 @@ Vérifié automatiquement :
   un essai hors du dépôt, ne la laissent jamais coincée invisible ni à moitié effacée. Les essais
   qui lancent la vraie app avec ses lieux d'essai (mises à jour, musique, liste des fenêtres)
   passent avec ce nouveau lancement ;
+- sa vie (le 23 novembre 2026) : le tirage à graine (la même graine donne la même vie), le choix
+  d'un bord (ailleurs, jamais le même deux fois de suite, jamais sous le curseur), ce qui la
+  retient (tenue, en vol, on se parle, la musique, le curseur sur elle, cachée), le trajet sans
+  que la fenêtre se cache, la destination disparue, le retour sur ses pas quand on lui parle
+  pendant qu'elle part, et un essai de gestes tirés au hasard (`gestes_au_hasard` : 100 graines,
+  cinq garde-robes, 4000 pas chacune, dans l'ordre où la boucle les traite) qui vérifie qu'elle
+  n'est jamais coincée invisible ni à moitié effacée, que « cachée » et son état sont toujours
+  d'accord, que son tour n'est jamais figé, que son dessin assis est toujours sur son bord, et
+  qu'elle ne part jamais pendant une retenue. Une relecture indépendante n'y a trouvé aucun état
+  coincé, mais sept défauts de comportement ou d'essais, tous reproduits puis corrigés avec leur
+  essai (entre autres : un geste de l'utilisateur compté comme un bord perdu, des sauts trop
+  fréquents debout quand aucun bord n'existe, le champ de saisie laissé à l'ancienne place) ;
 - `clippy -D warnings` en compilation croisée pour **Windows x64** et **Linux x64** (le code
   compile, il n'est pas exécuté).
 
@@ -2077,6 +2147,38 @@ elles, l'ont été, voir plus haut) :
 14. **le tout début de son apparition** : pendant une demi-seconde, elle prend les clics sur toute
     la place qu'elle occupera, alors que presque rien n'y est dessiné. Dire si cela gêne.
 
+**Elle vit sa vie : à regarder à la main** (écrit et testé sans écran le 23 novembre 2026 ; rien
+n'a encore été vu en mouvement) :
+
+1. **20 à 40 secondes après le lancement**, elle s'efface et réapparaît assise sur un bord, sans
+   que rien ne clignote. Ce qui est écrit au-dessus de sa tête disparaît le temps du trajet, puis
+   revient ;
+2. **d'un bord à un autre**, on ne voit que ses dessins assis ;
+3. **« Changer de place »**, dans ses deux menus : elle part tout de suite, change de bord, et
+   préfère une autre fenêtre ;
+4. **elle n'apparaît pas sous ton curseur** (sauf s'il a bougé pendant la seconde où elle
+   s'efface) ;
+5. **pendant ⌃⌥P, ⌃⌥D ou une réponse, et pendant qu'elle se balance** : aucun départ ; « Changer
+   de place » lui fait dire pourquoi. ⌃⌥P juste quand elle s'efface pour partir : elle revient
+   sur ses pas, et le champ s'ouvre bien sous ses pieds ;
+6. **ton curseur posé sur elle la retient** ; posée ou lâchée à la main, elle reste 5 minutes ;
+   de même après avoir changé sa taille ou décoché « S'asseoir sur les fenêtres » alors qu'elle
+   était assise ;
+7. **fermer sa fenêtre** : elle s'efface comme avant, puis repart dans les 5 à 20 secondes ;
+8. **fermer la fenêtre où elle va**, pendant qu'elle s'efface : elle apparaît debout ;
+9. **⌃⌥C pendant qu'elle s'efface** pour partir : elle finit sur place, et réapparaît là quand
+   tu la montres ;
+10. **l'attraper pendant qu'elle arrive** : debout tout de suite ;
+11. **sans « S'asseoir sur les fenêtres »** : elle change de place debout, en bas de l'écran,
+    toutes les 3 à 8 minutes seulement (« Changer de place » pour ne pas attendre). Regarder
+    qu'elle dégage le Dock, à 40 % et à 140 % de sa taille, Dock en bas, sur le côté, masqué ;
+12. **« Vivre sa vie » décochée** : elle ne bouge plus, et le choix est retenu après une relance ;
+13. **au repos**, le processeur ne travaille pas plus qu'avant ;
+14. **son journal** : « elle change de place : … », des décisions et des nombres, rien d'une
+    fenêtre ;
+15. **à l'usage** : dire si ses durées conviennent (elle part trop souvent, ou pas assez), et si
+    elle gêne là où elle s'assoit.
+
 **L'ouverture de session : à vérifier à la main** (le 12 novembre 2026, une partie du point 1 et
 du point 4, voir « Vérifié à la main sur un vrai Mac », point 23 : la case cochée dans le vrai
 menu et le fichier écrit, valide ; Capri lancée par l'agent chargé à la main, Ollama lancé par
@@ -2282,8 +2384,9 @@ Points à surveiller :
 6. Lui donner vie, avant l'installeur (demandé le 23 novembre 2026), en cinq lots : ~~elle
    apparaît et s'efface~~ (écrit et testé sans écran le 23 novembre 2026, images fixes rendues et
    regardées ; reste à regarder en mouvement) ; une intro en plein écran au démarrage, puis elle
-   dit bonjour ; elle va s'asseoir seule sur les fenêtres ; elle marche, pend quand on la tient,
-   sourit ; elle s'allonge, s'endort et se réveille.
+   dit bonjour ; ~~elle va s'asseoir seule sur les fenêtres~~ (écrit et testé sans écran le même
+   jour ; reste à regarder en mouvement) ; elle marche, pend quand on la tient, sourit ; elle
+   s'allonge, s'endort et se réveille.
 
 ## Licence
 

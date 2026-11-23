@@ -27,6 +27,10 @@ pub enum Action {
     TogglePerch,
     /// Lui permettre de se balancer sur la musique, assise, ou le lui interdire.
     ToggleMusic,
+    /// Lui permettre de changer d'elle-même de place de temps en temps, ou le lui interdire.
+    ToggleRoam,
+    /// « Changer de place » : tout de suite, si rien ne l'en empêche.
+    Wander,
     /// Sa taille : un cran au-dessus, un cran en dessous, ou celle d'origine.
     Larger,
     Smaller,
@@ -63,6 +67,8 @@ pub struct Menus {
     perches: Vec<CheckMenuItem>,
     /// La case « Se balancer sur la musique », dans les deux menus.
     musics: Vec<CheckMenuItem>,
+    /// La case « Vivre sa vie », dans les deux menus.
+    roams: Vec<CheckMenuItem>,
     /// La case « Se lancer à l'ouverture de session », dans les deux menus.
     logins: Vec<CheckMenuItem>,
     /// La case « Chercher les mises à jour », dans les deux menus.
@@ -84,6 +90,7 @@ struct Built {
     items: Vec<(Action, MenuItem)>,
     perch: CheckMenuItem,
     music: CheckMenuItem,
+    roam: CheckMenuItem,
     login: CheckMenuItem,
     updates: CheckMenuItem,
     /// Pas encore dans le menu.
@@ -108,6 +115,7 @@ impl Menus {
             builder.build().inspect_err(|err| log::warn!("pas d'icône de barre des menus : {err}")).ok();
         let perches = vec![a.perch, b.perch];
         let musics = vec![a.music, b.music];
+        let roams = vec![a.roam, b.roam];
         let logins = vec![a.login, b.login];
         let updates = vec![a.updates, b.updates];
         let update_lines = vec![(tray_menu, a.update_line), (b.menu.clone(), b.update_line)];
@@ -124,6 +132,7 @@ impl Menus {
                 .map(|(action, item)| (item.id().clone(), *action))
                 .chain(perches.iter().map(|item| (item.id().clone(), Action::TogglePerch)))
                 .chain(musics.iter().map(|item| (item.id().clone(), Action::ToggleMusic)))
+                .chain(roams.iter().map(|item| (item.id().clone(), Action::ToggleRoam)))
                 .chain(logins.iter().map(|item| (item.id().clone(), Action::ToggleLogin)))
                 .chain(updates.iter().map(|item| (item.id().clone(), Action::ToggleUpdates)))
                 .chain(update_lines.iter().map(|(_, item)| (item.id().clone(), Action::UpdateLine)))
@@ -133,6 +142,7 @@ impl Menus {
             voices: items_for(Action::ToggleVoice),
             perches,
             musics,
+            roams,
             logins,
             updates,
             update_lines,
@@ -193,6 +203,14 @@ impl Menus {
         for item in &self.musics {
             item.set_checked(enabled);
             item.set_enabled(capri_platform::music::AVAILABLE);
+        }
+    }
+
+    /// Vit-elle sa vie (elle change d'elle-même de place de temps en temps) ? Coche ou décoche la
+    /// case des deux menus (c'est le réglage retenu qui décide).
+    pub fn set_roam_enabled(&self, enabled: bool) {
+        for item in &self.roams {
+            item.set_checked(enabled);
         }
     }
 
@@ -287,6 +305,9 @@ fn build_menu() -> Built {
     let toggle = MenuItem::new("Cacher Capri", true, Some(shortcut));
     let perch = CheckMenuItem::new("S'asseoir sur les fenêtres", true, true, None);
     let music = CheckMenuItem::new("Se balancer sur la musique", true, true, None);
+    // cochée par défaut ; le réglage retenu décide au lancement
+    let roam = CheckMenuItem::new("Vivre sa vie", true, true, None);
+    let wander = MenuItem::new("Changer de place", true, None);
     let larger = MenuItem::new("Plus grande", true, None);
     let smaller = MenuItem::new("Plus petite", true, None);
     let original = MenuItem::new("Taille d'origine", true, None);
@@ -312,8 +333,8 @@ fn build_menu() -> Built {
     let separator = PredefinedMenuItem::separator;
     let (first, second, third) = (separator(), separator(), separator());
     if let Err(err) = menu.append_items(&[
-        &title, &first, &talk, &listen, &hush, &forget, &voice, &second, &toggle, &perch, &music, &size,
-        &hook, &login, &updates, &settings, &journal, &third, &quit,
+        &title, &first, &talk, &listen, &hush, &forget, &voice, &second, &toggle, &wander, &perch, &music,
+        &roam, &size, &hook, &login, &updates, &settings, &journal, &third, &quit,
     ]) {
         log::warn!("menu incomplet : {err}");
     }
@@ -324,6 +345,7 @@ fn build_menu() -> Built {
         (Action::Forget, forget),
         (Action::ToggleVoice, voice),
         (Action::ToggleVisible, toggle),
+        (Action::Wander, wander),
         (Action::Larger, larger),
         (Action::Smaller, smaller),
         (Action::OriginalSize, original),
@@ -332,7 +354,7 @@ fn build_menu() -> Built {
         (Action::ShowJournal, journal),
         (Action::Quit, quit),
     ];
-    Built { menu, items, perch, music, login, updates, update_line, size }
+    Built { menu, items, perch, music, roam, login, updates, update_line, size }
 }
 
 /// « Taille : 80 % ».

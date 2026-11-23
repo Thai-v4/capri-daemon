@@ -41,6 +41,14 @@
 //! ces suites dure, elle n'est pas libre ([`Look::is_here`]). Sans ses planches de vie, ou sans sa
 //! pose debout sur laquelle elles s'alignent, elle apparaît et disparaît d'un coup, comme avant.
 //!
+//! **Changer de place** ([`crate::roam`]) : elle s'efface où elle est, de la même façon
+//! ([`Look::travel`]), mais elle n'est pas cachée : la fenêtre reste montrée. Une fois effacée
+//! ([`Look::is_between`]), on la déplace, puis elle apparaît là-bas ([`Look::arrive`]), assise si
+//! elle y est posée, debout sinon. Cachée en chemin, elle finit de s'effacer là où elle était et n'ira
+//! pas plus loin : montrée, elle y réapparaît. « Cachée » ([`Look::is_hidden`]) et « en chemin »
+//! ([`Look::is_traveling`]) ne se confondent jamais ; ni l'une ni l'autre n'est libre
+//! ([`Look::is_away`]).
+//!
 //! **Le temps** : l'image d'animation à 24 i/s ; tous ses dessins sont tenus deux images (12 par
 //! seconde). Rien n'est tiré au hasard : la même image donne toujours le même dessin.
 
@@ -172,6 +180,16 @@ impl Run {
     }
 }
 
+/// Pourquoi elle s'efface.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Exit {
+    /// On la cache : une fois partie, la fenêtre peut se cacher.
+    Hidden,
+    /// Elle change de place : la fenêtre reste montrée ; une fois effacée, on la déplace, puis
+    /// elle apparaît là-bas ([`Look::arrive`]).
+    Trip,
+}
+
 /// Est-elle là ?
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Presence {
@@ -180,10 +198,10 @@ enum Presence {
     /// Elle apparaît.
     Appearing(Run),
     /// Elle s'efface.
-    Vanishing(Run),
+    Vanishing(Run, Exit),
     /// Partie, après la suite qui l'a effacée (aucune, sans ses planches de vie) : plus rien à
     /// montrer.
-    Gone(Option<Run>),
+    Gone(Option<Run>, Exit),
 }
 
 /// Où en est sa pose assise.
@@ -277,14 +295,34 @@ impl Look {
     /// lui qui dit si elle réapparaît assise.
     pub fn appear(&mut self, capri: &mut Capri, frame: u64) {
         self.frame = self.frame.max(frame);
+        // pas cachée : là, ou en chemin vers ailleurs
+        if self.is_hidden() {
+            self.reverse(capri, frame);
+        }
+    }
+
+    /// En chemin vers une autre place (on lui parle pendant qu'elle s'efface pour partir), elle
+    /// revient sur ses pas à l'image `frame`, comme montrée pendant qu'elle s'efface : la même
+    /// suite, à l'envers, là où elle était ; effacée, elle y réapparaît. Sans effet si elle n'est
+    /// pas en chemin.
+    pub fn turn_back(&mut self, capri: &mut Capri, frame: u64) {
+        self.frame = self.frame.max(frame);
+        if self.is_traveling() {
+            self.reverse(capri, frame);
+        }
+    }
+
+    /// Elle revient sur ses pas, là où elle était : la suite qui l'efface, repartie à l'envers du
+    /// dessin où elle en est ; partie, elle réapparaît.
+    fn reverse(&mut self, capri: &mut Capri, frame: u64) {
         self.presence = match self.presence {
             Presence::Here | Presence::Appearing(_) => return,
-            Presence::Gone(_) => self.entrance(capri, frame),
+            Presence::Gone(..) => self.entrance(capri, frame),
             // elle s'effaçait de son bord, qu'elle a quitté depuis : elle se matérialise debout
-            Presence::Vanishing(run) if run.seat().is_some() && capri.seat().is_none() => {
+            Presence::Vanishing(run, _) if run.seat().is_some() && capri.seat().is_none() => {
                 self.entrance(capri, frame)
             }
-            Presence::Vanishing(run) => {
+            Presence::Vanishing(run, _) => {
                 let run = run.turned(frame);
                 self.resume_after(capri, run, frame);
                 Presence::Appearing(run)
@@ -293,22 +331,64 @@ impl Look {
     }
 
     /// On la cache, à l'image `frame` : elle s'efface, de là où elle est dessinée ; en train
-    /// d'apparaître, elle revient sur ses pas. Sans ses planches de vie, elle est partie tout de
-    /// suite ([`Look::is_gone`]).
+    /// d'apparaître, elle revient sur ses pas ; en train de s'effacer pour changer de place, elle
+    /// finit de s'effacer là où elle était, et n'ira pas plus loin. Sans ses planches de vie, elle
+    /// est partie tout de suite ([`Look::is_gone`]).
     pub fn vanish(&mut self, capri: &mut Capri, frame: u64) {
         let picture = self.picture(capri);
         self.frame = self.frame.max(frame);
         self.presence = match self.presence {
-            Presence::Vanishing(_) | Presence::Gone(_) => return,
+            Presence::Vanishing(_, Exit::Hidden) | Presence::Gone(_, Exit::Hidden) => return,
+            Presence::Vanishing(run, Exit::Trip) => Presence::Vanishing(run, Exit::Hidden),
+            Presence::Gone(run, Exit::Trip) => Presence::Gone(run, Exit::Hidden),
             Presence::Appearing(run) => {
                 if run.seat().is_none() {
                     capri.still(None);
                 }
-                Presence::Vanishing(run.turned(frame))
+                Presence::Vanishing(run.turned(frame), Exit::Hidden)
             }
-            Presence::Here if !self.has_life() => Presence::Gone(None),
-            Presence::Here => Presence::Vanishing(self.exit(capri, picture.drawing, frame)),
+            Presence::Here if !self.has_life() => Presence::Gone(None, Exit::Hidden),
+            Presence::Here => Presence::Vanishing(self.exit(capri, picture.drawing, frame), Exit::Hidden),
         };
+    }
+
+    /// Elle change de place, à l'image `frame` : elle s'efface de là où elle est dessinée, comme
+    /// cachée, mais la fenêtre reste montrée. Une fois effacée ([`Look::is_between`]), on la
+    /// déplace, puis elle apparaît là-bas ([`Look::arrive`]). Seulement si elle est là
+    /// ([`Look::is_here`]) : rend `false` sinon, et rien ne change. Sans ses planches de vie, elle
+    /// est effacée tout de suite.
+    pub fn travel(&mut self, capri: &mut Capri, frame: u64) -> bool {
+        if !self.is_here() {
+            return false;
+        }
+        let picture = self.picture(capri);
+        self.frame = self.frame.max(frame);
+        self.presence = if self.has_life() {
+            Presence::Vanishing(self.exit(capri, picture.drawing, frame), Exit::Trip)
+        } else {
+            Presence::Gone(None, Exit::Trip)
+        };
+        true
+    }
+
+    /// Effacée pour changer de place ([`Look::is_between`]), elle apparaît à l'image `frame` là où
+    /// `capri` est maintenant : assise si elle y est posée (avec ses planches assises), debout
+    /// sinon ; d'un coup sans ses planches de vie. Sans effet si elle n'est pas entre deux places.
+    pub fn arrive(&mut self, capri: &mut Capri, frame: u64) {
+        if !self.is_between() {
+            return;
+        }
+        self.frame = self.frame.max(frame);
+        // ce qu'elle faisait là où elle était ne compte plus : ni un départ de son bord à finir,
+        // ni une boucle assise à reprendre
+        match capri.seat().filter(|_| self.has_perch()) {
+            Some(at) => {
+                self.last_seat = Some(at);
+                self.seat = Seat::Sitting { since: frame };
+            }
+            None => self.seat = Seat::Standing,
+        }
+        self.presence = self.entrance(capri, frame);
     }
 
     /// Est-elle là, ni en train d'apparaître ni de s'effacer ? Sinon, elle n'est pas libre : ce
@@ -317,14 +397,33 @@ impl Look {
         self.presence == Presence::Here
     }
 
-    /// S'efface-t-elle, ou est-elle partie ? Ce qu'elle dit attend son retour.
+    /// S'efface-t-elle, ou est-elle partie, cachée ou en chemin ? Ce qu'elle dit attend son
+    /// retour, et rien ne l'attrape.
     pub fn is_away(&self) -> bool {
-        matches!(self.presence, Presence::Vanishing(_) | Presence::Gone(_))
+        matches!(self.presence, Presence::Vanishing(..) | Presence::Gone(..))
     }
 
-    /// Est-elle partie : plus rien à montrer, la fenêtre peut se cacher.
+    /// Est-elle partie, cachée : plus rien à montrer, la fenêtre peut se cacher. Jamais quand elle
+    /// change de place.
     pub fn is_gone(&self) -> bool {
-        matches!(self.presence, Presence::Gone(_))
+        matches!(self.presence, Presence::Gone(_, Exit::Hidden))
+    }
+
+    /// Cachée : elle s'efface parce qu'on la cache, ou elle est partie.
+    pub fn is_hidden(&self) -> bool {
+        matches!(self.presence, Presence::Vanishing(_, Exit::Hidden) | Presence::Gone(_, Exit::Hidden))
+    }
+
+    /// En chemin vers une autre place : elle s'efface pour y aller, ou elle est effacée et attend
+    /// d'être déplacée.
+    pub fn is_traveling(&self) -> bool {
+        matches!(self.presence, Presence::Vanishing(_, Exit::Trip) | Presence::Gone(_, Exit::Trip))
+    }
+
+    /// Effacée pour changer de place : il est temps de la déplacer, puis de la faire apparaître
+    /// ([`Look::arrive`]).
+    pub fn is_between(&self) -> bool {
+        matches!(self.presence, Presence::Gone(_, Exit::Trip))
     }
 
     /// Comment elle apparaît : assise sur son bord si elle y est posée (avec ses planches
@@ -475,7 +574,7 @@ impl Look {
             Presence::Appearing(_) if capri.is_held() => Presence::Here,
             Presence::Appearing(run) if run.seat().is_some() != seat.is_some() => Presence::Here,
             Presence::Appearing(run) if run.left(frame) == 0 => Presence::Here,
-            Presence::Vanishing(run) if run.left(frame) == 0 => Presence::Gone(Some(run)),
+            Presence::Vanishing(run, exit) if run.left(frame) == 0 => Presence::Gone(Some(run), exit),
             unchanged => unchanged,
         };
         // la musique se prend et se quitte au début d'un tour de sa boucle ; en parlant, elle ne
@@ -498,7 +597,7 @@ impl Look {
         match self.presence {
             // tenue, elle est debout tout de suite
             Presence::Appearing(run) if !capri.is_held() => return self.played(capri, run),
-            Presence::Vanishing(run) | Presence::Gone(Some(run)) => return self.played(capri, run),
+            Presence::Vanishing(run, _) | Presence::Gone(Some(run), _) => return self.played(capri, run),
             _ => {}
         }
         if !capri.is_held() {
@@ -604,7 +703,8 @@ impl Look {
 
     /// Là où elle est (ou était) assise.
     fn seated_at(&self, capri: &Capri) -> Option<Vec2> {
-        if let Presence::Appearing(run) | Presence::Vanishing(run) | Presence::Gone(Some(run)) = self.presence
+        if let Presence::Appearing(run) | Presence::Vanishing(run, _) | Presence::Gone(Some(run), _) =
+            self.presence
             && let Some(at) = run.seat()
         {
             return Some(self.run_seat(capri, at));
@@ -1383,6 +1483,173 @@ mod tests {
         c.take_off();
         look.update(&c, 11, false, false);
         assert!((seat_line(&look.picture(&c)) - moved).length() <= 1.0);
+    }
+
+    /// Là où passe sa ligne d'assise, dessinée assise.
+    fn seat_line(picture: &Picture) -> Vec2 {
+        let Drawing::Perch(cell) = picture.drawing else { panic!("{picture:?}") };
+        let uv = cell.strip.seat_uv();
+        picture.rect.min + Vec2::new(picture.rect.size.x * uv.x, picture.rect.size.y * uv.y)
+    }
+
+    #[test]
+    fn changing_place_she_fades_out_here_then_appears_there_never_hidden() {
+        let mut look = dressed(true, true);
+        let mut c = capri(&look);
+        land(&mut look, &mut c, 0);
+        at(&mut look, &mut c, 100, false, false);
+        // d'un bord à un autre : son départ assis là où elle est, la fenêtre montrée
+        assert!(look.travel(&mut c, 100));
+        let leave = sheets::leaving().len();
+        for frame in 100..100 + leave {
+            let picture = at(&mut look, &mut c, frame, false, false);
+            assert_eq!(
+                picture.drawing,
+                Drawing::Perch(sheets::Cell { strip: Strip::PerchLeave, index: (frame - 100) as u32 / 2 })
+            );
+            assert!((seat_line(&picture) - EDGE).length() <= 1.0);
+            assert!(look.is_traveling() && look.is_away() && !look.is_hidden() && !look.is_gone());
+            assert!(!look.is_over(&c, seat_line(&picture) - Vec2::new(0.0, 40.0)), "rien ne l'attrape");
+        }
+        assert!(!look.travel(&mut c, 110), "déjà en chemin");
+        at(&mut look, &mut c, 100 + leave, false, false);
+        assert!(look.is_between() && !look.is_gone(), "effacée, pas cachée : la fenêtre reste");
+        // déplacée sur un autre bord : elle y apparaît assise, puis sa boucle, du début
+        let there = Vec2::new(2000.0, 900.0);
+        c.set_on(Perch { spot: Spot { window: 9, ..SPOT }, feet: there });
+        look.arrive(&mut c, 100 + leave);
+        assert!(!look.is_between() && !look.is_traveling() && !look.is_here());
+        let arrive = sheets::arriving().len();
+        let start = 100 + leave;
+        for frame in start..start + arrive {
+            let picture = at(&mut look, &mut c, frame, false, false);
+            assert_eq!(
+                picture.drawing,
+                Drawing::Perch(sheets::Cell { strip: Strip::PerchArrive, index: (frame - start) as u32 / 2 })
+            );
+            assert!((seat_line(&picture) - there).length() <= 1.0, "là-bas, jamais ici");
+        }
+        let seated = at(&mut look, &mut c, start + arrive, false, false);
+        assert_eq!(seated.drawing, Drawing::Perch(sheets::Cell { strip: Strip::Perch, index: 0 }));
+        assert!(look.is_here());
+
+        // d'un bord à debout : son départ assis, puis ses planches de vie, et son tour reprend
+        let start = start + arrive + 50;
+        at(&mut look, &mut c, start, false, false);
+        assert!(look.travel(&mut c, start));
+        at(&mut look, &mut c, start + leave, false, false);
+        assert!(look.is_between());
+        let feet = Vec2::new(600.0, 1800.0);
+        c.set_at(feet);
+        look.arrive(&mut c, start + leave);
+        let start = start + leave;
+        let first = at(&mut look, &mut c, start, false, false);
+        assert_eq!(life_cell(&first), Some(life::Cell { strip: life::Strip::Arrive, index: 0 }));
+        assert!((c.feet() - feet).length() < 0.5);
+        let tour = c.tour();
+        let standing = at(&mut look, &mut c, start + life::arriving().len() + 30, false, false);
+        assert!(matches!(standing.drawing, Drawing::Stand(_)) && look.is_here());
+        assert_eq!(c.tour(), tour + 30, "son tour a repris à la fin de son arrivée");
+    }
+
+    #[test]
+    fn hidden_on_the_way_she_finishes_fading_where_she_was_and_comes_back_there() {
+        let mut look = dressed(true, true);
+        let mut c = capri(&look);
+        let before = entered(&mut look, &mut c, 100);
+        let position = c.position();
+        assert!(look.travel(&mut c, 100));
+        let leave = |index| Some(life::Cell { strip: life::Strip::Leave, index });
+        assert_eq!(life_cell(&at(&mut look, &mut c, 110, false, false)), leave(5));
+        // cachée : la même suite continue (elle ne revient pas sur ses pas), cachée cette fois
+        look.vanish(&mut c, 110);
+        assert!(look.is_hidden() && !look.is_traveling());
+        assert_eq!(life_cell(&at(&mut look, &mut c, 112, false, false)), leave(6));
+        // montrée de nouveau pendant qu'elle s'efface : elle revient sur ses pas, là où elle était
+        look.appear(&mut c, 112);
+        assert!(!look.is_hidden() && !look.is_traveling());
+        assert_eq!(life_cell(&at(&mut look, &mut c, 114, false, false)), leave(5));
+        at(&mut look, &mut c, 140, false, false);
+        assert!(look.is_here() && c.position() == position, "pas déplacée");
+        // cachée une fois effacée, entre deux places : partie, et elle réapparaîtra ici
+        assert!(look.travel(&mut c, 200));
+        at(&mut look, &mut c, 224, false, false);
+        assert!(look.is_between());
+        look.vanish(&mut c, 224);
+        assert!(look.is_gone() && !look.is_between());
+        look.arrive(&mut c, 225);
+        assert!(look.is_gone(), "cachée, elle n'apparaît pas ailleurs");
+        look.appear(&mut c, 300);
+        let back = at(&mut look, &mut c, 300, false, false);
+        assert!(life_cell(&back).is_some() && c.position() == position, "elle réapparaît là où elle était");
+        assert_eq!(back.rect.min.x, life::over_stand(before.rect).min.x);
+        // montrer ce qui n'est pas caché ne change rien, en chemin non plus
+        at(&mut look, &mut c, 400, false, false);
+        assert!(look.travel(&mut c, 400));
+        look.appear(&mut c, 401);
+        assert!(look.is_traveling());
+    }
+
+    #[test]
+    fn turning_back_on_the_way_she_reappears_where_she_was() {
+        // assise : son départ de son bord, à l'envers, du dessin où elle en est
+        let mut look = dressed(true, true);
+        let mut c = capri(&look);
+        land(&mut look, &mut c, 0);
+        at(&mut look, &mut c, 100, false, false);
+        assert!(look.travel(&mut c, 100));
+        let cell = |picture: Picture| match picture.drawing {
+            Drawing::Perch(cell) => (cell.strip, cell.index),
+            other => panic!("{other:?}"),
+        };
+        assert_eq!(cell(at(&mut look, &mut c, 110, false, false)), (Strip::PerchLeave, 5));
+        look.turn_back(&mut c, 110);
+        assert!(!look.is_traveling() && !look.is_hidden() && !look.is_here());
+        assert_eq!(cell(at(&mut look, &mut c, 112, false, false)), (Strip::PerchLeave, 4));
+        let back = at(&mut look, &mut c, 130, false, false);
+        assert!(look.is_here() && (seat_line(&back) - EDGE).length() <= 1.0, "sur son bord");
+        // effacée, pas encore déplacée : elle réapparaît là ; ni cachée, ni en chemin, sans effet
+        assert!(look.travel(&mut c, 200));
+        at(&mut look, &mut c, 200 + sheets::leaving().len(), false, false);
+        assert!(look.is_between());
+        look.turn_back(&mut c, 224);
+        assert!(!look.is_between() && !look.is_here());
+        let again = at(&mut look, &mut c, 224, false, false);
+        assert_eq!(cell(again), (Strip::PerchArrive, 0));
+        let presence = look.presence;
+        look.turn_back(&mut c, 225);
+        assert_eq!(look.presence, presence);
+        look.vanish(&mut c, 300);
+        look.turn_back(&mut c, 301);
+        assert!(look.is_hidden(), "cachée, elle ne revient pas pour autant");
+    }
+
+    #[test]
+    fn without_her_life_sheets_she_changes_place_at_once_and_leaves_nothing_behind() {
+        let mut look = Look::new(wardrobe(true, true, false), HEIGHT);
+        let mut c = capri(&look);
+        land(&mut look, &mut c, 0);
+        at(&mut look, &mut c, 100, false, false);
+        assert!(look.travel(&mut c, 100));
+        assert!(look.is_between(), "effacée d'un coup");
+        // debout ailleurs : rien de sa pose assise ne reste à finir là où elle était
+        c.set_at(Vec2::new(600.0, 1800.0));
+        look.arrive(&mut c, 100);
+        assert!(look.is_here());
+        for frame in 100..130 {
+            assert!(
+                matches!(at(&mut look, &mut c, frame, false, false).drawing, Drawing::Stand(_)),
+                "{frame}"
+            );
+        }
+        // assise ailleurs : sa boucle assise, d'un coup, là-bas
+        assert!(look.travel(&mut c, 130));
+        let there = Vec2::new(2000.0, 900.0);
+        c.set_on(Perch { spot: SPOT, feet: there });
+        look.arrive(&mut c, 130);
+        let seated = at(&mut look, &mut c, 131, false, false);
+        assert_eq!(seated.drawing, Drawing::Perch(sheets::Cell { strip: Strip::Perch, index: 0 }));
+        assert!((seat_line(&seated) - there).length() <= 1.0);
     }
 
     #[test]

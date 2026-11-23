@@ -10,7 +10,12 @@
 //!   boucle se réveille alors aussi souvent (`hurried`, et `capri_core::pace`). Une lecture coûte
 //!   0,16 à 0,17 ms en médiane et 0,25 à 0,4 ms en moyenne sur un MacBook Pro M5 Pro ; pendant
 //!   qu'une fenêtre bouge, elle dure 3,5 ms, dont 0,15 ms de processeur : le reste est l'attente du
-//!   serveur de fenêtres (voir le README).
+//!   serveur de fenêtres (voir le README) ;
+//! - une fois quand elle choisit d'elle-même où aller, ou qu'on lui demande de changer de place
+//!   (`roam_view`, [`PerchView::windows`]) ; et, quand elle y va s'asseoir, juste avant qu'elle
+//!   apparaisse sur son bord ([`PerchView::arrived`]) : c'est la première lecture de sa veille
+//!   posée, avancée, pour qu'elle n'apparaisse pas sur une fenêtre partie ou déplacée depuis
+//!   qu'elle l'a choisie.
 //!
 //! Jamais pendant qu'on la tient ou qu'elle vole, jamais quand elle est cachée (la boucle ne
 //! l'appelle pas), jamais quand c'est désactivé. Le journal n'en dit que des nombres.
@@ -92,8 +97,8 @@ impl PerchView {
         self.enabled && capri.perched().is_some() && self.watch.hurried(now, self.mouse_down())
     }
 
-    /// Le réglage se change dans son menu, qui n'existe que sur macOS et Windows.
-    #[cfg(any(target_os = "macos", windows))]
+    /// S'assoit-elle sur les fenêtres ? Le réglage se change dans son menu, qui n'existe que sur
+    /// macOS et Windows.
     pub fn is_enabled(&self) -> bool {
         self.enabled
     }
@@ -132,6 +137,38 @@ impl PerchView {
     /// Elle revient d'être cachée : posée, elle relit la liste tout de suite.
     pub fn wake(&mut self) {
         self.watch.wake();
+    }
+
+    /// Elle vient d'être posée sur le bord qu'elle a choisi (`roam_view`), à l'instant `now`, et va
+    /// y apparaître : sa fenêtre relue tout de suite, comme le ferait sa veille posée. Toujours
+    /// là, elle la suit ; partie, déplacée hors de sa portée, la liste illisible, ou si elle ne
+    /// s'assoit plus sur les fenêtres : elle la quitte, et apparaîtra debout.
+    pub fn arrived(&mut self, capri: &mut Capri, overlay: &Overlay, now: f64, stature: Stature) {
+        let Some(spot) = capri.perched() else { return };
+        if !self.enabled {
+            return capri.take_off();
+        }
+        self.watch.wake();
+        let Some(seen) = self.read(stature, overlay) else {
+            log::debug!("ne se pose pas sur le bord choisi : liste des fenêtres illisible");
+            return capri.take_off();
+        };
+        match perch::follow(&seen, screen(overlay), stature, spot) {
+            Ok(perch) => {
+                capri.ride(perch);
+                self.watch.saw(now, rect_of(&seen, spot.window));
+            }
+            Err(why) => {
+                log::debug!("ne se pose pas sur le bord choisi : {}", why.describe());
+                capri.take_off();
+            }
+        }
+    }
+
+    /// Les fenêtres qui comptent, lues maintenant, pour choisir où aller (`roam_view`) ; `None` si
+    /// le système ne les donne pas.
+    pub fn windows(&mut self, stature: Stature, overlay: &Overlay) -> Option<Vec<Seen>> {
+        self.read(stature, overlay)
     }
 
     /// En version de débogage, pour `CAPRI_PERCH_REHEARSAL` : comme si on venait de la lâcher là
@@ -239,7 +276,7 @@ impl PerchView {
 }
 
 /// L'overlay, en ses pixels : la zone où elle vit.
-fn screen(overlay: &Overlay) -> Rect {
+pub fn screen(overlay: &Overlay) -> Rect {
     let (width, height) = overlay.size();
     Rect::new(Vec2::ZERO, Vec2::new(width as f32, height as f32))
 }
