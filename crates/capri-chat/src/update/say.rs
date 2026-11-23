@@ -23,7 +23,7 @@ pub fn detail(verdict: &Verdict) -> String {
     match *verdict {
         Verdict::UpToDate { latest } => format!("Je suis à jour : la {latest} est la dernière"),
         Verdict::Installable { latest } => {
-            format!("La {latest} est sortie, je ne sais pas encore m'installer seule")
+            format!("La {latest} est sortie : je peux m'installer depuis mon menu")
         }
         Verdict::NotInstallable { latest, why: Obstacle::Bundle { .. } } => {
             format!("La {latest} change ce que contient mon app : il faudra me réinstaller")
@@ -74,11 +74,9 @@ pub fn terminal(verdict: &Verdict) -> String {
     let latest = format!("Dernière publiée  : {}", verdict.latest());
     let conclusion = match verdict {
         Verdict::UpToDate { .. } => "Capri est à jour.".to_owned(),
-        Verdict::Installable { .. } => {
-            "Une version plus récente existe. Capri ne sait pas encore l'installer \
-                                        elle-même : ce sera un geste, depuis son menu."
-                .to_owned()
-        }
+        Verdict::Installable { .. } => "Une version plus récente existe. Sur macOS, Capri l'installe \
+                                        elle-même, sur un geste : « Installer la version … » dans son menu."
+            .to_owned(),
         Verdict::NotInstallable { why, .. } => format!(
             "Une version plus récente existe, mais elle ne pourra pas s'installer depuis son menu : {}. \
              Pour l'avoir, réinstalle Capri depuis un dépôt à jour (sur macOS : tools/install-macos.sh).",
@@ -115,6 +113,10 @@ impl Failure {
             Self::TooLarge => "réponse trop grosse".to_owned(),
             Self::Unreadable => "réponse illisible".to_owned(),
             Self::Manifest(why) => format!("manifeste refusé : {why}"),
+            Self::WrongSize => "taille différente de celle du manifeste".to_owned(),
+            Self::WrongDigest => "empreinte différente de celle du manifeste".to_owned(),
+            Self::Disk => "écriture du fichier impossible".to_owned(),
+            Self::Cancelled => "arrêté".to_owned(),
         }
     }
 
@@ -140,6 +142,12 @@ impl Failure {
             Self::TooLarge => format!("La réponse de {who} est trop grosse pour être un manifeste."),
             Self::Unreadable => format!("La réponse de {who} est illisible."),
             Self::Manifest(why) => format!("Le manifeste de {who} est refusé : {why}."),
+            Self::WrongSize => format!("Un fichier reçu de {who} n'a pas la taille que dit le manifeste."),
+            Self::WrongDigest => {
+                format!("Un fichier reçu de {who} n'a pas l'empreinte que dit le manifeste.")
+            }
+            Self::Disk => "Je n'ai pas pu écrire le fichier reçu.".to_owned(),
+            Self::Cancelled => "Arrêté.".to_owned(),
         }
     }
 }
@@ -173,6 +181,10 @@ mod tests {
             Failure::TooLarge,
             Failure::Unreadable,
             Failure::Manifest(ManifestError::Invalid("sha256")),
+            Failure::WrongSize,
+            Failure::WrongDigest,
+            Failure::Disk,
+            Failure::Cancelled,
         ]
     }
 
@@ -202,7 +214,7 @@ mod tests {
         assert_eq!(installed(&Installed { target: None, ..here }).rsplit(' ').next(), Some("aucune)"));
         let [up, installable, bundle, ..] = verdicts(Version::new(0, 2, 0));
         assert_eq!(terminal(&up), "Dernière publiée  : 0.2.0\nCapri est à jour.");
-        assert!(terminal(&installable).ends_with("ce sera un geste, depuis son menu."));
+        assert!(terminal(&installable).ends_with("« Installer la version … » dans son menu."));
         assert!(terminal(&bundle).contains("tools/install-macos.sh"), "un terminal reçoit sa commande");
         assert!(terminal(&bundle).contains("(contenu au format 2, celui-ci au format 1)"));
     }

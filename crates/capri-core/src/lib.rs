@@ -21,10 +21,15 @@
 //! macOS) et reconnaît la nôtre : `capri-platform` l'écrit et la retire.
 //! [`journal`] décide quand son journal passe au fichier suivant et rogne une ligne trop longue :
 //! deux fichiers au plus, chacun borné ; `capri-app` les écrit.
+//! [`bundle`] dit ce qu'une mise à jour remplace dans son app, lit son `Info.plist` et nomme ce
+//! qu'elle fabrique à côté ; [`codesign`] lit ce que disent `codesign` et `security`, et choisit
+//! avec quoi signer la nouvelle app, comme l'installée : `capri-platform` les appelle.
 
 pub mod anim;
 pub mod banner;
 pub mod body;
+pub mod bundle;
+pub mod codesign;
 pub mod form;
 pub mod geom;
 pub mod input;
