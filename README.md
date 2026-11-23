@@ -962,7 +962,10 @@ de son menu, choisie :
    plus, sinon il ne touche à rien), met la nouvelle app à la place de l'ancienne comme
    `tools/install-macos.sh` (l'ancienne mise de côté, la nouvelle renommée, sa signature vérifiée,
    l'ancienne retirée, ou remise en place au moindre échec ; jamais par-dessus autre chose qu'une
-   Capri, jamais à travers un lien, jamais `sudo`), puis la relance par `open`.
+   Capri, jamais à travers un lien, jamais `sudo`), puis la relance par `open`. Si l'ancienne ne
+   peut pas être remise (sa place est prise, ou le renommage échoue), rien n'est mis par-dessus :
+   elle reste de côté, cachée à côté de l'app (`.Capri.app.capri-update-<numéro>-previous`), rien
+   n'est relancé, et le journal le dit.
 
 Chaque étape se dit au-dessus de sa tête, à son tour. Un refus aussi, en une phrase : pas lancée
 depuis une `Capri.app`, dossier de l'app où elle ne peut pas écrire, version qui change ce que
@@ -971,9 +974,12 @@ impossible, fichier abîmé, signature impossible. **Quitter Capri, ou décocher
 jour », pendant l'installation l'arrête, et il ne reste rien** à côté de ton app ; une app prête
 mais pas redémarrée est retirée de même. Au lancement, les restes d'une mise à jour interrompue
 (une coupure de courant…) sont retirés s'ils sont à elle sans doute possible, et laissés sinon,
-avec une ligne dans son journal. Son journal ne dit que les étapes et la conclusion, jamais une
-adresse signée ni le nom d'une identité ; le programme de fin y écrit aussi, une fois l'ancienne
-sortie.
+avec une ligne dans son journal. Une installation mise de côté n'est retirée que si l'app en place
+se vérifie (`codesign --verify --strict`) : sinon elle est peut-être la seule bonne, et elle reste.
+Du dossier de l'app, qu'il faut lister pour les trouver, seuls ses propres noms sont gardés : ceux
+de tes autres apps ne sont ni gardés ni écrits. Son journal ne dit que les étapes et la
+conclusion, jamais une adresse signée ni le nom d'une identité ; le programme de fin y écrit
+aussi, une fois l'ancienne sortie.
 
 Puisque l'app est refaite avec les ressources de la tienne, elle ne contient que ce que tu avais
 déjà, et **ne se distribue toujours pas**. Le `capri-hook` de l'app garde sa place : le hook de
@@ -1019,8 +1025,8 @@ n'y écrit rien).
 
 Pas encore vérifié : **ce qui se voit**, étape par étape (les phrases à leur tour, la ligne du
 menu pendant l'installation : rapporté dans l'ensemble seulement) ; **un échec en vrai** (réseau
-coupé pendant le téléchargement, relais manqué : essayés contre un faux serveur et un faux
-système seulement) ; **une app « ad hoc » mise à jour pour de bon**, et une identité qui n'est
+coupé pendant le téléchargement, relais manqué, mise en place qui échoue : essayés contre un
+faux serveur et un faux système seulement) ; **une app « ad hoc » mise à jour pour de bon**, et une identité qui n'est
 plus dans le trousseau ; **sous Windows**, la ligne n'y est qu'une information, essayée seulement
 dans la CI. Pendant un essai, le programme de fin saute toujours la relance : `open` ne lui
 passerait pas ses lieux d'essai, et pourrait réveiller ta Capri, du même identifiant.
@@ -1282,8 +1288,8 @@ Règle : tout ce qui peut être testé sans écran va dans `capri-core`, `capri-
 
 Vérifié automatiquement :
 
-- formatage, `clippy -D warnings` et 650 tests sur **macOS Apple Silicon** (le 23 novembre 2026 ;
-  649 en version optimisée, un essai de la répétition de la musique n'existant qu'en version de
+- formatage, `clippy -D warnings` et 656 tests sur **macOS Apple Silicon** (le 23 novembre 2026 ;
+  655 en version optimisée, un essai de la répétition de la musique n'existant qu'en version de
   débogage ; plus 15 qui ne
   tournent qu'à la main : ils écrivent des images ou dessinent sur la vraie carte graphique,
   lisent un vrai `settings.json`, touchent au vrai trousseau, créent de vraies voix et un vrai
@@ -1478,7 +1484,12 @@ Vérifié automatiquement :
   passé ; une mauvaise réponse n'est pas un relais) ; la préparation avec un faux système (l'app
   refaite à côté avec les ressources de l'installée, sans son `_CodeSignature`, signée comme elle,
   le trousseau pas lu pour une app « ad hoc » ; chaque refus, dossier non inscriptible compris, ne
-  laisse rien) ; les restes au lancement (retirés seulement s'ils sont à nous et libres) ;
+  laisse rien) ; les restes au lancement (retirés seulement s'ils sont à nous et libres ; une
+  installation mise de côté, seulement si l'app en place se vérifie) ; la mise en place par le
+  programme de fin avec un faux système (la nouvelle à sa place ; l'ancienne remise quand la
+  nouvelle est refusée à sa place ou ne s'y vérifie plus ; l'ancienne laissée de côté, et gardée
+  au lancement suivant, quand la nouvelle ne peut pas en être retirée ; une app qui n'est pas une
+  Capri, pas touchée) ;
   l'arrêt de la préparation pendant un téléchargement, qui ne laisse rien ; `capri update finish`
   lancé hors d'une mise à jour, refusé sans journal ;
 - `clippy -D warnings` en compilation croisée pour **Windows x64** et **Linux x64** (le code

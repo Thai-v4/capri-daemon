@@ -673,6 +673,9 @@ une fausse commande `security` placée en tête du `PATH`.
      case décochée ou Capri quittée, ce dossier est retiré. **Au lancement**, un reste n'est
      retiré que s'il est à nous sans doute possible (vrai dossier, notre nom au chiffre près, notre
      marque au texte exact, son verrou libre) ; sinon il est laissé, avec une ligne au journal.
+     L'installation mise de côté n'est retirée que si l'app en place se vérifie (elle est
+     peut-être la seule bonne) ; sinon elle reste, et son dossier caché avec elle. Du dossier
+     listé pour les trouver, seuls nos noms sont gardés, jamais ceux des autres apps.
   5. **La signature** : celle de l'app installée, refaite sur la machine (`codesign` par son
      chemin absolu, toujours `--timestamp=none`, le second programme puis l'app, puis
      `--verify --strict`) ; jamais de notarisation ni d'outil qui téléverse (l'essai
@@ -693,7 +696,12 @@ une fausse commande `security` placée en tête du `PATH`.
      fermer le tube un instant avant de lâcher le verrou). Puis il fait comme `tools/install-macos.sh` :
      jamais une demi-app (des renommages), jamais par-dessus autre chose qu'une Capri (identifiant
      de bundle), jamais à travers un lien, l'ancienne remise en place au moindre échec, jamais
-     `sudo`. Il relance l'app par `/usr/bin/open`, sauf avec `CAPRI_CONFIG_DIR` (un essai : `open`
+     `sudo`. Si elle ne peut pas l'être (sa place est prise : la nouvelle, dont la signature ne
+     se vérifie plus, n'a pas pu en être retirée ; ou le renommage échoue), rien n'est mis
+     par-dessus : l'ancienne reste de côté, rien n'est relancé, et le journal le dit (`Left` dit
+     ce qu'il y a à la place après un échec ; seule `Left::Installed` se relance). Ses renommages
+     et ses vérifications passent par un trait `Ground`, que les essais remplacent.
+     Il relance l'app par `/usr/bin/open`, sauf avec `CAPRI_CONFIG_DIR` (un essai : `open`
      ne lui passerait pas ses lieux d'essai, et pourrait retrouver la Capri de l'utilisateur, du
      même identifiant). **Ce relais est un contrat entre deux versions** (l'ancienne lance le
      programme de la nouvelle : `capri update finish <app>`, la ligne `HANDOVER_READY`, puis

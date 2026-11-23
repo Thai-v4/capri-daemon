@@ -18,10 +18,14 @@
 //! nouvelle app attend le geste qui redémarre Capri ; le programme de fin ([`crate::update_finish`])
 //! la met en place.
 //!
-//! **Les restes** d'une mise à jour interrompue ([`clear_leftovers`]), au lancement : un dossier
-//! caché retiré seulement s'il est à nous sans doute possible (un vrai dossier, notre nom, notre
-//! marque au texte exact, et son verrou libre : personne ne s'en sert) ; sinon laissé, avec une
-//! ligne au journal.
+//! **Les restes** d'une mise à jour interrompue ([`clear_leftovers`]), au lancement : seuls les
+//! noms qui sont les nôtres sont regardés ; un dossier caché retiré seulement s'il est à nous sans
+//! doute possible (un vrai dossier, notre nom, notre marque au texte exact, et son verrou libre :
+//! personne ne s'en sert) ; sinon laissé, avec une ligne au journal. L'installation précédente
+//! mise de côté qui l'accompagne n'est retirée que si l'app en place (celle d'où Capri tourne) se
+//! vérifie : sinon, elle est peut-être la seule qui se vérifie encore (le programme de fin n'a pas
+//! pu retirer de sa place une nouvelle app à la signature invalide), et elle reste, avec son
+//! dossier.
 //!
 //! Le journal ne dit que les étapes et la conclusion : jamais une adresse signée (`capri-net` n'en
 //! écrit que l'hôte), jamais une identité (`capri_core::codesign` les masque).
@@ -422,20 +426,35 @@ pub fn is_capri(app: &Path) -> bool {
     bundle::info_string(&text, "CFBundleIdentifier").is_ok_and(|found| found.as_deref() == Some(BUNDLE_ID))
 }
 
-/// Au lancement, à côté de l'app `app` : les restes d'une mise à jour interrompue, retirés s'ils
-/// sont à nous sans doute possible (voir le haut du module), laissés sinon. Rend combien ont été
-/// retirés.
+/// Au lancement, à côté de l'app `app` (celle d'où Capri tourne) : les restes d'une mise à jour
+/// interrompue, retirés s'ils sont à nous sans doute possible (voir le haut du module), laissés
+/// sinon ; une installation mise de côté, seulement si la signature de `app` se vérifie. Rend
+/// combien ont été retirés.
 pub fn clear_leftovers(app: &Path) -> usize {
+    clear_leftovers_with(app, |app| capri_platform::codesign::verify(app).is_ok())
+}
+
+/// [`clear_leftovers`], la vérification de l'app en place reçue en paramètre (`verify`), pour les
+/// essais. Elle n'est demandée que pour retirer une installation mise de côté (une Capri, avec son
+/// dossier à nous, au verrou libre), et une seule fois par appel au plus.
+///
+/// Le dossier de l'app est lu en entier (le nom d'un reste porte un numéro de processus), mais
+/// seuls les noms qui sont les nôtres ([`bundle::leftover`]) sont gardés : les autres ne sont ni
+/// gardés ni écrits.
+pub(crate) fn clear_leftovers_with(app: &Path, mut verify: impl FnMut(&Path) -> bool) -> usize {
     let Some(folder) = app.parent() else { return 0 };
     let Ok(entries) = std::fs::read_dir(folder) else { return 0 };
-    let mut names: Vec<String> =
-        entries.flatten().filter_map(|entry| entry.file_name().into_string().ok()).collect();
-    names.sort();
+    let mut found: Vec<(String, Leftover)> = entries
+        .flatten()
+        .filter_map(|entry| entry.file_name().into_string().ok())
+        .filter_map(|name| bundle::leftover(&name).map(|kind| (name, kind)))
+        .collect();
+    found.sort_by(|(one, _), (other, _)| one.cmp(other));
+    let mut in_place_verified: Option<bool> = None;
     let mut removed = 0;
-    for name in &names {
-        match bundle::leftover(name) {
-            None => {}
-            Some(Leftover::Staging(pid)) => {
+    for (name, kind) in &found {
+        match *kind {
+            Leftover::Staging(pid) => {
                 let root = folder.join(name);
                 let Some(marker) = open_marker(&root) else {
                     log::warn!("mise à jour : reste laissé à côté de l'app, sans notre marque : {name}");
@@ -448,7 +467,24 @@ pub fn clear_leftovers(app: &Path) -> usize {
                 // l'installation mise de côté par un programme de fin interrompu, d'abord
                 let previous = folder.join(bundle::previous_name(pid));
                 if std::fs::symlink_metadata(&previous).is_ok() {
-                    if !is_capri(&previous) || std::fs::remove_dir_all(&previous).is_err() {
+                    if !is_capri(&previous) {
+                        log::warn!(
+                            "mise à jour : installation mise de côté laissée : {}",
+                            bundle::previous_name(pid)
+                        );
+                        continue;
+                    }
+                    // la seule qui se vérifie, peut-être : retirée seulement si l'app en place se
+                    // vérifie (une fois par appel)
+                    if !*in_place_verified.get_or_insert_with(|| verify(app)) {
+                        log::warn!(
+                            "mise à jour : l'app en place ne se vérifie pas : installation mise de côté \
+                             laissée, avec son dossier : {}",
+                            bundle::previous_name(pid)
+                        );
+                        continue;
+                    }
+                    if std::fs::remove_dir_all(&previous).is_err() {
                         log::warn!(
                             "mise à jour : installation mise de côté laissée : {}",
                             bundle::previous_name(pid)
@@ -464,10 +500,12 @@ pub fn clear_leftovers(app: &Path) -> usize {
                 }
             }
             // avec son dossier : vue avec lui, plus haut
-            Some(Leftover::Previous(pid)) if !names.contains(&bundle::staging_name(pid)) => {
+            Leftover::Previous(pid)
+                if !found.iter().any(|(other, _)| *other == bundle::staging_name(pid)) =>
+            {
                 log::warn!("mise à jour : installation mise de côté laissée, sans son dossier : {name}");
             }
-            Some(Leftover::Previous(_)) => {}
+            Leftover::Previous(_) => {}
         }
     }
     if removed > 0 {
@@ -892,7 +930,17 @@ mod tests {
         // d'autres noms : jamais regardés
         std::fs::create_dir_all(folder.join(".Capri.app.capri-install-17")).unwrap();
         std::fs::create_dir_all(folder.join("Autre.app")).unwrap();
-        assert_eq!(clear_leftovers(&app), 2);
+        // l'app en place se vérifie : demandé une seule fois, pour la seule installation mise de
+        // côté qui est une Capri, avec son dossier à nous au verrou libre
+        fn verify(asked: &mut Vec<PathBuf>) -> impl FnMut(&Path) -> bool + '_ {
+            move |checked| {
+                asked.push(checked.to_owned());
+                true
+            }
+        }
+        let mut asked = Vec::new();
+        assert_eq!(clear_leftovers_with(&app, verify(&mut asked)), 2);
+        assert_eq!(asked, std::slice::from_ref(&app));
         let mut expected = vec![
             ".Capri.app.capri-install-17".to_owned(),
             bundle::staging_name(12),
@@ -906,9 +954,61 @@ mod tests {
         expected.sort();
         assert_eq!(others(folder), expected);
         drop(held);
-        // son verrou lâché, le dossier encore utilisé est retiré au lancement suivant
-        assert_eq!(clear_leftovers(&app), 1);
+        // son verrou lâché, le dossier encore utilisé est retiré au lancement suivant ; aucune
+        // installation mise de côté à retirer : la vérification n'est pas demandée
+        let mut asked = Vec::new();
+        assert_eq!(clear_leftovers_with(&app, verify(&mut asked)), 1);
+        assert!(asked.is_empty(), "{asked:?}");
         assert!(!folder.join(bundle::staging_name(14)).exists());
+    }
+
+    /// L'app en place ne se vérifie pas : les installations mises de côté, qui sont peut-être les
+    /// seules à se vérifier, restent, avec leur dossier ; un dossier sans installation mise de
+    /// côté est retiré. Elle se vérifie : tout est retiré. La vérification, une fois par appel.
+    #[test]
+    fn a_set_aside_installation_stays_while_the_app_in_place_does_not_verify() {
+        let scratch = Scratch::new("restes-non-verifiee");
+        let app = installed_app(&scratch.0);
+        let folder = &scratch.0;
+        for pid in [21, 22, 23] {
+            let root = folder.join(bundle::staging_name(pid));
+            std::fs::create_dir_all(&root).unwrap();
+            std::fs::write(root.join(MARKER), MARKER_TEXT).unwrap();
+        }
+        for pid in [21, 22] {
+            let previous = folder.join(bundle::previous_name(pid));
+            std::fs::create_dir_all(previous.join("Contents")).unwrap();
+            std::fs::write(previous.join("Contents/Info.plist"), info("0.1.0")).unwrap();
+        }
+        let mut asked = 0;
+        assert_eq!(
+            clear_leftovers_with(&app, |_| {
+                asked += 1;
+                false
+            }),
+            1
+        );
+        assert_eq!(asked, 1, "une seule fois par appel");
+        let mut expected = vec![
+            bundle::staging_name(21),
+            bundle::previous_name(21),
+            bundle::staging_name(22),
+            bundle::previous_name(22),
+        ];
+        expected.sort();
+        assert_eq!(others(folder), expected);
+        // elle se vérifie : les deux installations mises de côté et leurs dossiers sont retirés
+        let mut asked = 0;
+        assert_eq!(
+            clear_leftovers_with(&app, |_| {
+                asked += 1;
+                true
+            }),
+            4
+        );
+        assert_eq!(asked, 1, "une seule fois par appel");
+        assert!(others(folder).is_empty(), "{:?}", others(folder));
+        assert!(is_capri(&app), "l'app en place n'est pas touchée");
     }
 
     /// La préparation sur son thread, par le vrai réseau contre un faux serveur de cette machine,
