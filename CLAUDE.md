@@ -38,6 +38,14 @@ le Finder (écrit et testé sans écran le 15 novembre 2026 ; le même jour, l'a
 lancée depuis `/Applications` a écrit le fichier, dossier et fichier réservés à l'utilisateur, et
 « Montrer le journal » a été essayé par l'utilisateur, dans l'ensemble, pas point par point).
 
+Jalon 5, sa seconde moitié : des mises à jour à la manière de Droppy, en trois lots (publier les
+versions ; savoir qu'une version existe ; la télécharger, la vérifier et l'installer, sur un
+geste). Le deuxième est écrit et testé sans réseau le 23 novembre 2026 : la case « Chercher les
+mises à jour » de son menu (cochée par défaut), une vérification par jour sur un thread à elle,
+ce qu'elle en dit, et `capri update check` ; répété dans la vraie app contre un faux serveur de
+cette machine, jamais encore contre GitHub, ni regardé à l'écran, ni exécuté sous Windows. Elle
+ne télécharge ni n'installe rien.
+
 ## Architecture : où va quoi
 
 - `capri-core` : logique pure, **aucune dépendance système ni GPU**. Tout ce qui peut être testé
@@ -118,6 +126,19 @@ lancée depuis `/Applications` a écrit le fichier, dossier et fichier réservé
   de réglages (où part ce qu'on lui dit, clé rangée ou retirée…) sont dans `phrases`, écrites une
   seule fois. Le modèle de la fenêtre de réglages est dans `settings` (voir plus bas) ; sa
   rubrique « Claude Code » dépend de `capri-claude` (pur lui aussi) pour ses états et ses phrases.
+  Et `update` : savoir qu'une version plus récente existe, sans réseau. `Version`
+  (`MAJEUR.MINEUR.CORRECTIF`, écriture canonique, car l'étiquette `v<version>` en est calculée) ;
+  la lecture stricte du manifeste `latest.json` (`manifest` : champs inconnus ignorés à tous les
+  niveaux, tout le reste refusé en entier ; un `format` inconnu n'est lu que pour sa version) ;
+  le verdict (`verdict` : à jour, installable plus tard, ou pas, avec son `Obstacle` : `format`
+  inconnu, `bundle` différent, cible absente) ; l'adresse du dépôt, écrite une fois
+  (`REPOSITORY`), d'où sont calculées celle du manifeste et celle d'un fichier (`asset_url`,
+  jamais lue dans le manifeste) ; la règle des redirections (`route::Route`, prise en paramètre
+  par `capri-net` : `Route::github` en vrai, `Route::this_machine` dans les essais) ; quand
+  regarder (`schedule`, horloge passée en paramètre) ; où regarder (`source` : jamais GitHub
+  depuis un essai) ; ce qu'elle en dit (`say`, et `Failure`, les causes d'un échec). Ici plutôt
+  que dans `capri-core` parce que `serde_json` y est déjà, et que `capri-net`, qui doit recevoir
+  la règle, ne dépend que de ce crate.
 - `capri-net` : **le seul crate qui parle au réseau** (ureq). Il se connecte et rien d'autre :
   quoi envoyer et comment lire la réponse est décidé par `capri-chat` (`Wire`, `key_header`, qu'il
   pose tels quels). Et `knock` : quelque chose répond-il à une adresse **de cette machine
@@ -127,6 +148,11 @@ lancée depuis `/Applications` a écrit le fichier, dossier et fichier réservé
   `RootCerts::PlatformVerifier`), sur macOS et Windows seulement ; sous Linux, pas de TLS (il y
   faudrait OpenSSL) et `https://` est refusé. Testé contre un faux serveur local ; aucun test ne
   sort de la machine.
+  Et `update::fetch` : le manifeste des versions, par une entrée **à part** de la conversation
+  (aucun paramètre de clé, aucun `Ask`, aucun corps) : un `GET` qui suit lui-même, une à une,
+  les redirections que la règle passée en paramètre permet (ureq à zéro redirection), sans proxy,
+  sans `User-Agent` ni `Accept` (retirés : ureq les enverrait de lui-même), sans connexion
+  gardée ouverte, borné en durée et en taille (64 Kio). La seule entrée qui suit des redirections.
 - `capri-render` : wgpu, et le tracé du texte du bandeau et de la bulle (cosmic-text, polices du
   système). Ses images sont confiées une fois (`Renderer::add_image`, qui compte ce qu'elles
   pèsent) ; chaque dessin en prend une part (`Crop` : une case de grille), lue à un demi-texel des
@@ -272,6 +298,16 @@ lancée depuis `/Applications` a écrit le fichier, dossier et fichier réservé
   (`LogFile`, sans couleurs) ; et `show`, ce que fait « Montrer le journal » de ses menus (le
   fichier montré par `capri_platform::launch::reveal` s'il est là, sinon une phrase pour le
   bandeau).
+  `update_setup` tient la case « Chercher les mises à jour » (`update.json`, cochée sans
+  fichier, décochée s'il est illisible), ce qui tourne ici (`installed` : la version du
+  `Cargo.toml`, `tools/macos/bundle-format` lu par `include_str!`, `capri_chat::update::TARGET`),
+  où regarder (`source` : `CAPRI_CONFIG_DIR` ou une des `REHEARSALS`, nulle part ;
+  `CAPRI_UPDATE_URL` en version de débogage seulement) et `capri update check`. `update_view`
+  regarde sur un thread « capri-maj », derrière un trait `Line` que les essais remplacent par un
+  faux monde à l'horloge factice ; la lâcher l'arrête, et rien ne l'attend en quittant. Ce
+  qu'elle trouve est relevé par la boucle (`App::handle_updates`) : dit une fois au-dessus de sa
+  tête par `BannerView::announce` (un message de l'app qui attend qu'elle soit visible et libre),
+  et rappelé par une ligne « Version … disponible » glissée sous la case, dans ses deux menus.
 - `tools/` : `fetch-assets.sh` (et `.ps1`), qui télécharge les images et vérifie leurs
   empreintes ; `bundle-macos.sh`, qui fabrique `target/Capri.app` : les deux binaires, l'`Info.plist`
   (`tools/macos/Info.plist`), les images que lit le code et seulement elles (sa liste `IMAGES`, prise
@@ -342,6 +378,14 @@ d'ouverture de session, `<CAPRI_CONFIG_DIR>/LaunchAgents` : rien n'est lu ni éc
 fenêtres, les annonces des vrais lecteurs si la musique est permise, ses raccourcis globaux, son
 icône dans la barre des menus), ses images (`CAPRI_ASSETS`), et, dans la fenêtre de réglages,
 la liste des modèles qu'elle demande d'elle-même à un serveur de cette machine.
+
+Pendant une répétition (ou avec `CAPRI_CONFIG_DIR`), elle ne regarde jamais les versions : ni
+l'app, ni `capri update check`. Une nouvelle répétition de la vraie app s'inscrit dans
+`update_setup::REHEARSALS` (l'essai `every_rehearsal_the_app_reads_is_known_here` le vérifie), et
+tout essai qui lance `capri` pose `CAPRI_CONFIG_DIR` (`every_test_that_launches_capri_sets_a_test_folder`).
+Pour répéter la vérification : `CAPRI_UPDATE_URL=http://127.0.0.1:<port>/…` (version de débogage),
+un faux serveur de cette machine et rien d'autre, regardé 3 s après le lancement
+(`CAPRI_ASSETS=… cargo test -p capri-app --test mises_a_jour -- --ignored`).
 
 ## Vérifier avant de dire « c'est fait »
 
@@ -479,6 +523,38 @@ une fausse commande `security` placée en tête du `PATH`.
 - Aucune télémétrie, rien n'envoyé sur le réseau sans action explicite de l'utilisateur. La
   fenêtre de réglages ne demande d'elle-même la liste des modèles qu'à un serveur de cette
   machine ; à tout autre, seulement quand on appuie sur « Demander la liste ».
+- **Une seule exception à la règle précédente, explicite et étroite : savoir qu'une version
+  existe.** Décidée par l'utilisateur le 23 novembre 2026, comme Droppy : la case « Chercher les
+  mises à jour » de son menu, **cochée par défaut**. Rien d'autre ne devient permis.
+  1. **Ce qui part** : un `GET` sans corps du seul fichier `latest.json` de la dernière version
+     publiée (`capri_chat::update::manifest_url`, calculée de `REPOSITORY`), et **rien sur
+     l'utilisateur ni sur la machine** : la ligne de requête et `Host`, ni `User-Agent`, ni
+     `Accept`, ni cookie, ni clé (`capri_net::update::fetch` n'en prend aucune, ni `Ask`). Ce qu'on
+     ne peut pas cacher : **GitHub voit l'adresse IP** (et l'heure, et que ce fichier a été lu),
+     et le réseau voit le nom des hôtes joints.
+  2. **Quand** : `schedule::GRACE` (60 s) après son lancement, sur le thread « capri-maj » (rien
+     ne retarde son apparition), puis une fois par jour de marche (`EVERY` ; la veille de la
+     machine ne compte pas) ; après un échec, 15 min, puis le double, jamais plus d'un jour.
+     Chaque lancement en refait une, une minute après.
+  3. **Vers quels hôtes** : `route::GITHUB_HOSTS` seulement (`github.com`,
+     `release-assets.githubusercontent.com`, d'après la documentation de GitHub citée dans
+     `route.rs`), en `https`, au port 443, sans identifiants, trois redirections au plus, suivies
+     une à une par la règle, ureq restant à zéro ; sans proxy ; 64 Kio au plus. Une autre liste
+     se vérifie dans la documentation de GitHub, pas de mémoire.
+  4. **Comment la couper** : décocher la case (`update.json` : `{ "enabled": false }`) ; un
+     fichier illisible la coupe aussi. Le thread s'arrête, et elle oublie ce qu'elle avait trouvé.
+  5. **Ce qui ne change pas** : elle ne télécharge ni n'installe rien d'elle-même (ce sera un
+     geste) ; l'adresse d'un fichier se calcule (`asset_url`), jamais lue dans le manifeste ;
+     rien n'en est envoyé à son cerveau ; le journal ne dit que la conclusion (« à jour », « version
+     … disponible », « vérification impossible » et une cause courte), jamais une adresse signée
+     (`Address` ne montre que l'hôte ; ureq masque le chemin au niveau `debug`, et ses traces sont
+     refusées) ; la bulle et le menu ne renvoient à aucune commande.
+  6. **Les essais et répétitions ne sortent jamais de la machine** : `CAPRI_CONFIG_DIR` posée ou
+     une répétition en cours, elle ne regarde nulle part, ni l'app ni `capri update check`. En
+     version de débogage seulement, `CAPRI_UPDATE_URL` désigne un faux serveur de cette machine
+     (`http://127.0.0.1:<port>/…`, `Route::this_machine`) ; une autre adresse est refusée, jamais
+     remplacée par GitHub. Aucun essai ne contacte GitHub, et le chemin réel ne s'essaie qu'avec
+     l'accord de l'utilisateur.
 - Le chat : seules la personnalité et la conversation partent vers le modèle, et seulement vers
   l'adresse que l'utilisateur a choisie. Jamais l'activité de Claude Code, ni la ligne du miroir
   (`Chat::relay` ne l'ajoute pas à la conversation). Pas de proxy, aucune

@@ -855,6 +855,78 @@ pour qui la lance d'un terminal).
   `capri chat …`, `capri voice …`) n'écrivent pas de fichier, et le hook de Claude Code n'écrit
   rien nulle part.
 
+## Savoir qu'une version existe
+
+Comme Droppy, Capri regarde d'elle-même s'il existe une version
+plus récente qu'elle, et te le dit. **Elle ne télécharge ni n'installe rien** : ce sera un geste de
+ta part, plus tard (la dernière partie du jalon 5).
+
+- **La case** « Chercher les mises à jour », dans son menu (icône de la barre des menus, ou clic
+  droit sur elle), **cochée par défaut**. Décochée, elle ne regarde plus, et oublie ce qu'elle
+  avait trouvé (`update.json`, dans le dossier de ses réglages : `{ "enabled": false }`). Un
+  fichier illisible vaut « décochée » : dans le doute, rien ne part.
+- **Quand** : une minute après son lancement (elle est déjà à l'écran : c'est un thread à part qui
+  attend), puis une fois par jour tant qu'elle tourne. Le temps où ta machine dort ne compte pas :
+  jamais plus d'une par jour. Après un échec (pas de réseau…), 15 minutes plus tard, puis le
+  double à chaque échec, jamais plus d'un jour. Chaque lancement en refait une, une minute après.
+- **Ce qu'elle dit** : si une version plus récente existe, une fois, au-dessus de sa tête : « Une
+  nouvelle version de moi est sortie : la 0.2.0 », mais à son tour (après ce que tu lui dis, ce
+  qu'elle te répond, et la ligne de Claude Code, et seulement visible) ; puis une ligne
+  « Version 0.2.0 disponible » apparaît sous la case, dans ses deux menus. La choisir lui fait dire
+  si elle pourra s'installer depuis son menu (plus tard), ou pourquoi pas : elle change ce que
+  contient l'app (ses images : il faudra la réinstaller), elle n'est pas publiée pour ton système,
+  ou son manifeste est d'un format qu'elle ne lit pas encore. La même version, retrouvée le
+  lendemain, n'est pas redite ; relancée, elle la redit une fois.
+- **Sur demande, dans un terminal** : `capri update check` dit la version installée, la dernière
+  publiée, et le verdict (sans tenir compte de la case : c'est toi qui le demandes).
+
+**Ce qui part sur le réseau**, la seule exception à « rien n'est envoyé sans geste de ta part » :
+
+- **une lecture d'un seul fichier**, `latest.json`, le manifeste de la dernière version publiée :
+  `https://github.com/Thai-v4/capri-daemon/releases/latest/download/latest.json`. GitHub y répond
+  par deux redirections (vers la version, puis vers une adresse signée qui sert le fichier) ;
+- **rien sur toi ni sur ta machine** : la requête ne porte que sa ligne et l'en-tête `Host`. Pas de
+  `User-Agent` (ureq en enverrait un de lui-même : il est retiré), pas d'`Accept`, pas de cookie,
+  pas de clé (l'entrée réseau qui lit ce fichier n'en prend aucune), pas de corps. Ce qui ne se
+  cache pas : **GitHub voit ton adresse IP**, l'heure, et que ce fichier a été lu, comme pour
+  n'importe quelle connexion ; ton réseau voit le nom des hôtes joints ;
+- **deux hôtes seulement**, `github.com` et `release-assets.githubusercontent.com` (le domaine que
+  la [documentation de GitHub](https://docs.github.com/en/actions/reference/runners/self-hosted-runners)
+  donne pour « downloading release assets »), en `https`, au port 443, sans identifiants, trois
+  redirections au plus, suivies une à une par Capri elle-même ; une adresse hors de cette règle
+  est refusée **avant** de s'y connecter. Pas de proxy, même déclaré par l'environnement ; 64 Kio
+  au plus ; 10 s pour se connecter, 30 s par échange ;
+- rien n'en est envoyé à son cerveau, et rien d'autre ne devient permis : télécharger et installer
+  resteront un geste, et l'adresse d'un fichier d'une version sera calculée par l'app, jamais lue
+  dans le manifeste.
+
+**Son journal** n'en dit que la conclusion : « mises à jour : à jour (installée 0.1.0, dernière
+publiée 0.1.0) », « mises à jour : version 0.2.0 disponible », « mises à jour : vérification
+impossible (délai dépassé), nouvel essai dans 15 min ». Au niveau `debug`, l'hôte de chaque
+redirection, et ce qu'écrit ureq, qui n'y montre que l'hôte (le chemin et l'en-tête `Location` y
+sont masqués). Jamais une adresse signée.
+
+**Les essais ne sortent jamais de la machine.** Avec `CAPRI_CONFIG_DIR`, ou pendant une répétition
+de la vraie app (`CAPRI_SETTINGS_REHEARSAL`, `CAPRI_PERCH_REHEARSAL`, `CAPRI_MUSIC_REHEARSAL`), elle
+ne regarde nulle part, ni d'elle-même ni par `capri update check`. En version de débogage
+seulement, `CAPRI_UPDATE_URL=http://127.0.0.1:<port>/…` lui fait lire un faux serveur de cette
+machine (trois secondes après son lancement) ; toute autre adresse est refusée, et jamais
+remplacée par GitHub :
+
+```bash
+CAPRI_ASSETS=/chemin/vers/assets cargo test -p capri-app --test mises_a_jour -- --ignored
+```
+
+lance la vraie app avec ses quatre lieux d'essai contre un faux serveur qui redirige comme GitHub,
+et vérifie qu'elle trouve la version, la dit à son tour, et que ni sa sortie d'erreur ni son
+fichier de journal (au niveau `trace`) ne contiennent l'adresse signée.
+
+Pas encore vérifié : **le chemin réel jusqu'à GitHub** (aucun essai ne le contacte ; il sera
+essayé avec ton accord, une fois une version publiée avec son manifeste) ; **ce qui se voit** :
+la phrase au-dessus de sa tête, la ligne glissée sous la case dans les deux menus et ce qu'elle
+dit quand on la choisit, la case décochée puis recochée ; **sous Windows**, rien n'a tourné
+ailleurs que dans la CI. Ailleurs (Linux), pas de `https` : elle ne regarde pas.
+
 ## Installer et lancer
 
 Il faut [Rust](https://rustup.rs) 1.90 ou plus récent (`rustup update`).
@@ -1025,9 +1097,14 @@ crates/
                    faut-il, où le chercher, le délai, ce qu'elle en dit), et le modèle de la fenêtre de
                    réglages (settings/ : rubriques « Cerveau », « Voix » et « Claude Code »)
                    (testée)
+                   Et savoir qu'une version existe (update/ : version, lecture stricte du
+                   manifeste, verdict, règle des redirections, quand regarder, ce qu'elle en dit)
   capri-net/       le seul crate qui parle au réseau : envoyer la conversation (en https par le TLS
                    du système), lire la réponse au fil de l'eau (testé contre un faux serveur local),
                    et frapper à une adresse de cette machine seulement (knock : Ollama tourne-t-il ?)
+                   Et lire le manifeste des versions (update.rs : une entrée à part, sans clé, qui
+                   suit elle-même les redirections que la règle permet ; testée contre un faux
+                   serveur local)
   capri-render/    rendu wgpu : Metal sur macOS, DirectX 12 + DirectComposition sur Windows ;
                    ses images confiées une fois, une case de grille par dessin ; Offscreen, le
                    même rendu dans une image en mémoire, pour les essais
@@ -1087,6 +1164,9 @@ crates/
                    lancé sur un thread à part) ; son journal (journal.rs : la sortie d'erreur et
                    le fichier, borné, réservé, sans les traces de ureq, et « Montrer le
                    journal » ; tests/journal_des_commandes.rs : ses commandes n'en écrivent pas)
+                   Et les versions (update_setup.rs : la case, update.json, où regarder,
+                   `capri update check` ; update_view.rs : la veille sur un thread à part ;
+                   tests/mises_a_jour.rs : la commande et la vraie app contre un faux serveur)
 tools/             récupération vérifiée des images, fabrication de Capri.app avec ses images
                    (bundle-macos.sh) et son installation dans /Applications (install-macos.sh)
 ```
@@ -1259,6 +1339,22 @@ Vérifié automatiquement :
   l'activité de Claude Code n'y entre que sous sa forme pour le journal : un événement de chaque
   sorte, un faux secret dans chacun de ses champs, n'en laisse sortir aucun, et les noms, les
   catégories, les durées, les longueurs et les étiquettes des identifiants y sont tels qu'attendus ;
+- savoir qu'une version existe, sans sortir de la machine (le 23 novembre 2026) : la version et
+  son ordre (écriture canonique seulement), le manifeste du contrat lu en entier, ses champs
+  inconnus ignorés à tous les niveaux, un format plus récent lu pour sa seule version, et une
+  quarantaine de manifestes refusés (noms, empreintes, tailles, doublons, trop gros, pas de
+  l'UTF-8) ; le verdict (à jour, installable, contenu d'un autre format, pas pour ce système,
+  format inconnu) ; la règle des redirections (celles de GitHub suivies, une vingtaine d'adresses
+  refusées : protocole, hôte, sous-domaine, port, identifiants, IPv6, caractères ; une règle en
+  clair hors de la boucle locale refusée) et une adresse signée jamais montrée ; l'emploi du
+  temps (une par jour, de plus en plus tard après un échec, jamais moins de 15 min) ; contre un
+  faux serveur local, la vraie lecture : deux redirections suivies, la requête réduite à sa ligne
+  et `Host`, des redirections refusées avant toute connexion, plus de trois sauts, une réponse
+  trop grosse (annoncée ou non), un serveur muet, un 404, un `https` qui ne retombe pas en clair ;
+  la veille à l'horloge factice ; `capri update check` lancée pour de vrai (rien de lu depuis un
+  dossier d'essai, le faux serveur lu en version de débogage, sans jamais écrire l'adresse
+  signée) ; aucune répétition ni aucun essai qui lance `capri` ne peut joindre GitHub ; le format
+  du contenu de l'app lié à la liste `IMAGES` de `tools/bundle-macos.sh` ;
 - `clippy -D warnings` en compilation croisée pour **Windows x64** et **Linux x64** (le code
   compile, il n'est pas exécuté).
 
