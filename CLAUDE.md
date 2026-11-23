@@ -30,8 +30,8 @@ session réparée, hook de Claude Code qui suit ; ni ce qui se voit, ni le micro
 ouverture de session vérifiés depuis). Sa signature : « ad hoc » par défaut, ou par l'identité
 « Developer ID Application » du trousseau s'il y en a une (écrit, et essayé le 23 novembre 2026
 vers un dossier temporaire avec la vraie identité de l'utilisateur ; que macOS ne redemande plus
-le micro d'une installation à l'autre n'est pas encore vérifié). Pas de notarisation ni de mises
-à jour.
+le micro d'une installation à l'autre n'est pas encore vérifié). Pas de notarisation ; ses mises
+à jour sont en cours (voir plus bas).
 Son journal, lancée comme app à fenêtre, s'écrit aussi dans un fichier borné
 (`~/Library/Logs/Capri/capri.log` sur macOS), que « Montrer le journal » de son menu montre dans
 le Finder (écrit et testé sans écran le 15 novembre 2026 ; le même jour, l'app réinstallée et
@@ -40,7 +40,9 @@ lancée depuis `/Applications` a écrit le fichier, dossier et fichier réservé
 
 Jalon 5, sa seconde moitié : des mises à jour à la manière de Droppy, en trois lots (publier les
 versions ; savoir qu'une version existe ; la télécharger, la vérifier et l'installer, sur un
-geste). Le deuxième est écrit et testé sans réseau le 23 novembre 2026 : la case « Chercher les
+geste). Le premier est écrit le 23 novembre 2026 (`.github/workflows/release.yml`,
+`tools/release-manifest.sh` essayé avec de faux fichiers), jamais encore lancé sur GitHub : aucune
+version n'est publiée. Le deuxième est écrit et testé sans réseau le même jour : la case « Chercher les
 mises à jour » de son menu (cochée par défaut), une vérification par jour sur un thread à elle,
 ce qu'elle en dit, et `capri update check` ; répété dans la vraie app contre un faux serveur de
 cette machine, jamais encore contre GitHub, ni regardé à l'écran, ni exécuté sous Windows. Elle

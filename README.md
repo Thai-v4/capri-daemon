@@ -1178,13 +1178,14 @@ Règle : tout ce qui peut être testé sans écran va dans `capri-core`, `capri-
 
 Vérifié automatiquement :
 
-- formatage, `clippy -D warnings` et 564 tests sur **macOS Apple Silicon** (le 23 novembre 2026 ;
-  563 en version optimisée, un essai de la répétition de la musique n'existant qu'en version de
-  débogage ; plus 12 qui ne
+- formatage, `clippy -D warnings` et 614 tests sur **macOS Apple Silicon** (le 23 novembre 2026 ;
+  613 en version optimisée, un essai de la répétition de la musique n'existant qu'en version de
+  débogage ; plus 13 qui ne
   tournent qu'à la main : ils écrivent des images ou dessinent sur la vraie carte graphique,
   lisent un vrai `settings.json`, touchent au vrai trousseau, créent de vraies voix et un vrai
-  moteur audio, sans bruit, lisent la vraie liste des fenêtres, ou guettent une annonce d'essai
-  d'un lecteur, en ligne de commande et dans la vraie app) : animation, lancer et rebonds, hit-test, clics, bandeau, parole en pages, bulle
+  moteur audio, sans bruit, lisent la vraie liste des fenêtres, guettent une annonce d'essai
+  d'un lecteur, en ligne de commande et dans la vraie app, ou répètent la recherche d'une version
+  contre un faux serveur de cette machine) : animation, lancer et rebonds, hit-test, clics, bandeau, parole en pages, bulle
   sur plusieurs lignes, conversation, **validation du shader** par le compilateur de wgpu, lecture
   des exemples de hooks de la documentation de Claude Code, suivi des sessions, aller-retour sur
   `settings.json`, socket (droits, connexions simultanées), et le binaire `capri-hook` lancé pour
@@ -2034,7 +2035,12 @@ Points à surveiller :
    l'ouverture de session et le hook de Claude Code ont suivi ; ce qui se voit, le micro et une
    vraie ouverture de session restent à vérifier, voir plus haut). Sa signature par une identité
    « Developer ID Application » du trousseau : écrite, et essayée le 23 novembre 2026 vers un
-   dossier temporaire (voir « État de validation »). Reste : un installeur, des mises à jour.
+   dossier temporaire (voir « État de validation »). Des mises à jour à la manière de Droppy, en
+   trois lots : publier les versions (le workflow de publication, écrit le 23 novembre 2026,
+   jamais encore lancé sur GitHub) ; savoir qu'une version existe (écrit et répété le même jour
+   contre un faux serveur de cette machine, jamais encore contre GitHub ni regardé à l'écran) ;
+   la télécharger, la vérifier et l'installer sur un geste (pas écrit). Reste aussi : un
+   installeur.
    Pas de notarisation tant que l'app emporte ses images : elle les enverrait chez Apple.
 
 ## Licence
