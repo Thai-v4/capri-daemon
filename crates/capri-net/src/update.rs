@@ -28,12 +28,23 @@
 //!   niveau `debug` que l'hôte (le chemin et l'en-tête `Location` y sont masqués, `util.rs` de
 //!   ureq 3.5) ; ses traces `trace`, qui les écriraient, sont refusées par le journal de l'app.
 //!
+//! Et, **sur un geste de l'utilisateur seulement** (la ligne « Installer la version … » de son
+//! menu), [`download`] : un fichier d'une version, à l'adresse que `capri_chat::update` calcule
+//! (jamais lue dans le manifeste), par la même règle et avec les mêmes garanties, écrit au fil de
+//! l'eau dans un fichier que l'appelant a créé, borné à exactement la taille que dit le manifeste,
+//! en durée (connexion, silence à chaque lecture, échange entier) et par un arrêt demandé ; son
+//! empreinte SHA-256 est calculée pendant la lecture. Refusé, le fichier est retiré.
+//!
 //! Sous Linux, pas de `https` : la règle de GitHub y est refusée avant toute connexion.
 
-use std::io::Read;
+use std::fs::File;
+use std::io::{Read, Write};
+use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-use capri_chat::update::manifest::MAX_BYTES;
+use capri_chat::update::digest::{self, Hasher};
+use capri_chat::update::manifest::{MAX_BYTES, Sha256};
 use capri_chat::update::{Failure, Route, RouteError};
 use ureq::config::AutoHeaderValue;
 
@@ -57,16 +68,128 @@ impl Default for Limits {
 /// plus `MAX_BYTES`. Bloque le temps de la lecture (bornée par `limits`) : hors du thread
 /// principal.
 pub fn fetch(route: &Route, url: &str, limits: Limits) -> Result<Vec<u8>, Failure> {
+    let agent = agent(route, limits.connect, limits.per_call, None);
+    reach(route, url, &agent, &AtomicBool::new(false)).and_then(body)
+}
+
+/// Les bornes d'un téléchargement : un programme de Capri pèse une dizaine de Mo.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DownloadLimits {
+    /// Temps laissé pour établir chaque connexion, TLS compris.
+    pub connect: Duration,
+    /// Silence du serveur toléré, à chaque lecture : au-delà, on abandonne.
+    pub per_read: Duration,
+    /// Durée de chaque échange (une redirection, ou le fichier entier), de la connexion à la fin
+    /// de la lecture.
+    pub per_call: Duration,
+}
+
+impl Default for DownloadLimits {
+    fn default() -> Self {
+        Self {
+            connect: Duration::from_secs(10),
+            per_read: Duration::from_secs(30),
+            per_call: Duration::from_secs(15 * 60),
+        }
+    }
+}
+
+/// Ce que le manifeste dit du fichier : sa taille exacte et son empreinte.
+#[derive(Clone, Copy, Debug)]
+pub struct Expected<'a> {
+    pub size: u64,
+    pub sha256: &'a Sha256,
+}
+
+/// Télécharge le fichier d'une version à `url`, en suivant les redirections que `route` permet
+/// (la même règle que pour le manifeste), dans `file`, que l'appelant a créé à `path` (vide, et
+/// pour l'écriture). Écrit au fil de l'eau ; **exactement** `expected.size` octets, ni plus ni
+/// moins (refusé dès l'en-tête `Content-Length` s'il en annonce un autre nombre) ; l'empreinte
+/// SHA-256 calculée pendant la lecture, et comparée à `expected.sha256`. Au moindre échec
+/// (taille, empreinte, réseau, disque, arrêt demandé par `cancel`), le fichier est retiré, et
+/// c'est un refus. Bloque le temps du téléchargement (borné par `limits`) : hors du thread
+/// principal. `cancel` est regardé avant chaque échange et entre deux morceaux lus.
+///
+/// Comme pour le manifeste : aucune clé, aucun en-tête de plus que `Host`, pas de proxy, et
+/// l'adresse signée vers laquelle GitHub renvoie n'est jamais écrite.
+pub fn download(
+    route: &Route,
+    url: &str,
+    expected: Expected<'_>,
+    file: File,
+    path: &Path,
+    limits: DownloadLimits,
+    cancel: &AtomicBool,
+) -> Result<(), Failure> {
+    let agent = agent(route, limits.connect, limits.per_call, Some(limits.per_read));
+    let written =
+        reach(route, url, &agent, cancel).and_then(|response| save(response, expected, file, cancel));
+    if written.is_err() {
+        // rien d'un fichier refusé ne reste : ni une partie, ni un fichier vide
+        let _ = std::fs::remove_file(path);
+    }
+    written
+}
+
+/// Le corps d'une réponse 200, écrit dans `file` : exactement la taille attendue, et son empreinte.
+fn save(
+    response: ureq::http::Response<ureq::Body>,
+    expected: Expected<'_>,
+    mut file: File,
+    cancel: &AtomicBool,
+) -> Result<(), Failure> {
+    if response.body().content_length().is_some_and(|length| length != expected.size) {
+        return Err(Failure::WrongSize);
+    }
+    let mut reader = response.into_body().into_reader().take(expected.size + 1);
+    let mut hasher = Hasher::new();
+    let (mut buffer, mut total) = (vec![0u8; 64 * 1024], 0u64);
+    loop {
+        if cancel.load(Ordering::Relaxed) {
+            return Err(Failure::Cancelled);
+        }
+        let read = match reader.read(&mut buffer) {
+            Ok(0) => break,
+            Ok(read) => read,
+            Err(err) if err.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(err) => return Err(read_failure(&err)),
+        };
+        total += read as u64;
+        if total > expected.size {
+            return Err(Failure::WrongSize);
+        }
+        hasher.update(&buffer[..read]);
+        file.write_all(&buffer[..read]).map_err(|_| Failure::Disk)?;
+    }
+    if total != expected.size {
+        return Err(Failure::WrongSize);
+    }
+    if digest::hex(&hasher.finish()) != expected.sha256.as_str() {
+        return Err(Failure::WrongDigest);
+    }
+    file.flush().map_err(|_| Failure::Disk)
+}
+
+/// Joint `url`, en suivant une à une les redirections que `route` permet, chaque adresse vérifiée
+/// avant de s'y connecter ; rend la réponse 200.
+fn reach(
+    route: &Route,
+    url: &str,
+    agent: &ureq::Agent,
+    cancel: &AtomicBool,
+) -> Result<ureq::http::Response<ureq::Body>, Failure> {
     let mut address = route.check(url).map_err(Failure::NotAllowed)?;
-    let agent = agent(route, limits);
     let mut redirects = 0;
     loop {
         if address.is_secure() && !crate::TLS {
             return Err(Failure::NoTls);
         }
+        if cancel.load(Ordering::Relaxed) {
+            return Err(Failure::Cancelled);
+        }
         let response = agent.get(address.reveal_for_request()).call().map_err(failure)?;
         match response.status().as_u16() {
-            200 => return body(response),
+            200 => return Ok(response),
             301 | 302 | 303 | 307 | 308 => {
                 if redirects >= route.max_redirects() {
                     return Err(Failure::TooManyRedirects);
@@ -82,8 +205,9 @@ pub fn fetch(route: &Route, url: &str, limits: Limits) -> Result<Vec<u8>, Failur
     }
 }
 
-/// L'agent d'une lecture : rien de plus qu'un `GET` (voir le haut du module).
-fn agent(route: &Route, limits: Limits) -> ureq::Agent {
+/// L'agent d'une lecture : rien de plus qu'un `GET` (voir le haut du module). `per_read` : le
+/// silence toléré à chaque lecture (un téléchargement), aucun sinon.
+fn agent(route: &Route, connect: Duration, per_call: Duration, per_read: Option<Duration>) -> ureq::Agent {
     let config = ureq::Agent::config_builder()
         // pas de proxy, même si HTTP_PROXY ou ALL_PROXY sont définies
         .proxy(None)
@@ -97,8 +221,9 @@ fn agent(route: &Route, limits: Limits) -> ureq::Agent {
         .accept_encoding(AutoHeaderValue::None)
         // aucune connexion gardée ouverte : la suivante est dans un jour
         .max_idle_connections(0)
-        .timeout_connect(Some(limits.connect))
-        .timeout_per_call(Some(limits.per_call));
+        .timeout_connect(Some(connect))
+        .timeout_per_call(Some(per_call))
+        .timeout_per_read(per_read);
     // le TLS du système et ses certificats racines, comme pour la conversation
     #[cfg(any(target_os = "macos", windows))]
     let config = config.tls_config(
@@ -121,10 +246,19 @@ fn body(response: ureq::http::Response<ureq::Body>) -> Result<Vec<u8>, Failure> 
     match read {
         Ok(_) if bytes.len() as u64 > limit => Err(Failure::TooLarge),
         Ok(_) => Ok(bytes),
-        Err(err) if err.kind() == std::io::ErrorKind::TimedOut => Err(Failure::TimedOut),
-        // coupée en route, ou plus courte que ce qu'elle annonçait
-        Err(_) => Err(Failure::Unreadable),
+        Err(err) => Err(read_failure(&err)),
     }
+}
+
+/// Une erreur en lisant un corps : un délai dépassé (que ureq rend enveloppé dans une erreur
+/// d'entrée-sortie), ou une réponse coupée en route, plus courte que ce qu'elle annonçait.
+fn read_failure(err: &std::io::Error) -> Failure {
+    let timeout = err.kind() == std::io::ErrorKind::TimedOut
+        || err.get_ref().and_then(|inner| inner.downcast_ref::<ureq::Error>()).is_some_and(|inner| {
+            matches!(inner, ureq::Error::Timeout(_))
+                || matches!(inner, ureq::Error::Io(io) if io.kind() == std::io::ErrorKind::TimedOut)
+        });
+    if timeout { Failure::TimedOut } else { Failure::Unreadable }
 }
 
 /// Une erreur de ureq, en cause courte. Son texte n'est jamais écrit : celui d'une adresse
@@ -159,6 +293,10 @@ mod tests {
     enum Reply {
         /// Ces octets, puis la connexion est fermée.
         Send(String),
+        /// De même, des octets quelconques (le corps d'un programme).
+        Bytes(Vec<u8>),
+        /// Ces octets, puis la connexion reste ouverte, muette.
+        Partial(String),
         /// Rien : la connexion reste ouverte, muette.
         Silent,
     }
@@ -190,6 +328,13 @@ mod tests {
                 match reply {
                     Reply::Send(response) => {
                         let _ = stream.write_all(response.as_bytes());
+                    }
+                    Reply::Bytes(response) => {
+                        let _ = stream.write_all(&response);
+                    }
+                    Reply::Partial(response) => {
+                        let _ = stream.write_all(response.as_bytes());
+                        silent.push(stream);
                     }
                     Reply::Silent => silent.push(stream),
                 }
@@ -407,8 +552,17 @@ mod tests {
 
     #[test]
     fn the_agent_carries_nothing_but_the_request() {
-        let github = agent(&Route::github(), Limits::default());
+        let limits = Limits::default();
+        let github = agent(&Route::github(), limits.connect, limits.per_call, None);
         let config = github.config();
+        assert_eq!(config.timeout_per_read(), None);
+        let download = DownloadLimits::default();
+        let downloading =
+            agent(&Route::github(), download.connect, download.per_call, Some(download.per_read));
+        assert_eq!(downloading.config().timeout_per_read(), Some(download.per_read));
+        assert_eq!(downloading.config().timeouts().per_call, Some(download.per_call));
+        assert!(matches!(downloading.config().user_agent(), AutoHeaderValue::None));
+        assert!(downloading.config().proxy().is_none() && downloading.config().max_redirects() == 0);
         assert!(config.proxy().is_none());
         assert_eq!(config.max_redirects(), 0);
         assert!(!config.http_status_as_error());
@@ -426,6 +580,254 @@ mod tests {
             assert!(matches!(tls.root_certs(), ureq::tls::RootCerts::PlatformVerifier));
             assert!(!tls.disable_verification());
         }
-        assert!(!agent(&here(1), Limits::default()).config().https_only(), "les essais, en clair");
+        assert!(
+            !agent(&here(1), limits.connect, limits.per_call, None).config().https_only(),
+            "les essais, en clair"
+        );
+    }
+
+    /// Un fichier d'essai et sa place : un dossier à lui, retiré à la fin.
+    struct Target {
+        directory: std::path::PathBuf,
+        path: std::path::PathBuf,
+    }
+
+    impl Target {
+        fn new(name: &str) -> Self {
+            let directory =
+                std::env::temp_dir().join(format!("capri-test-telechargement-{name}-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&directory);
+            std::fs::create_dir_all(&directory).expect("le dossier d'essai");
+            let path = directory.join("capri");
+            Self { directory, path }
+        }
+
+        /// Le fichier, créé comme le fait l'appelant : neuf, vide.
+        fn create(&self) -> File {
+            std::fs::OpenOptions::new().write(true).create_new(true).open(&self.path).expect("créé")
+        }
+    }
+
+    impl Drop for Target {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.directory);
+        }
+    }
+
+    fn quick_download() -> DownloadLimits {
+        DownloadLimits {
+            connect: Duration::from_secs(1),
+            per_read: Duration::from_secs(1),
+            per_call: Duration::from_secs(5),
+        }
+    }
+
+    /// Le contenu d'un faux programme, et ce que le manifeste en dirait.
+    fn program(size: usize) -> (Vec<u8>, Sha256) {
+        let bytes: Vec<u8> = (0..size).map(|i| (i * 31 % 251) as u8).collect();
+        let sha = Sha256::parse(&digest::hex(&digest::sha256(&bytes))).expect("une empreinte");
+        (bytes, sha)
+    }
+
+    fn ok_bytes(body: &[u8], length: Option<usize>) -> Reply {
+        let length = length.map(|length| format!("Content-Length: {length}\r\n")).unwrap_or_default();
+        let head = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\n{length}Connection: close\r\n\r\n"
+        );
+        Reply::Bytes([head.as_bytes(), body].concat())
+    }
+
+    #[test]
+    fn a_file_is_downloaded_through_the_redirections_and_checked_while_read() {
+        let (bytes, sha) = program(300_000);
+        let (address, requests) = serve(vec![
+            redirect("302 Found", "/Thai-v4/capri-daemon/releases/download/v0.2.0/capri-macos-arm64"),
+            redirect("302 Found", "/signe/capri-macos-arm64?sig=SeCrEt%3D&se=2026"),
+            ok_bytes(&bytes, Some(bytes.len())),
+        ]);
+        let target = Target::new("reussi");
+        let url = format!("http://{address}/Thai-v4/capri-daemon/releases/download/v0.2.0/capri-macos-arm64");
+        let expected = Expected { size: bytes.len() as u64, sha256: &sha };
+        let done = download(
+            &here(address.port()),
+            &url,
+            expected,
+            target.create(),
+            &target.path,
+            quick_download(),
+            &AtomicBool::new(false),
+        );
+        assert_eq!(done, Ok(()));
+        assert_eq!(std::fs::read(&target.path).expect("écrit"), bytes);
+        // comme pour le manifeste : la ligne de requête et l'hôte, rien d'autre
+        let received: Vec<String> = requests.try_iter().collect();
+        assert_eq!(received.len(), 3);
+        assert!(received[2].starts_with("GET /signe/capri-macos-arm64?sig=SeCrEt%3D&se=2026 HTTP/1.1\r\n"));
+        for request in &received {
+            let headers: Vec<String> = request
+                .lines()
+                .skip(1)
+                .filter(|line| !line.is_empty())
+                .map(|line| line.split(':').next().unwrap_or_default().to_ascii_lowercase())
+                .collect();
+            assert_eq!(headers, ["host"], "{request}");
+        }
+        // sans Content-Length : lu jusqu'à la fin, et vérifié de même
+        let (address, _) = serve(vec![ok_bytes(&bytes, None)]);
+        let target = Target::new("sans-longueur");
+        let url = format!("http://{address}/x");
+        let done = download(
+            &here(address.port()),
+            &url,
+            expected,
+            target.create(),
+            &target.path,
+            quick_download(),
+            &AtomicBool::new(false),
+        );
+        assert_eq!(done, Ok(()));
+        assert_eq!(std::fs::read(&target.path).expect("écrit").len(), bytes.len());
+    }
+
+    #[test]
+    fn a_wrong_size_or_digest_is_refused_and_the_file_removed() {
+        let (bytes, sha) = program(70_000);
+        let (_, other) = program(70_001);
+        let cases: Vec<(Reply, Expected<'_>, Failure)> = vec![
+            // annoncée d'une autre taille : refusée avant d'être lue
+            (
+                ok_bytes(&bytes, Some(bytes.len())),
+                Expected { size: bytes.len() as u64 - 1, sha256: &sha },
+                Failure::WrongSize,
+            ),
+            // sans le dire, plus longue que prévu : lue jusqu'à la borne, pas au-delà
+            (
+                ok_bytes(&bytes, None),
+                Expected { size: bytes.len() as u64 - 1, sha256: &sha },
+                Failure::WrongSize,
+            ),
+            // plus courte
+            (
+                ok_bytes(&bytes, None),
+                Expected { size: bytes.len() as u64 + 1, sha256: &sha },
+                Failure::WrongSize,
+            ),
+            // la bonne taille, pas la bonne empreinte
+            (
+                ok_bytes(&bytes, Some(bytes.len())),
+                Expected { size: bytes.len() as u64, sha256: &other },
+                Failure::WrongDigest,
+            ),
+        ];
+        for (index, (reply, expected, refusal)) in cases.into_iter().enumerate() {
+            let (address, _) = serve(vec![reply]);
+            let target = Target::new(&format!("refus-{index}"));
+            let url = format!("http://{address}/x");
+            let done = download(
+                &here(address.port()),
+                &url,
+                expected,
+                target.create(),
+                &target.path,
+                quick_download(),
+                &AtomicBool::new(false),
+            );
+            assert_eq!(done, Err(refusal), "cas {index}");
+            assert!(!target.path.exists(), "cas {index} : le fichier refusé est retiré");
+        }
+    }
+
+    #[test]
+    fn a_download_obeys_the_same_rule_as_the_manifest() {
+        let (bytes, sha) = program(10);
+        let expected = Expected { size: 10, sha256: &sha };
+        // une redirection hors de la règle : refusée sans s'y connecter, et le fichier retiré
+        let (address, requests) =
+            serve(vec![redirect("302 Found", "http://localhost:1/x"), ok_bytes(&bytes, Some(10))]);
+        let target = Target::new("regle");
+        let url = format!("http://{address}/x");
+        let done = download(
+            &here(address.port()),
+            &url,
+            expected,
+            target.create(),
+            &target.path,
+            quick_download(),
+            &AtomicBool::new(false),
+        );
+        assert_eq!(done, Err(Failure::NotAllowed(RouteError::Host("localhost".to_owned()))));
+        assert_eq!(requests.try_iter().count(), 1);
+        assert!(!target.path.exists());
+        // une adresse de départ hors de la règle : rien n'est demandé
+        let target = Target::new("depart");
+        let done = download(
+            &Route::github(),
+            "http://127.0.0.1:1/x",
+            expected,
+            target.create(),
+            &target.path,
+            quick_download(),
+            &AtomicBool::new(false),
+        );
+        assert_eq!(done, Err(Failure::NotAllowed(RouteError::Scheme)));
+        assert!(!target.path.exists());
+        // un refus du serveur
+        let (address, _) = serve(vec![Reply::Send(
+            "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_owned(),
+        )]);
+        let target = Target::new("absent");
+        let url = format!("http://{address}/x");
+        let done = download(
+            &here(address.port()),
+            &url,
+            expected,
+            target.create(),
+            &target.path,
+            quick_download(),
+            &AtomicBool::new(false),
+        );
+        assert_eq!(done, Err(Failure::Status(404)));
+        assert!(!target.path.exists());
+    }
+
+    #[test]
+    fn a_silent_server_or_a_cancellation_stops_the_download_in_time() {
+        let (_, sha) = program(10);
+        let expected = Expected { size: 10, sha256: &sha };
+        // un serveur qui envoie l'en-tête, puis se tait : le silence toléré à chaque lecture
+        let (address, _) = serve(vec![Reply::Partial(
+            "HTTP/1.1 200 OK\r\nContent-Length: 10\r\nConnection: close\r\n\r\n12345".to_owned(),
+        )]);
+        let target = Target::new("muet");
+        let url = format!("http://{address}/x");
+        let started = Instant::now();
+        let done = download(
+            &here(address.port()),
+            &url,
+            expected,
+            target.create(),
+            &target.path,
+            quick_download(),
+            &AtomicBool::new(false),
+        );
+        assert_eq!(done, Err(Failure::TimedOut));
+        assert!(started.elapsed() < Duration::from_secs(4), "{:?}", started.elapsed());
+        assert!(!target.path.exists());
+        // arrêté avant même de se connecter : personne n'est contacté
+        let (address, requests) = serve(vec![ok_bytes(b"0123456789", Some(10))]);
+        let target = Target::new("arrete");
+        let url = format!("http://{address}/x");
+        let done = download(
+            &here(address.port()),
+            &url,
+            expected,
+            target.create(),
+            &target.path,
+            quick_download(),
+            &AtomicBool::new(true),
+        );
+        assert_eq!(done, Err(Failure::Cancelled));
+        assert_eq!(requests.try_iter().count(), 0);
+        assert!(!target.path.exists());
     }
 }
