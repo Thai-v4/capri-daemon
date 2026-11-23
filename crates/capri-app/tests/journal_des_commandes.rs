@@ -33,7 +33,7 @@ fn terminal_commands_never_write_a_journal_file() {
     let _ = std::fs::remove_dir_all(&scratch.0);
     std::fs::create_dir_all(scratch.0.join("capri")).unwrap();
     std::fs::create_dir_all(scratch.0.join("claude")).unwrap();
-    for args in [&["hook", "status"][..], &["hook"], &["inconnue"]] {
+    for args in [&["hook", "status"][..], &["hook"], &["update", "check"], &["inconnue"]] {
         let output = capri(&scratch.0, args);
         let said =
             format!("{}{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));

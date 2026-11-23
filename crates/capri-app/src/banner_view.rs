@@ -14,6 +14,10 @@
 //! l'utilisateur, et elle a fini ce qu'elle disait. Sinon la ligne attend (la plus récente
 //! seulement, pas trop longtemps : `capri_claude::mirror::Waiting`). Cachée, elle ne la dit pas.
 //!
+//! Un message de l'app qui doit être vu (une version plus récente existe : [`BannerView::announce`])
+//! attend lui aussi son tour : il ne s'affiche que quand elle est visible, libre de même, et
+//! qu'aucun autre message de l'app n'est affiché. Le plus récent seulement.
+//!
 //! L'animation et le placement sont dans `capri-core`, le tracé du texte dans `capri-render`.
 
 use std::path::PathBuf;
@@ -74,6 +78,8 @@ pub struct BannerView {
     banner: Banner<Shown>,
     /// Un message de l'app, affiché jusqu'à l'instant donné.
     notice: Option<(Headline, Instant)>,
+    /// Un message de l'app qui attend qu'elle soit libre pour s'afficher.
+    announcement: Option<Headline>,
     painter: Painter,
     painted: Option<Painted>,
     ticks: u32,
@@ -125,6 +131,7 @@ impl BannerView {
             started: Instant::now(),
             banner: Banner::new(),
             notice: None,
+            announcement: None,
             painter,
             painted: None,
             ticks: 0,
@@ -272,6 +279,33 @@ impl BannerView {
         self.refresh = true;
     }
 
+    /// Fait dire quelque chose à Capri pendant quelques secondes, mais à son tour : dès qu'elle
+    /// est visible et libre (personne ne lui parle au micro, elle ne parle pas, aucun autre
+    /// message de l'app n'est affiché). Un nouveau remplace celui qui attendait encore.
+    pub fn announce(&mut self, text: impl Into<String>, tone: Tone) {
+        self.announcement = Some(Headline { text: text.into(), tone });
+        self.refresh = true;
+    }
+
+    /// Oublie le message qui attendait son tour, s'il y en a un.
+    #[cfg(any(target_os = "macos", windows))]
+    pub fn forget_announcement(&mut self) {
+        self.announcement = None;
+    }
+
+    /// Le message qui attendait son tour s'affiche, si elle est libre.
+    fn deliver_announcement(&mut self) {
+        let notice_shown = self.notice.as_ref().is_some_and(|(_, until)| Instant::now() < *until);
+        if self.announcement.is_none() || notice_shown || self.dictation.is_active() || self.chat.is_busy() {
+            return;
+        }
+        if let Some(headline) = self.announcement.take() {
+            log::debug!("message de l'app affiché à son tour");
+            self.notice = Some((headline, Instant::now() + NOTICE_FOR));
+            self.refresh = true;
+        }
+    }
+
     /// L'utilisateur lui dit quelque chose : elle répond dans sa bulle.
     pub fn say(&mut self, message: &str) {
         log::debug!("message de {} caractères", message.chars().count());
@@ -351,6 +385,8 @@ impl BannerView {
         self.chat.pump();
         self.pump_ear();
         self.relay_claude();
+        // après la ligne de Claude Code : sa parole passe avant un message de l'app
+        self.deliver_announcement();
         self.ticks = self.ticks.wrapping_add(1);
         // sa parole avance « en deux », comme le reste de l'animation
         let speaking = self.chat.is_speaking() && frame / 2 != self.spoken_drawing;

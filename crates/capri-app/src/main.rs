@@ -23,6 +23,9 @@
 //! cette machine et que rien n'y répond (`ollama_view`).
 //! Lancée comme app à fenêtre (pas pour ses commandes), elle écrit son journal dans un fichier
 //! aussi, borné (`journal`), que « Montrer le journal » de son menu montre dans le Finder.
+//! « Chercher les mises à jour » (cochée par défaut) lui fait regarder une fois par jour s'il
+//! existe une version plus récente, sur un thread à part (`update_view`), et le dire ;
+//! `capri update check` le fait sur demande. Elle ne télécharge ni n'installe rien.
 
 mod assets;
 mod banner_view;
@@ -54,6 +57,8 @@ mod portraits;
 mod settings_view;
 mod size_setup;
 mod style_setup;
+mod update_setup;
+mod update_view;
 #[cfg(debug_assertions)]
 mod voice_rehearsal;
 mod voice_setup;
@@ -86,6 +91,7 @@ fn main() -> Result<()> {
         Some("chat") => std::process::exit(brain_setup::run_cli(&args[1..])),
         Some("voice") => std::process::exit(voice_setup::run_cli(&args[1..])),
         Some("ear") => std::process::exit(ear_setup::run_cli(&args[1..])),
+        Some("update") => std::process::exit(update_setup::run_cli(&args[1..])),
         // en version de débogage : la vraie liste des fenêtres, sans rien afficher
         #[cfg(debug_assertions)]
         Some("perch") => std::process::exit(perch_rehearsal::run_cli(&args[1..])),
@@ -98,7 +104,8 @@ fn main() -> Result<()> {
                  \x20       capri hook <action>    brancher Claude Code (voir capri hook)\n\
                  \x20       capri chat <action>    lui choisir un cerveau (voir capri chat)\n\
                  \x20       capri voice <action>   lui donner une voix (voir capri voice)\n\
-                 \x20       capri ear status       si elle peut t'écouter au micro"
+                 \x20       capri ear status       si elle peut t'écouter au micro\n\
+                 \x20       capri update check     s'il existe une version plus récente"
             );
             std::process::exit(2);
         }
@@ -160,6 +167,12 @@ struct App {
     /// Veiller à ce qu'Ollama tourne, au lancement, case « Se lancer à l'ouverture de session »
     /// cochée : ce qu'elle en dira, une fois.
     ollama: Option<ollama_view::OllamaWatch>,
+    /// La case « Chercher les mises à jour », telle que retenue.
+    updates_enabled: bool,
+    /// Regarder chaque jour s'il existe une version plus récente, case cochée : son thread.
+    updates: Option<update_view::UpdateWatch>,
+    /// La version plus récente trouvée, s'il y en a une : la ligne de menu la rappelle.
+    update_found: Option<capri_chat::update::Verdict>,
     fatal: Option<anyhow::Error>,
 }
 
@@ -246,6 +259,7 @@ impl ApplicationHandler for App {
         self.handle_settings(event_loop);
         self.handle_hotkey();
         self.handle_ollama();
+        self.handle_updates();
         self.handle_overlay(event_loop);
         if let Some(r) = self.running.as_mut() {
             if self.hidden {
@@ -331,6 +345,12 @@ impl App {
         // veillé sur un thread à part
         let registered = login_setup::checked_at_launch(login_setup::this_app().as_deref());
         self.ollama = ollama_view::OllamaWatch::start(registered);
+        // case cochée, le thread des mises à jour attend son heure : rien ne part avant
+        // `capri_chat::update::schedule::GRACE`, et jamais depuis un essai
+        self.updates_enabled = update_setup::enabled();
+        if self.updates_enabled {
+            self.updates = update_view::UpdateWatch::start().ok();
+        }
         #[cfg(any(target_os = "macos", windows))]
         {
             self.menus = Some(menu::Menus::new());
@@ -340,6 +360,7 @@ impl App {
                 menus.set_perch_enabled(perch_enabled);
                 menus.set_music_enabled(music_enabled);
                 menus.set_login_registered(registered);
+                menus.set_updates_enabled(self.updates_enabled);
                 menus.set_size(scale);
             }
         }
@@ -514,6 +535,8 @@ impl App {
                     menu::Action::OriginalSize => self.choose_size(|_| Scale::ORIGINAL),
                     menu::Action::ToggleClaudeHook => self.toggle_claude_hook(),
                     menu::Action::ToggleLogin => self.toggle_login(),
+                    menu::Action::ToggleUpdates => self.toggle_updates(),
+                    menu::Action::UpdateLine => self.explain_update(),
                     menu::Action::Settings => self.open_settings(),
                     menu::Action::ShowJournal => self.show_journal(),
                     menu::Action::Quit => event_loop.exit(),
@@ -887,6 +910,76 @@ impl App {
                 }
             }
         }
+    }
+
+    /// Ce que la veille des mises à jour a trouvé. Une version plus récente, elle la dit une fois
+    /// au-dessus de sa tête (à son tour : `BannerView::announce`), et une ligne de ses menus la
+    /// rappelle ; la même, trouvée de nouveau le lendemain, n'est pas redite.
+    fn handle_updates(&mut self) {
+        use capri_chat::update::say;
+        let Some(verdict) = self.updates.as_ref().and_then(update_view::UpdateWatch::heard) else { return };
+        let before = self.update_found.and_then(|found| found.newer());
+        let newer = verdict.newer();
+        self.update_found = newer.map(|_| verdict);
+        #[cfg(any(target_os = "macos", windows))]
+        if let Some(menus) = &self.menus {
+            menus.set_update_line(newer.map(say::menu_line).as_deref());
+        }
+        if let Some(version) = newer.filter(|&version| before != Some(version))
+            && let Some(r) = self.running.as_mut()
+        {
+            r.banner.announce(say::available(version), capri_claude::Tone::Done);
+        }
+    }
+
+    /// Lui permet de regarder chaque jour s'il existe une version plus récente, ou le lui
+    /// interdit ; le choix est retenu dans son dossier. Décochée, la veille s'arrête, et elle
+    /// oublie ce qu'elle avait trouvé. Si on ne peut pas le retenir, rien ne change.
+    #[cfg(any(target_os = "macos", windows))]
+    fn toggle_updates(&mut self) {
+        use capri_chat::update::say;
+        use capri_claude::Tone;
+        let enabled = !self.updates_enabled;
+        let saved = brain_setup::config_dir().and_then(|directory| update_setup::save(&directory, enabled));
+        let (text, tone) = match saved {
+            Err(err) => {
+                log::error!("réglage « Chercher les mises à jour » : {err:#}");
+                ("Je n'ai pas pu retenir ce choix, détails dans le journal", Tone::Failed)
+            }
+            Ok(_) if enabled => {
+                self.updates_enabled = true;
+                match update_view::UpdateWatch::start() {
+                    Ok(watch) => {
+                        self.updates = Some(watch);
+                        (say::CHECKING, Tone::Done)
+                    }
+                    Err(why) => (why, Tone::Done),
+                }
+            }
+            Ok(_) => {
+                self.updates_enabled = false;
+                self.updates = None;
+                self.update_found = None;
+                if let Some(menus) = &self.menus {
+                    menus.set_update_line(None);
+                }
+                self.with_banner(BannerView::forget_announcement);
+                (say::NOT_CHECKING, Tone::Done)
+            }
+        };
+        self.with_banner(|banner| banner.notify(text, tone));
+        if let Some(menus) = &self.menus {
+            menus.set_updates_enabled(self.updates_enabled);
+        }
+    }
+
+    /// La ligne « Version … disponible » de son menu : elle dit ce qu'il en est (installable plus
+    /// tard depuis l'app, ou pourquoi pas).
+    #[cfg(any(target_os = "macos", windows))]
+    fn explain_update(&mut self) {
+        let Some(verdict) = self.update_found else { return };
+        let text = capri_chat::update::say::detail(&verdict);
+        self.with_banner(|banner| banner.announce(text, capri_claude::Tone::Done));
     }
 
     /// Branche Claude Code sur Capri, ou le débranche s'il l'est déjà.

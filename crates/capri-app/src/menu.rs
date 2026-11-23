@@ -1,6 +1,8 @@
 //! L'icône de la barre des menus (macOS) / de la zone de notification (Windows), et le même
 //! menu en clic droit sur Capri.
 
+use std::cell::Cell;
+
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use tray_icon::menu::accelerator::{Accelerator, Code, Modifiers};
 use tray_icon::menu::{
@@ -33,6 +35,11 @@ pub enum Action {
     ToggleClaudeHook,
     /// L'inscrire à l'ouverture de session (avec Ollama si c'est son cerveau ici), ou l'en retirer.
     ToggleLogin,
+    /// Lui permettre de regarder chaque jour s'il existe une version plus récente, ou le lui
+    /// interdire.
+    ToggleUpdates,
+    /// La ligne « Version … disponible », là seulement quand une version plus récente existe.
+    UpdateLine,
     /// Ouvrir la fenêtre de réglages, ou la ramener devant.
     Settings,
     /// Montrer le fichier de son journal dans le Finder.
@@ -55,6 +62,13 @@ pub struct Menus {
     musics: Vec<CheckMenuItem>,
     /// La case « Se lancer à l'ouverture de session », dans les deux menus.
     logins: Vec<CheckMenuItem>,
+    /// La case « Chercher les mises à jour », dans les deux menus.
+    updates: Vec<CheckMenuItem>,
+    /// Dans chacun des deux menus, la ligne « Version … disponible », glissée juste sous la case
+    /// des mises à jour quand une version plus récente existe, et retirée sinon.
+    update_lines: Vec<(Menu, MenuItem)>,
+    /// La ligne est-elle dans les menus ?
+    update_line_shown: Cell<bool>,
     /// Le sous-menu « Taille », dans les deux menus : son titre dit la taille du moment.
     sizes: Vec<Submenu>,
     larger: Vec<MenuItem>,
@@ -68,6 +82,9 @@ struct Built {
     perch: CheckMenuItem,
     music: CheckMenuItem,
     login: CheckMenuItem,
+    updates: CheckMenuItem,
+    /// Pas encore dans le menu.
+    update_line: MenuItem,
     size: Submenu,
 }
 
@@ -75,6 +92,9 @@ impl Menus {
     /// À créer une fois la boucle d'événements lancée (exigence de macOS).
     pub fn new() -> Self {
         let (a, b) = (build_menu(), build_menu());
+        // un menu de muda partage son contenu avec ses copies : celle-ci reste pour y glisser la
+        // ligne des mises à jour
+        let tray_menu = a.menu.clone();
         let builder = TrayIconBuilder::new().with_menu(Box::new(a.menu)).with_tooltip("Capri");
         // macOS : icône « modèle », teintée par le système selon le thème clair ou sombre
         #[cfg(target_os = "macos")]
@@ -86,6 +106,8 @@ impl Menus {
         let perches = vec![a.perch, b.perch];
         let musics = vec![a.music, b.music];
         let logins = vec![a.login, b.login];
+        let updates = vec![a.updates, b.updates];
+        let update_lines = vec![(tray_menu, a.update_line), (b.menu.clone(), b.update_line)];
         let sizes = vec![a.size, b.size];
         let items: Vec<(Action, MenuItem)> = a.items.into_iter().chain(b.items).collect();
         let items_for = |wanted: Action| -> Vec<MenuItem> {
@@ -100,6 +122,8 @@ impl Menus {
                 .chain(perches.iter().map(|item| (item.id().clone(), Action::TogglePerch)))
                 .chain(musics.iter().map(|item| (item.id().clone(), Action::ToggleMusic)))
                 .chain(logins.iter().map(|item| (item.id().clone(), Action::ToggleLogin)))
+                .chain(updates.iter().map(|item| (item.id().clone(), Action::ToggleUpdates)))
+                .chain(update_lines.iter().map(|(_, item)| (item.id().clone(), Action::UpdateLine)))
                 .collect(),
             toggles: items_for(Action::ToggleVisible),
             hooks: items_for(Action::ToggleClaudeHook),
@@ -107,6 +131,9 @@ impl Menus {
             perches,
             musics,
             logins,
+            updates,
+            update_lines,
+            update_line_shown: Cell::new(false),
             sizes,
             larger: items_for(Action::Larger),
             smaller: items_for(Action::Smaller),
@@ -176,6 +203,42 @@ impl Menus {
         }
     }
 
+    /// Regarde-t-elle chaque jour s'il existe une version plus récente ? Coche ou décoche la case
+    /// des deux menus (c'est le réglage retenu qui décide).
+    pub fn set_updates_enabled(&self, enabled: bool) {
+        for item in &self.updates {
+            item.set_checked(enabled);
+        }
+    }
+
+    /// La ligne qui rappelle qu'une version plus récente existe (`Some` : son texte), glissée
+    /// sous la case des mises à jour des deux menus ; `None` la retire.
+    pub fn set_update_line(&self, text: Option<&str>) {
+        let shown = self.update_line_shown.get();
+        for ((menu, line), anchor) in self.update_lines.iter().zip(&self.updates) {
+            match text {
+                Some(text) => {
+                    line.set_text(text);
+                    if shown {
+                        continue;
+                    }
+                    let at = menu.items().iter().position(|item| item.id() == anchor.id());
+                    let inserted = menu.insert(line, at.map_or(0, |at| at + 1));
+                    if let Err(err) = inserted {
+                        log::warn!("menu : ligne des mises à jour pas ajoutée : {err}");
+                    }
+                }
+                None if shown => {
+                    if let Err(err) = menu.remove(line) {
+                        log::warn!("menu : ligne des mises à jour pas retirée : {err}");
+                    }
+                }
+                None => {}
+            }
+        }
+        self.update_line_shown.set(text.is_some());
+    }
+
     /// `Some(true)` : le hook de Claude Code est branché ; `None` : impossible de le savoir.
     pub fn set_hook_installed(&self, installed: Option<bool>) {
         for item in &self.hooks {
@@ -235,6 +298,9 @@ fn build_menu() -> Built {
         false,
         None,
     );
+    // cochée par défaut ; le réglage retenu décide au lancement
+    let updates = CheckMenuItem::new("Chercher les mises à jour", true, true, None);
+    let update_line = MenuItem::new("Version disponible", true, None);
     let settings = MenuItem::new("Réglages…", true, None);
     // grisée là où elle ne sait pas montrer un fichier (ailleurs que sur macOS)
     let journal = MenuItem::new("Montrer le journal", capri_platform::launch::AVAILABLE, None);
@@ -244,7 +310,7 @@ fn build_menu() -> Built {
     let (first, second, third) = (separator(), separator(), separator());
     if let Err(err) = menu.append_items(&[
         &title, &first, &talk, &listen, &hush, &forget, &voice, &second, &toggle, &perch, &music, &size,
-        &hook, &login, &settings, &journal, &third, &quit,
+        &hook, &login, &updates, &settings, &journal, &third, &quit,
     ]) {
         log::warn!("menu incomplet : {err}");
     }
@@ -263,7 +329,7 @@ fn build_menu() -> Built {
         (Action::ShowJournal, journal),
         (Action::Quit, quit),
     ];
-    Built { menu, items, perch, music, login, size }
+    Built { menu, items, perch, music, login, updates, update_line, size }
 }
 
 /// « Taille : 80 % ».
