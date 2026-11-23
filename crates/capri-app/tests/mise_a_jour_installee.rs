@@ -4,6 +4,10 @@
 //! - une petite `Capri.app` d'essai dans un dossier temporaire : le vrai `capri` de débogage, un
 //!   faux second programme, notre `Info.plist`, de fausses ressources, signée « ad hoc » par le
 //!   vrai `codesign` (le trousseau n'est jamais lu) ;
+//! - ou, **à part et à la main**, signée par une identité du trousseau : `CAPRI_SIGN_IDENTITY`
+//!   (un nom ou une empreinte, comme pour `tools/bundle-macos.sh`) devant la commande. La nouvelle
+//!   app doit alors être signée par la même identité, que Capri retrouve seule dans le trousseau,
+//!   et son nom ne doit apparaître nulle part dans ce qui s'écrit. macOS peut demander la clé ;
 //! - un faux serveur de cette machine, rangé comme GitHub : le manifeste et chaque fichier
 //!   derrière deux redirections, la dernière vers une adresse « signée » ;
 //! - `capri update rehearse`, lancé depuis cette app avec les quatre lieux d'essai : le plan, le
@@ -67,7 +71,25 @@ fn shasum(bytes: &[u8], scratch: &Path) -> String {
     String::from_utf8_lossy(&output.stdout).split(' ').next().unwrap_or_default().to_owned()
 }
 
-/// La petite app installée d'essai, signée « ad hoc ».
+/// Avec quoi signer la petite app installée : « ad hoc », sauf si `CAPRI_SIGN_IDENTITY` désigne
+/// une identité du trousseau (la signature par une identité s'essaie à part, à la main).
+fn signer() -> String {
+    std::env::var("CAPRI_SIGN_IDENTITY")
+        .ok()
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "-".to_owned())
+}
+
+/// Le nom du certificat qui a signé `app` (le premier `Authority=`), s'il y en a un. Il nomme une
+/// personne : il ne sert qu'à comparer, et n'est jamais imprimé.
+fn authority(app: &Path) -> Option<String> {
+    let described = codesign(&["-d", "--verbose=2"], app);
+    String::from_utf8_lossy(&described.stderr)
+        .lines()
+        .find_map(|line| line.strip_prefix("Authority=").map(str::to_owned))
+}
+
+/// La petite app installée d'essai, signée « ad hoc » (ou par l'identité de [`signer`]).
 fn installed_app(folder: &Path) -> PathBuf {
     let app = folder.join("Capri.app");
     std::fs::create_dir_all(app.join("Contents/MacOS")).unwrap();
@@ -81,12 +103,10 @@ fn installed_app(folder: &Path) -> PathBuf {
         [137u8, 80, 78, 71, 13, 10, 26, 10],
     )
     .unwrap();
-    assert!(
-        codesign(&["--force", "--timestamp=none", "--sign", "-"], &app.join("Contents/MacOS/capri-hook"))
-            .status
-            .success()
-    );
-    assert!(codesign(&["--force", "--timestamp=none", "--sign", "-"], &app).status.success());
+    let signer = signer();
+    let sign = ["--force", "--timestamp=none", "--sign", signer.as_str()];
+    assert!(codesign(&sign, &app.join("Contents/MacOS/capri-hook")).status.success(), "le second programme");
+    assert!(codesign(&sign, &app).status.success(), "l'app");
     assert!(codesign(&["--verify", "--strict"], &app).status.success());
     app
 }
@@ -216,13 +236,19 @@ fn a_version_is_downloaded_checked_rebuilt_signed_and_put_in_place() {
     let folder = applications(&scratch.0);
     let app = installed_app(&folder);
     let old_seal = std::fs::read(app.join("Contents/_CodeSignature/CodeResources")).unwrap();
+    // signée par une identité (essai à part) : son nom, pour comparer seulement
+    let identity = authority(&app);
     let (files, manifest) = release(&scratch.0, None);
     let (address, requests) = github_like(files, manifest);
     let (succeeded, said) = rehearse(&app, &scratch.0, &sockets.0, address);
     println!("{said}");
     assert!(succeeded, "{said}");
     assert!(said.contains("Bulle : Je télécharge la 9.0.0…"), "{said}");
-    assert!(said.contains("Bulle : La 9.0.0 est prête ; macOS te redemandera le micro"), "{said}");
+    let ready = match identity {
+        None => "Bulle : La 9.0.0 est prête ; macOS te redemandera le micro",
+        Some(_) => "Bulle : La 9.0.0 est prête : redémarre-moi depuis mon menu",
+    };
+    assert!(said.contains(ready), "{said}");
     assert!(said.contains("Relais pris"), "{said}");
     // le programme de fin finit seul, une fois la répétition sortie
     let journal = scratch.0.join("capri/logs/capri.log");
@@ -250,10 +276,9 @@ fn a_version_is_downloaded_checked_rebuilt_signed_and_put_in_place() {
     assert_eq!(std::fs::read_to_string(app.join("Contents/Info.plist")).unwrap(), info(VERSION));
     assert!(codesign(&["--verify", "--strict"], &app).status.success(), "signature valide à sa place");
     let described = codesign(&["-d", "--verbose=2"], &app);
-    assert!(
-        String::from_utf8_lossy(&described.stderr).contains("Signature=adhoc"),
-        "signée comme l'ancienne"
-    );
+    let adhoc = String::from_utf8_lossy(&described.stderr).contains("Signature=adhoc");
+    assert_eq!(adhoc, identity.is_none(), "signée comme l'ancienne");
+    assert!(authority(&app) == identity, "signée par la même identité que l'ancienne, ou par aucune");
     assert_ne!(
         std::fs::read(app.join("Contents/_CodeSignature/CodeResources")).unwrap(),
         old_seal,
@@ -286,6 +311,10 @@ fn a_version_is_downloaded_checked_rebuilt_signed_and_put_in_place() {
         assert!(!text.contains(SIGNATURE), "l'adresse signée est écrite");
         assert!(!text.contains("github.com"), "GitHub n'a rien à faire ici");
         assert!(!text.contains("Authority="), "rien de la signature");
+        assert!(
+            identity.as_ref().is_none_or(|name| !text.contains(name.as_str())),
+            "une identité est écrite"
+        );
     }
 }
 

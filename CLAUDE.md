@@ -50,8 +50,10 @@ troisième est écrit et testé sans écran le 23 novembre 2026 (macOS seulement
 ligne « Installer la version … » de son menu la télécharge, la vérifie, refait son app à côté de
 l'installée et la signe comme elle ; « Redémarrer pour passer à la … » la met en place par le
 programme de fin de la nouvelle app. Répété de bout en bout depuis une `Capri.app` d'essai signée
-« ad hoc », contre un faux serveur de cette machine ; jamais contre GitHub, ni avec une vraie
-identité, ni regardé à l'écran, et la relance par `open` n'est pas essayée (voir plus bas).
+« ad hoc », contre un faux serveur de cette machine, puis, le même jour, depuis la même app
+d'essai signée par la vraie identité de l'utilisateur (la nouvelle signée par elle aussi, son nom
+écrit nulle part) ; jamais contre GitHub, ni regardé à l'écran, et la relance par `open` n'est pas
+essayée (voir plus bas).
 
 ## Architecture : où va quoi
 
@@ -456,7 +458,11 @@ un faux serveur qui redirige comme GitHub vers des adresses « signées » : l'a
 mise en place par le programme de fin, vérifiée ; et un fichier abîmé, qui n'installe rien. Il ne
 relance pas l'app (avec `CAPRI_CONFIG_DIR`, le programme de fin saute la relance) et n'écrit ni
 dans `/Applications`, ni dans `~/Library`, ni dans `~/.claude`. À relancer après tout changement
-de l'installation.
+de l'installation. La signature par une identité s'y essaie à part, à la main, et **seulement
+après l'avoir dit à l'utilisateur** : `CAPRI_SIGN_IDENTITY=<nom ou empreinte>` devant la commande
+signe la petite app d'essai avec elle (la nouvelle doit alors l'être aussi, et son nom n'être
+écrit nulle part), et macOS peut afficher sur son écran une fenêtre du trousseau qui demande
+d'autoriser `codesign` (c'est arrivé le 23 novembre 2026).
 
 ## Vérifier avant de dire « c'est fait »
 
@@ -668,7 +674,9 @@ une fausse commande `security` placée en tête du `PATH`.
      chemin que « Quitter » (la boucle s'arrête, `App::exiting`). Le programme de fin attend sa
      sortie **sans jamais signaler aucun processus, pas même par le signal 0** : son entrée est un
      tube dont elle garde l'autre bout ; « go » écrit, puis le tube fermé à sa sortie ; 30 s au
-     plus, sinon il renonce et ne touche à rien. Puis il fait comme `tools/install-macos.sh` :
+     plus, sinon il renonce et ne touche à rien. Il prend ensuite le verrou du dossier caché, que
+     l'ancienne tenait jusqu'à sa sortie, en réessayant 2 s au plus (`LOCK_WAIT` : le système peut
+     fermer le tube un instant avant de lâcher le verrou). Puis il fait comme `tools/install-macos.sh` :
      jamais une demi-app (des renommages), jamais par-dessus autre chose qu'une Capri (identifiant
      de bundle), jamais à travers un lien, l'ancienne remise en place au moindre échec, jamais
      `sudo`. Il relance l'app par `/usr/bin/open`, sauf avec `CAPRI_CONFIG_DIR` (un essai : `open`

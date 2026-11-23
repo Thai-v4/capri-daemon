@@ -988,9 +988,18 @@ le déroulé, jusqu'à la mise en place par le programme de fin et sa vérificat
 abîmé, qui n'installe rien. Ni `/Applications`, ni `~/Library`, ni `~/.claude`, ni le trousseau ne
 sont touchés.
 
+Pour le répéter **avec une identité de signature**, à part et à la main : la même commande, avec
+`CAPRI_SIGN_IDENTITY=<son nom ou son empreinte>` devant. La petite app d'essai est alors signée par
+elle, et la nouvelle doit l'être aussi : Capri retrouve seule l'identité dans le trousseau
+(`security find-identity`, dont elle ne lit que les noms et les empreintes), et l'essai vérifie que
+son nom n'est écrit nulle part, ni dans la sortie ni dans le journal. macOS peut alors afficher
+une fenêtre du trousseau qui demande d'autoriser `codesign` à se servir de la clé. Essayé le 23
+novembre 2026 avec l'identité « Developer ID Application » de l'utilisateur : la nouvelle app
+signée par la même identité, mise en place et vérifiée (et la fenêtre du trousseau est apparue une
+fois).
+
 Pas encore vérifié : **le vrai chemin jusqu'à GitHub** (aucune version n'est publiée ; il sera
-essayé avec ton accord) ; **la signature par une vraie identité** (les essais ne signent qu'en
-« ad hoc », et le choix de l'identité n'est essayé que sur des textes inventés) ; **la relance par
+essayé avec ton accord) ; **la relance par
 `open`** (pendant un essai, le programme de fin la saute : `open` ne lui passerait pas ses lieux
 d'essai, et pourrait réveiller ta Capri, du même identifiant) ; **ce qui se voit** (la ligne du
 menu à chaque étape, les phrases à leur tour, Capri qui disparaît et revient) ; **sous Windows**,
@@ -1252,14 +1261,15 @@ Règle : tout ce qui peut être testé sans écran va dans `capri-core`, `capri-
 
 Vérifié automatiquement :
 
-- formatage, `clippy -D warnings` et 614 tests sur **macOS Apple Silicon** (le 23 novembre 2026 ;
-  613 en version optimisée, un essai de la répétition de la musique n'existant qu'en version de
-  débogage ; plus 13 qui ne
+- formatage, `clippy -D warnings` et 650 tests sur **macOS Apple Silicon** (le 23 novembre 2026 ;
+  649 en version optimisée, un essai de la répétition de la musique n'existant qu'en version de
+  débogage ; plus 15 qui ne
   tournent qu'à la main : ils écrivent des images ou dessinent sur la vraie carte graphique,
   lisent un vrai `settings.json`, touchent au vrai trousseau, créent de vraies voix et un vrai
   moteur audio, sans bruit, lisent la vraie liste des fenêtres, guettent une annonce d'essai
   d'un lecteur, en ligne de commande et dans la vraie app, ou répètent la recherche d'une version
-  contre un faux serveur de cette machine) : animation, lancer et rebonds, hit-test, clics, bandeau, parole en pages, bulle
+  puis son installation contre un faux serveur de cette machine, en signant pour de vrai une
+  petite app d'essai) : animation, lancer et rebonds, hit-test, clics, bandeau, parole en pages, bulle
   sur plusieurs lignes, conversation, **validation du shader** par le compilateur de wgpu, lecture
   des exemples de hooks de la documentation de Claude Code, suivi des sessions, aller-retour sur
   `settings.json`, socket (droits, connexions simultanées), et le binaire `capri-hook` lancé pour
