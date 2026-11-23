@@ -73,13 +73,17 @@ Avant l'installeur, « lui donner vie », demandé par l'utilisateur le 23 novem
 lots : elle apparaît et s'efface ; une intro en plein écran au démarrage ; elle va s'asseoir
 seule sur les fenêtres ; elle bouge et réagit ; elle se repose. Le premier est écrit et testé
 sans écran le même jour (ses planches `arrive` et `leave`, au lancement et quand on la masque ou
-la montre ; portraits rendus et regardés) ; pas encore regardé en mouvement. Le troisième aussi
-(`roam` : elle choisit seule un bord de fenêtre, s'efface où elle est et apparaît là-bas ; la case
-« Vivre sa vie » et la ligne « Changer de place » de son menu) ; pas regardé en mouvement non
-plus. Le deuxième aussi (l'intro « Up close » en plein écran au lancement, puis son bonjour ; la
-case « Intro au démarrage ») : images fixes rendues et regardées, son poids mesuré, mais la vraie
-app jamais lancée avec l'intro. Des dessins générés par un outil d'images ont été essayés le même jour pour un coucou de
-la main, trois fois, et écartés : aucun ne se mêlait à ses dessins.
+la montre ; portraits rendus et regardés). Le troisième aussi (`roam` : elle choisit seule un bord
+de fenêtre, s'efface où elle est et apparaît là-bas ; la case « Vivre sa vie » et la ligne
+« Changer de place » de son menu). Le deuxième aussi (l'intro « Up close » en plein écran au
+lancement, puis son bonjour ; la case « Intro au démarrage » : images fixes rendues et regardées,
+son poids mesuré). Les trois ont été regardés par l'utilisateur le soir même, la Capri du dépôt
+lancée par `cargo run --release` avec ses vrais réglages, pendant une vingtaine de minutes : il
+dit avoir tout vu et que cela lui convient, dans l'ensemble, pas point par point (son journal :
+l'intro jouée, 22 images sur 22 ; six changements de place d'elle-même, assise quand un bord
+existait, debout sinon ; l'écoute au micro refusée hors de son app, comme prévu). Des dessins
+générés par un outil d'images ont été essayés le même jour pour un coucou de la main, trois
+fois, et écartés : aucun ne se mêlait à ses dessins.
 
 ## Architecture : où va quoi
 

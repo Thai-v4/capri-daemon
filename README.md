@@ -323,8 +323,8 @@ passe comme avant : elle apparaît et disparaît d'un coup.
 1 à 2, et la prochaine version publiée ne s'installera pas depuis le menu d'une Capri 0.2.0. Il
 faudra `tools/install-macos.sh`, et la ligne de son menu le dira.
 
-Écrit et testé sans écran le 23 novembre 2026, images fixes rendues et regardées ; **pas encore
-regardé en mouvement** : la liste est dans « État de validation ».
+Écrit et testé sans écran le 23 novembre 2026, images fixes rendues et regardées ; regardé par l'utilisateur le soir même, la Capri du dépôt lancée avec ses vrais réglages : vu et jugé bon dans l'ensemble, pas point par point
+(la liste est dans « État de validation »).
 
 ### Son intro au démarrage, puis son bonjour
 
@@ -356,9 +356,9 @@ rien ne se dessine (fenêtre masquée, écran verrouillé), et le thread a dispa
 prend 1,4 ms en moyenne, pour 83 ms disponibles. Si rien ne s'affiche pendant l'intro (écran
 verrouillé au lancement), les images ne s'accumulent pas : une seule copie attend à la fois.
 
-Écrit et testé sans écran le 23 novembre 2026 ; images fixes rendues et regardées ; **la vraie
-app n'a jamais été lancée avec l'intro** : tout ce qui se voit reste à regarder, la liste est
-dans « État de validation ».
+Écrit et testé sans écran le 23 novembre 2026 ; images fixes rendues et regardées ; regardé par l'utilisateur le soir même, la Capri du dépôt lancée avec ses vrais réglages : vu et jugé bon dans l'ensemble, pas point par point
+(son journal : « intro : jouée, 22 images sur 22 montrées, la première prête en 47 ms » ; la liste
+est dans « État de validation »).
 
 ### Elle vit sa vie : elle va s'asseoir seule sur tes fenêtres
 
@@ -413,8 +413,9 @@ petites tailles, comme à son lancement ; plusieurs écrans ne sont pas gérés
 (elle ne vit que sur l'écran principal) ; Windows a le même comportement, jamais exécuté sur un
 vrai PC ; sous Linux, elle ne change de place que debout.
 
-Écrit et testé sans écran le 23 novembre 2026 ; **pas encore regardé en mouvement** : la liste
-est dans « État de validation ».
+Écrit et testé sans écran le 23 novembre 2026 ; regardé par l'utilisateur le soir même, la Capri du dépôt lancée avec ses vrais réglages : vu et jugé bon dans l'ensemble, pas point par point
+(son journal : six changements de place d'elle-même en vingt minutes, assise quand un bord
+existait, debout sinon ; la liste est dans « État de validation »).
 
 **Essayé et écarté le même jour : des dessins générés.** Trois essais pour ajouter à sa boucle
 debout un coucou de la main par un générateur d'images : le premier changeait son corps d'un
@@ -2161,7 +2162,8 @@ elles, l'ont été, voir plus haut) :
     essais automatiques n'ont lancé que le binaire de débogage.
 
 **Elle apparaît et s'efface : à regarder à la main** (écrit et testé sans écran le 23 novembre
-2026 ; images fixes rendues et regardées ; rien n'a encore été vu en mouvement) :
+2026 ; images fixes rendues et regardées ; regardé par l'utilisateur le soir même, dans
+l'ensemble : aucun de ces points n'a été confirmé un par un) :
 
 1. **au lancement** : un trait, des éclats, elle de face, un bras tendu, puis la coupe vers sa
    boucle debout. Ses pieds restent au même endroit et sa taille ne change pas ; seule sa pose
@@ -2194,7 +2196,8 @@ elles, l'ont été, voir plus haut) :
     la place qu'elle occupera, alors que presque rien n'y est dessiné. Dire si cela gêne.
 
 **Son intro et son bonjour : à regarder à la main** (écrit et testé sans écran le 23 novembre
-2026 ; la vraie app n'a jamais été lancée avec l'intro). Il faut l'app installée par
+2026 ; regardé par l'utilisateur le soir même, dans l'ensemble : l'intro s'est jouée en entier
+d'après son journal, et aucun de ces points n'a été confirmé un par un). Il faut l'app installée par
 `tools/install-macos.sh`, ou lancée depuis le dépôt, sans `CAPRI_CONFIG_DIR` :
 
 1. **l'intro au lancement** : 12 dessins par seconde, environ 1,8 s, l'image remplit l'écran. La
@@ -2217,8 +2220,9 @@ elles, l'ont été, voir plus haut) :
 11. **« La faire taire » pendant l'intro** : l'intro continue, et elle ne dit pas bonjour ensuite ;
 12. **les dix phrases de bonjour** : dire si le ton lui va, et lesquelles retirer.
 
-**Elle vit sa vie : à regarder à la main** (écrit et testé sans écran le 23 novembre 2026 ; rien
-n'a encore été vu en mouvement) :
+**Elle vit sa vie : à regarder à la main** (écrit et testé sans écran le 23 novembre 2026 ;
+regardé par l'utilisateur le soir même, dans l'ensemble : aucun de ces points n'a été confirmé un
+par un) :
 
 1. **20 à 40 secondes après le lancement**, elle s'efface et réapparaît assise sur un bord, sans
    que rien ne clignote. Ce qui est écrit au-dessus de sa tête disparaît le temps du trajet, puis
@@ -2453,10 +2457,9 @@ Points à surveiller :
    Pas de notarisation tant que l'app emporte ses images : elle les enverrait chez Apple.
 6. Lui donner vie, avant l'installeur (demandé le 23 novembre 2026), en cinq lots : ~~elle
    apparaît et s'efface~~ (écrit et testé sans écran le 23 novembre 2026, images fixes rendues et
-   regardées ; reste à regarder en mouvement) ; ~~une intro en plein écran au démarrage, puis elle
-   dit bonjour~~ (écrit et testé sans écran le même jour, la vraie app jamais lancée avec
-   l'intro) ; ~~elle va s'asseoir seule sur les fenêtres~~ (écrit et testé sans écran le même
-   jour ; reste à regarder en mouvement) ; elle marche, pend quand on la tient, sourit ; elle
+   regardées) ; ~~une intro en plein écran au démarrage, puis elle dit bonjour~~ ; ~~elle va
+   s'asseoir seule sur les fenêtres~~ (écrits et testés sans écran le même jour ; les trois
+   regardés par l'utilisateur le soir même, dans l'ensemble, pas point par point) ; elle marche, pend quand on la tient, sourit ; elle
    s'allonge, s'endort et se réveille.
 
 ## Licence
