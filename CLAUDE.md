@@ -90,7 +90,8 @@ le coucou de mochiiwuff et trois écrites par nous ; « Voir une intro » dans s
 et testé sans écran le même jour ; les six intros vues par l'utilisateur le 24 novembre : le
 coucou ne lui plaisait pas du tout. Le huitième l'a retiré et a changé la suite du lancement :
 toujours « de tout près », avec un effet de glitch calculé à l'affichage, puis une entrée tirée
-au sort (écrit et testé sans écran le 24 novembre 2026 ; pas regardé en mouvement). Le
+au sort (écrit et testé sans écran le 24 novembre 2026 ; vu par l'utilisateur le même jour :
+« le glitch me paraît très bien », le reste pas confirmé point par point). Le
 cinquième (elle s'allonge sur son bord, s'endort, se réveille ; ses planches de repos chargées
 à la demande) est écrit et testé sans écran le 24 novembre 2026 ; pas regardé en mouvement.
 Reste : se tourner des deux côtés (lot 7). Des dessins

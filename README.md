@@ -393,8 +393,11 @@ grandissent pas quand on la rejoue. Les entrées ne chargent rien de plus.
 images dans l'app et le décodeur WebP qui ne servait qu'à elle.
 
 Écrit et testé sans écran, du 23 au 24 novembre 2026. « De tout près », sans glitch, et les
-entrées ont été vues par l'utilisateur, dans l'ensemble. **Le glitch et la suite en deux temps
-n'ont pas encore été vus en mouvement** : la liste est dans « État de validation ».
+entrées ont été vues par l'utilisateur, dans l'ensemble. Le glitch et la suite en deux temps ont été vus par
+l'utilisateur le 24 novembre 2026, la Capri du dépôt lancée deux fois avec ses vrais réglages (son
+journal : « de tout près » jouée en entier, puis « se matérialise », puis « arrive en marchant ») :
+« le glitch me paraît très bien ». Le reste de la liste de « État de validation » n'a pas été
+confirmé point par point.
 
 ### Elle vit sa vie : elle va s'asseoir seule sur tes fenêtres
 
