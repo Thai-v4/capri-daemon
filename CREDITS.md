@@ -18,11 +18,10 @@ D'après ce dépôt, elles proviennent de captures de la série, d'un détourage
 de fan art (les gros plans de l'introduction). Merci à **mochiiwuff** pour leur sélection et leur
 préparation, ainsi qu'aux fans qui les ont créées.
 
-Neuf d'entre elles, les gros plans de l'introduction (`intro-grab.webp`, `intro-smear.webp`,
-`intro-wave1.webp` à `intro-wave3.webp`, `intro-mouth1.webp` à `intro-mouth3.webp`,
-`intro-happy.webp`), servent à l'une des intros du lancement, « le coucou », dont l'enchaînement
-est écrit par ce projet. Avec `capri-cutout.png`, et l'icône tirée de `capri-face.png` (voir plus
-bas), ce sont les seules images de ce dépôt-là que `Capri.app` emporte.
+Avec `capri-cutout.png`, seule l'icône, tirée de `capri-face.png` (voir plus bas), vient de ce
+dépôt-là dans `Capri.app`. Les autres images sont téléchargées et ne servent pas ; les gros plans
+de son introduction (`intro-*.webp`) ont servi quelques heures à une intro, « le coucou », essayée
+le 24 novembre 2026 puis retirée.
 
 **Ces images ne sont couvertes par aucune licence de ce projet**, et ce projet ne revendique aucun
 droit sur elles. Si un ayant droit souhaite leur retrait, ouvrez une issue : elles seront retirées
@@ -83,7 +82,9 @@ leur retrait, ouvrez une issue : ce sera fait aussitôt.
 ### Son intro au démarrage (`assets/capri/intro/`)
 
 Les 22 images de l'intro en plein écran (« Up close » : elle surgit dans l'écran et y colle son
-visage) viennent du même projet, à la même révision (`assets/intros/up-close/`). **Ce dépôt ne
+visage) viennent du même projet, à la même révision (`assets/intros/up-close/`). Ce projet les joue telles
+quelles, avec un effet de glitch calculé à l'affichage (des bandes décalées et des doubles
+colorés) : les images elles-mêmes ne sont pas modifiées. **Ce dépôt ne
 nomme pas leur auteur** non plus : elles y sont arrivées par le commit `49c2ff5b` du 21 novembre
 2026, dont la demande de fusion parle de « Two new hand-drawn startup animations, Peek and Up
 close », sans crédit, et son README ne les range pas parmi les parties faites par d'autres. Ce

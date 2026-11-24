@@ -225,6 +225,17 @@ fn applications(scratch: &Path) -> PathBuf {
     folder
 }
 
+/// Tout son journal en fichier, dans le dossier `logs` : le précédent (`capri.old.log`, s'il a
+/// tourné, ce qu'il fait vite au niveau `trace`), puis le courant ; ce qui est attendu peut être
+/// dans l'un ou l'autre, et ce qui ne doit jamais y être, ni dans l'un ni dans l'autre. Rend aussi
+/// s'il a tourné.
+fn whole_journal(logs: &Path) -> (String, bool) {
+    let old = std::fs::read_to_string(logs.join("capri.old.log")).ok();
+    let current = std::fs::read_to_string(logs.join("capri.log")).unwrap_or_default();
+    let rotated = old.is_some();
+    (old.unwrap_or_default() + &current, rotated)
+}
+
 #[test]
 #[ignore = "signe pour de vrai (« ad hoc ») et lance le programme de fin ; version de débogage, macOS ; à lancer à la main"]
 fn a_version_is_downloaded_checked_rebuilt_signed_and_put_in_place() {
@@ -251,11 +262,12 @@ fn a_version_is_downloaded_checked_rebuilt_signed_and_put_in_place() {
     assert!(said.contains(ready), "{said}");
     assert!(said.contains("Relais pris"), "{said}");
     // le programme de fin finit seul, une fois la répétition sortie
-    let journal = scratch.0.join("capri/logs/capri.log");
+    let journal = scratch.0.join("capri/logs");
     let deadline = Instant::now() + Duration::from_secs(60);
     let mut log = String::new();
     while Instant::now() < deadline {
-        log = std::fs::read_to_string(&journal).unwrap_or_default();
+        // ses deux fichiers, s'il a tourné
+        log = whole_journal(&journal).0;
         if log.contains("relance sautée") || log.contains("pas mise en place") {
             break;
         }

@@ -1,37 +1,42 @@
-//! Ses intros du lancement : avant qu'elle n'apparaisse à sa place, une intro, tirée au sort à
-//! chaque lancement parmi celles que ses images permettent ([`LIST`], [`draw`]). Ensuite elle est
-//! là ([`crate::look::Look::enter`]), et elle dit bonjour.
+//! Ses intros du lancement : avant qu'elle n'apparaisse à sa place, **toujours le même film**,
+//! « de tout près » ([`FILM`], ses 22 images en plein écran, avec un effet de glitch calculé sur
+//! ses dessins : [`glitch`]), **puis une entrée** ([`LIST`]), tirée au sort à chaque lancement
+//! parmi celles que ses planches permettent ([`draw`]). Ensuite elle est là, et elle dit bonjour.
 //!
-//! **La liste** ([`LIST`]) est écrite ici, et seulement ici : chaque intro a son nom court (retenu
-//! d'un lancement à l'autre), son nom pour le journal, son poids au tirage, et sa façon de se jouer
-//! ([`Play`]) :
-//! - **en images plein écran** ([`Film`]) : « Up close » ([`UP_CLOSE`], 22 images à fond
-//!   transparent, du même dépôt que ses planches, voir `CREDITS.md`), et le coucou de
-//!   [`coucou`] (9 images d'un autre dépôt, à retirer en quelques lignes : voir ce module) ;
-//! - **jouée par elle**, avec ses propres dessins ([`act`]) : elle tombe du ciel, elle arrive en
-//!   marchant, elle se rassemble ;
-//! - **rien** : elle se matérialise simplement, comme sans intro, mais elle dit bonjour.
+//! **La liste des entrées** ([`LIST`]) est écrite ici, et seulement ici : chaque entrée a son nom
+//! court (retenu d'un lancement à l'autre), son nom pour le journal, son poids au tirage, et sa
+//! façon de se jouer ([`Play`]) : **jouée par elle**, avec ses propres dessins ([`act`] : elle tombe
+//! du ciel, elle arrive en marchant, elle se rassemble), ou **rien de plus** : elle se matérialise
+//! simplement. En retirer une tient en une ligne.
 //!
-//! **Le tirage** ([`draw`]) : au hasard d'après les poids (« rien » est rare), parmi les intros
-//! possibles avec les images présentes (« rien » l'est toujours), et **jamais deux lancements de
-//! suite la même** quand une autre est possible : la dernière est retenue par `capri-app` (son nom
-//! court dans `intro.json`). Le hasard vient de la graine de sa vie, mêlée à [`DRAW_SEED`]. « Voir
-//! une intro », dans son menu, les montre l'une après l'autre, dans l'ordre de la liste ([`next`]).
+//! **Le tirage** ([`draw`]) : au hasard d'après les poids (3 pour chacune des trois qu'elle joue, 2
+//! pour « se matérialise »), parmi les entrées possibles avec ses planches (« se matérialise »
+//! l'est toujours), et **jamais deux lancements de suite la même** quand une autre est possible :
+//! la dernière est retenue par `capri-app` (son nom court dans `intro.json` ; un nom inconnu, comme
+//! ceux des intros d'avant, ne contraint rien). Le hasard vient de la graine de sa vie, mêlée à
+//! [`DRAW_SEED`]. « Voir une intro », dans son menu, rejoue le film puis montre les entrées l'une
+//! après l'autre, dans l'ordre de la liste ([`next`]).
 //!
-//! **Une intro en images.** Ce module n'en contient aucune, ni aucune ligne de leur code : il
-//! décide seulement laquelle montrer à chaque image d'animation (sa feuille d'exposition,
-//! [`Film::sheet`]), où, quand c'est fini, et ce qui suit. Les décoder, les confier à la carte
+//! **La suite** ([`Suite`]) : le film d'abord, si ses images sont là (sans elles, l'entrée seule),
+//! puis l'entrée. Ce qui la coupe pendant le film : la cacher (elle reste cachée, sans entrée), lui
+//! parler (elle est à sa place tout de suite, sans entrée). Pendant l'entrée, ce qui coupe une
+//! intro qu'elle joue (voir [`Cut`]). Le bonjour vient après toute la suite, au lancement
+//! seulement, et seulement si rien ne l'a coupée ([`Suite::greets`]).
+//!
+//! **Le film.** Ce module n'en contient aucune image, ni aucune ligne de leur code : il décide
+//! seulement laquelle montrer à chaque image d'animation (sa feuille d'exposition,
+//! [`Film::sheet`]), où, quand c'est fini, et son glitch. Les décoder, les confier à la carte
 //! graphique et les lâcher est l'affaire de `capri-app`.
 //!
 //! **Le temps.** Comme tous ses dessins (voir [`crate::anim`]) : chaque image est tenue un nombre
-//! entier d'images d'animation à 24 i/s (« Up close » : [`HOLD`] chacune, 12 par seconde, soit 44
-//! images, 1,83 s, la cadence du projet d'origine). L'horloge démarre quand la première image
+//! entier d'images d'animation à 24 i/s (« de tout près » : [`HOLD`] chacune, 12 par seconde, soit
+//! 44 images, 1,83 s, la cadence du projet d'origine). L'horloge démarre quand la première image
 //! arrive à l'écran, pas avant : les images sont décodées une à une pendant qu'elles défilent, et la
-//! première peut se faire attendre ; si elle n'est pas là après [`START_WAIT`], il n'y a pas
-//! d'intro. Ensuite, une image qui n'est pas prête à son heure laisse le dessin précédent tenu, et
-//! l'horloge ne s'arrête pas : l'intro finit à l'heure, et l'image en retard est montrée dès
+//! première peut se faire attendre ; si elle n'est pas là après [`START_WAIT`], il n'y a pas de
+//! film. Ensuite, une image qui n'est pas prête à son heure laisse le dessin précédent tenu, et
+//! l'horloge ne s'arrête pas : le film finit à l'heure, et l'image en retard est montrée dès
 //! qu'elle arrive (plus récente que celle à l'écran, elle avance toujours), puis on demande celle
-//! qui est déjà l'heure ([`Intro::shown`]).
+//! qui est déjà l'heure ([`Intro::shown`]). Son glitch ne change qu'avec le dessin.
 //!
 //! **Où.** L'image couvre tout l'écran ([`place`]) : mise à l'échelle la plus grande des deux
 //! (celle de la largeur ou celle de la hauteur), centrée horizontalement et calée sur le bord bas ;
@@ -40,35 +45,31 @@
 //! Ni sa taille choisie ni la densité de l'écran n'y comptent : c'est tout l'écran qu'elle prend.
 //! Rien ne s'y attrape : elle n'est pas encore là.
 //!
-//! **Ce qui la coupe** ([`Cut`]) et ce qui suit ([`End`]) : la cacher la coupe net, et elle reste
-//! cachée ; lui parler la coupe, et elle se matérialise tout de suite ; dans une intro jouée par
-//! elle, l'attraper la coupe aussi, et elle est tenue (sans saut, même en partie hors de l'écran),
-//! et une autre taille la coupe comme quand on lui parle. Jouée jusqu'au bout (ou arrêtée là par une
-//! image illisible au milieu), elle est là, puis dit bonjour ([`End::greets`]). Sans ses images
-//! (absentes, illisibles, d'une autre taille, refusées par la carte graphique, ou la première trop
-//! lente), pas d'intro, et rien d'autre ne change : elle se matérialise comme sans elle, sans
-//! bonjour. Quitter reste immédiat : rien à décider ici.
+//! **Comment il finit** ([`End`]) : joué jusqu'au bout (ou arrêté là par une image illisible au
+//! milieu), l'entrée suit. Sans ses images (absentes, illisibles, d'une autre taille, refusées par
+//! la carte graphique, ou la première trop lente), pas de film, et l'entrée se joue seule. Quitter
+//! reste immédiat : rien à décider ici.
 
 pub mod act;
-pub mod coucou;
+pub mod glitch;
 
 pub use act::Act;
 
+use crate::body::Capri;
 use crate::geom::{Rect, Vec2};
+use crate::look::Look;
 use crate::roam::Rng;
 
-/// Comment une intro se joue.
+/// Comment une entrée se joue.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Play {
-    /// Des images en plein écran, décodées une à une (voir [`Film`]).
-    Film(&'static Film),
     /// Jouée par elle, avec ses propres dessins (voir [`act`]).
     Act(Act),
-    /// Rien : elle se matérialise simplement (`Look::enter`), comme sans intro, et dit bonjour.
+    /// Rien de plus : elle se matérialise simplement (`Look::enter`).
     Plain,
 }
 
-/// Une intro de la liste.
+/// Une entrée de la liste.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Entry {
     /// Son nom court, retenu d'un lancement à l'autre (`intro.json`) : des lettres minuscules.
@@ -80,33 +81,34 @@ pub struct Entry {
     pub play: Play,
 }
 
-/// Ses intros, dans l'ordre où « Voir une intro » les montre. **Écrite ici seulement** : en
-/// ajouter une, ou en retirer une, ne se fait qu'ici (et dans ce qu'elle joue).
+/// Ses entrées, après le film, dans l'ordre où « Voir une intro » les montre. **Écrite ici
+/// seulement** : en ajouter une, ou en retirer une, ne se fait qu'ici (et dans ce qu'elle joue).
 pub const LIST: &[Entry] = &[
-    Entry { key: "upclose", name: "Up close", weight: 4, play: Play::Film(&UP_CLOSE) },
-    Entry { key: "coucou", name: "coucou", weight: 3, play: Play::Film(&coucou::FILM) },
     Entry { key: "tombe", name: "tombe du ciel", weight: 3, play: Play::Act(Act::Fall) },
     Entry { key: "marche", name: "arrive en marchant", weight: 3, play: Play::Act(Act::Walk) },
     Entry { key: "rassemble", name: "se rassemble", weight: 3, play: Play::Act(Act::Gather) },
-    Entry { key: "rien", name: "rien", weight: 1, play: Play::Plain },
+    Entry { key: "rien", name: "se matérialise", weight: 2, play: Play::Plain },
 ];
+
+/// Le film du lancement, joué d'abord à chaque fois, s'il est là : « de tout près ».
+pub const FILM: &Film = &UP_CLOSE;
 
 /// La graine du tirage : celle de sa vie, mêlée à ce nombre (« intro »), pour ne rien changer au
 /// hasard de ses trajets ni de son bonjour.
 pub const DRAW_SEED: u64 = 0x696e_7472_6f00;
 
-/// L'intro de nom court `key`, si elle est dans la liste.
+/// L'entrée de nom court `key`, si elle est dans la liste.
 pub fn by_key(key: &str) -> Option<&'static Entry> {
     LIST.iter().find(|entry| entry.key == key)
 }
 
-/// « Rien » : toujours possible.
+/// « Se matérialise » : toujours possible.
 pub fn plain() -> &'static Entry {
     LIST.iter().find(|entry| entry.play == Play::Plain).unwrap_or(&LIST[LIST.len() - 1])
 }
 
-/// L'intro du lancement, tirée avec la graine `seed` (celle de sa vie) : au hasard d'après leurs
-/// poids, parmi celles que `possible` permet (« rien » l'est toujours), jamais `last` (la
+/// L'entrée du lancement, tirée avec la graine `seed` (celle de sa vie) : au hasard d'après leurs
+/// poids, parmi celles que `possible` permet (« se matérialise » l'est toujours), jamais `last` (la
 /// précédente, par son nom court) quand une autre est possible. Un nom inconnu ne contraint rien.
 pub fn draw(seed: u64, possible: impl Fn(&Entry) -> bool, last: Option<&str>) -> &'static Entry {
     let allowed = |entry: &Entry| entry.play == Play::Plain || possible(entry);
@@ -122,9 +124,10 @@ pub fn draw(seed: u64, possible: impl Fn(&Entry) -> bool, last: Option<&str>) ->
     rng.pick(&weights).map_or_else(plain, |index| &LIST[index])
 }
 
-/// « Voir une intro » : celle qui suit `after` (par son nom court ; aucune ou inconnue, la
+/// « Voir une intro » : l'entrée qui suit `after` (par son nom court ; aucune ou inconnue, la
 /// première) dans l'ordre de la liste, en sautant celles que `possible` ne permet pas, et en
-/// repartant du début après la dernière. « Rien » en fait partie, pour qu'on puisse toutes les voir.
+/// repartant du début après la dernière. « Se matérialise » en fait partie, pour qu'on puisse
+/// toutes les voir.
 pub fn next(after: Option<&str>, possible: impl Fn(&Entry) -> bool) -> &'static Entry {
     let from = after.and_then(|key| LIST.iter().position(|entry| entry.key == key)).map_or(0, |at| at + 1);
     (0..LIST.len())
@@ -133,9 +136,184 @@ pub fn next(after: Option<&str>, possible: impl Fn(&Entry) -> bool) -> &'static 
         .unwrap_or_else(plain)
 }
 
-/// Une intro en images plein écran : ses fichiers, leur taille, et sa feuille d'exposition.
-#[derive(Debug, PartialEq, Eq)]
+/// Où en est la suite.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Part {
+    /// Le film se joue.
+    Film,
+    /// L'entrée se joue.
+    Entry,
+    /// Finie.
+    Over,
+}
+
+/// Ce qui suit la fin du film ([`Suite::film_over`], [`Suite::record_film`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum After {
+    /// L'entrée, maintenant : le film s'est joué, ou n'a pas pu l'être.
+    Entry,
+    /// Rien : elle est à sa place tout de suite (on lui a parlé pendant le film).
+    Here,
+    /// Rien : elle reste cachée (on l'a cachée pendant le film).
+    Hidden,
+}
+
+/// La suite d'une intro : le film (s'il est là), puis l'entrée ; au lancement, ou sur « Voir une
+/// intro ». Elle retient comment chacun a fini, pour son bonjour et pour le journal.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Suite {
+    entry: &'static Entry,
+    at_launch: bool,
+    with_film: bool,
+    part: Part,
+    film: Option<End>,
+    entered: Option<End>,
+}
+
+impl Suite {
+    /// Une suite qui commence : par le film si `film` (ses images sont là), sinon par l'entrée
+    /// `entry` ; `at_launch` : celle du lancement (son bonjour l'attend), sinon « Voir une intro ».
+    pub fn new(entry: &'static Entry, film: bool, at_launch: bool) -> Self {
+        let part = if film { Part::Film } else { Part::Entry };
+        Self { entry, at_launch, with_film: film, part, film: None, entered: None }
+    }
+
+    /// Son entrée.
+    pub fn entry(&self) -> &'static Entry {
+        self.entry
+    }
+
+    /// Celle du lancement ?
+    pub fn at_launch(&self) -> bool {
+        self.at_launch
+    }
+
+    /// A-t-elle commencé par le film ?
+    pub fn with_film(&self) -> bool {
+        self.with_film
+    }
+
+    /// Où elle en est.
+    pub fn part(&self) -> Part {
+        self.part
+    }
+
+    /// Comment le film a fini (`None` : pas encore, ou pas de film).
+    pub fn film_end(&self) -> Option<End> {
+        self.film
+    }
+
+    /// Comment l'entrée a fini (`None` : pas encore, ou pas jouée).
+    pub fn entry_end(&self) -> Option<End> {
+        self.entered
+    }
+
+    /// Le film a fini par `end`, à l'image `frame` : ce qui suit, fait à son dessin `look` et à son
+    /// corps `capri` (écrit ici une fois, pour l'app et pour l'essai des gestes au hasard). Joué
+    /// jusqu'au bout, arrêté par une image illisible, ou sans ses images : l'entrée commence
+    /// ([`Suite::begin_entry`]) ; coupé en la cachant : elle est cachée sans s'être montrée ; coupé
+    /// autrement (on lui parle) : elle se matérialise à sa place tout de suite, sans entrée. Rend ce
+    /// qui suit ; `None`, et rien ne change, si le film ne se jouait pas.
+    pub fn film_over(&mut self, end: End, look: &mut Look, capri: &mut Capri, frame: u64) -> Option<After> {
+        let after = self.record_film(end)?;
+        match after {
+            After::Entry => self.begin_entry(look, capri, frame),
+            After::Here => look.enter(capri, frame),
+            After::Hidden => look.hide_unseen(capri, frame),
+        }
+        Some(after)
+    }
+
+    /// L'entrée commence, à l'image `frame`, si c'est son tour : jouée par elle
+    /// ([`Look::perform`]) ; « se matérialise », ou une entrée refusée (ses planches, ou la place
+    /// d'où elle est, ou autre chose : [`Look::cannot_perform`] dit quoi), elle se matérialise à sa
+    /// place, et la suite est finie.
+    pub fn begin_entry(&mut self, look: &mut Look, capri: &mut Capri, frame: u64) {
+        if self.part != Part::Entry {
+            return;
+        }
+        match self.entry.play {
+            Play::Act(act) => {
+                if !look.perform(capri, act, frame) {
+                    let why = look.cannot_perform(act, capri).unwrap_or(Missing::NotReady);
+                    look.enter(capri, frame);
+                    self.record_entry(End::Missing(why));
+                }
+            }
+            Play::Plain => {
+                look.enter(capri, frame);
+                self.record_entry(End::Played { shown: 0 });
+            }
+        }
+    }
+
+    /// L'entrée qu'elle jouait a fini par `end` (ce que dit [`Look::take_performed`]), à l'image
+    /// `frame` : la suite est finie ; coupée en la cachant, elle est cachée.
+    pub fn entry_over(&mut self, end: End, look: &mut Look, capri: &mut Capri, frame: u64) {
+        if self.part != Part::Entry {
+            return;
+        }
+        self.record_entry(end);
+        if end.hides() {
+            look.hide_unseen(capri, frame);
+        }
+    }
+
+    /// Retient seulement que le film a fini par `end`, et rend ce qui suit, sans rien faire d'elle
+    /// (pour le journal et les essais ; l'app passe par [`Suite::film_over`]). `None`, et rien ne
+    /// change, si le film ne se jouait pas.
+    pub fn record_film(&mut self, end: End) -> Option<After> {
+        if self.part != Part::Film {
+            return None;
+        }
+        self.film = Some(end);
+        let after = match end {
+            End::Played { .. } | End::Broken { .. } | End::Missing(_) => After::Entry,
+            End::Cut { why: Cut::Hidden, .. } => After::Hidden,
+            End::Cut { .. } => After::Here,
+        };
+        self.part = if after == After::Entry { Part::Entry } else { Part::Over };
+        Some(after)
+    }
+
+    /// Retient seulement que l'entrée a fini par `end` : la suite est finie (voir
+    /// [`Suite::record_film`]). Sans effet si l'entrée ne se jouait pas.
+    pub fn record_entry(&mut self, end: End) {
+        if self.part == Part::Entry {
+            self.entered = Some(end);
+            self.part = Part::Over;
+        }
+    }
+
+    /// Finie ?
+    pub fn is_over(&self) -> bool {
+        self.part == Part::Over
+    }
+
+    /// Reste-t-elle cachée à la fin ? Coupée en la cachant, pendant le film ou l'entrée.
+    pub fn hides(&self) -> bool {
+        [self.film, self.entered].into_iter().flatten().any(End::hides)
+    }
+
+    /// Coupée, pendant le film ou l'entrée ?
+    pub fn was_cut(&self) -> bool {
+        [self.film, self.entered].into_iter().flatten().any(|end| matches!(end, End::Cut { .. }))
+    }
+
+    /// Dit-elle bonjour ? Au lancement seulement, une fois toute la suite finie, si rien ne l'a
+    /// coupée et que quelque chose s'est joué (le film, ou l'entrée).
+    pub fn greets(&self) -> bool {
+        let played = [self.film, self.entered].into_iter().flatten().any(End::greets);
+        self.at_launch && self.is_over() && !self.was_cut() && played
+    }
+}
+
+/// Un film en images plein écran : son nom, ses fichiers, leur taille, sa feuille d'exposition et
+/// son glitch.
+#[derive(Debug, PartialEq)]
 pub struct Film {
+    /// Son nom pour le journal, à nous.
+    pub name: &'static str,
     /// Le dossier de ses images, dans celui des images (`assets/`).
     pub dir: &'static str,
     /// Ses images, toutes de la même taille.
@@ -146,6 +324,8 @@ pub struct Film {
     /// d'images d'animation à 24 i/s. Jamais deux fois la même image de suite (elle serait
     /// décodée deux fois pour rien) ; jamais une tenue de 0.
     pub sheet: &'static [(u8, u8)],
+    /// L'enveloppe de son glitch, s'il en a un (voir [`glitch`]).
+    pub glitch: Option<&'static glitch::Envelope>,
 }
 
 impl Film {
@@ -188,19 +368,19 @@ impl Film {
     }
 }
 
-/// Le dossier des images de « Up close », dans celui des images (`assets/`).
+/// Le dossier des images de « de tout près », dans celui des images (`assets/`).
 pub const DIR: &str = "capri/intro";
-/// Combien d'images dans « Up close ».
+/// Combien d'images dans « de tout près ».
 pub const COUNT: u32 = 22;
 /// La taille de chacune, en pixels.
 pub const SIZE: (u32, u32) = (1920, 1080);
-/// Chaque image de « Up close » est tenue deux images d'animation : 12 dessins par seconde.
+/// Chaque image de « de tout près » est tenue deux images d'animation : 12 dessins par seconde.
 pub const HOLD: u64 = 2;
-/// La première image a jusque-là pour arriver à l'écran (2 s), sinon pas d'intro : elle ne
-/// retarde jamais longtemps son apparition.
+/// La première image a jusque-là pour arriver à l'écran (2 s), sinon pas de film : il ne retarde
+/// jamais longtemps son apparition.
 pub const START_WAIT: u64 = 48;
 
-/// Le nom du fichier de l'image n° `index` (depuis 0) de « Up close » : `01.png` à `22.png`.
+/// Le nom du fichier de l'image n° `index` (depuis 0) de « de tout près » : `01.png` à `22.png`.
 pub fn file(index: u32) -> String {
     format!("{:02}.png", index + 1)
 }
@@ -224,9 +404,16 @@ const fn in_twos<const N: usize>() -> [(u8, u8); N] {
 
 const UP_CLOSE_SHEET: [(u8, u8); COUNT as usize] = in_twos();
 
-/// « Up close » : elle surgit dans l'écran, regarde autour d'elle, colle son visage à la vitre avec
-/// un grand sourire, puis repart.
-pub const UP_CLOSE: Film = Film { dir: DIR, files: &UP_CLOSE_FILES, size: SIZE, sheet: &UP_CLOSE_SHEET };
+/// « De tout près » (« Up close » dans son dépôt d'origine) : elle surgit dans l'écran, regarde
+/// autour d'elle, colle son visage à la vitre avec un grand sourire, puis repart.
+pub const UP_CLOSE: Film = Film {
+    name: "de tout près",
+    dir: DIR,
+    files: &UP_CLOSE_FILES,
+    size: SIZE,
+    sheet: &UP_CLOSE_SHEET,
+    glitch: Some(&glitch::UP_CLOSE),
+};
 
 /// Où dessiner une image de `image` pixels sur un écran de `screen` pixels : à l'échelle qui lui
 /// fait couvrir tout l'écran, centrée horizontalement, calée sur le bord bas, en pixels entiers.
@@ -241,21 +428,21 @@ pub fn place(screen: Vec2, image: (u32, u32)) -> Rect {
     Rect::new(Vec2::new(((screen_w - size.x) / 2.0).round(), screen_h - size.y), size)
 }
 
-/// Ce qui la coupe.
+/// Ce qui coupe le film ou l'entrée.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Cut {
-    /// On la cache (⌃⌥C, ou son menu) : l'intro s'arrête net, et elle est cachée.
+    /// On la cache (⌃⌥C, ou son menu) : tout s'arrête net, et elle est cachée.
     Hidden,
-    /// On lui parle (⌃⌥P, ⌃⌥D, ou son menu) : l'intro s'arrête, elle se matérialise tout de suite.
+    /// On lui parle (⌃⌥P, ⌃⌥D, ou son menu) : tout s'arrête, elle se matérialise tout de suite.
     Talked,
-    /// On l'attrape, dans une intro jouée par elle : elle est tenue, comme d'habitude.
+    /// On l'attrape, dans une entrée qu'elle joue : elle est tenue, comme d'habitude.
     Grabbed,
-    /// Sa taille change (son menu, la molette, la densité de l'écran), dans une intro jouée par
-    /// elle : comme quand on lui parle, elle est à sa place tout de suite.
+    /// Sa taille change (son menu, la molette, la densité de l'écran), dans une entrée qu'elle
+    /// joue : comme quand on lui parle, elle est à sa place tout de suite.
     Resized,
 }
 
-/// Pourquoi il n'y a pas d'intro du tout.
+/// Pourquoi il n'y a pas de film (ou, pour une entrée, pas ses planches).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Missing {
     /// `found` images sur toutes celles de l'intro seulement (0 : pas même son dossier).
@@ -270,10 +457,16 @@ pub enum Missing {
     Late,
     /// Rien pour les décoder (le thread n'a pas pu être lancé, ou s'est arrêté avant la première).
     NoDecoder,
+    /// Une entrée : pas la place de la jouer d'où elle est (arriver en marchant, sa place trop près
+    /// du bord droit, ou trop grande pour l'écran).
+    NoRoom,
+    /// Une entrée : pas prête à la jouer (ni à son entrée en scène, ni effacée pour une intro ;
+    /// tenue ; en marche). Ce qui ne doit pas arriver après le film.
+    NotReady,
 }
 
-/// Comment elle a fini. Pour une intro jouée par elle, les nombres sont des images d'animation :
-/// combien elle a duré, jouée ou coupée.
+/// Comment le film, ou l'entrée, a fini. Pour une entrée, les nombres sont des images
+/// d'animation : combien elle a duré, jouée ou coupée.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum End {
     /// Jouée jusqu'au bout ; `shown` dessins différents ont été à l'écran (images d'animation,
@@ -283,14 +476,13 @@ pub enum End {
     Cut { why: Cut, at: Option<u32> },
     /// Une image illisible au milieu (le dessin n° `at`) : elle s'arrête là, proprement.
     Broken { at: u32 },
-    /// Pas d'intro du tout.
+    /// Rien ne s'est joué (pas d'images, pas de planches).
     Missing(Missing),
 }
 
 impl End {
-    /// Dit-elle bonjour une fois là ? Seulement après l'intro : jouée jusqu'au bout, ou arrêtée
-    /// par une image illisible au milieu. Ni sans intro, ni coupée (cachée, on lui a parlé, ou on
-    /// l'a attrapée d'abord).
+    /// S'est-il joué : jusqu'au bout, ou arrêté par une image illisible au milieu ? Ni manquant, ni
+    /// coupé. (Son bonjour, lui, se décide sur toute la suite : [`Suite::greets`].)
     pub fn greets(self) -> bool {
         matches!(self, End::Played { .. } | End::Broken { .. })
     }
@@ -301,7 +493,7 @@ impl End {
     }
 }
 
-/// Où en est une intro en images.
+/// Où en est un film.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Phase {
     /// Elle attend son premier dessin depuis l'image d'animation `since`.
@@ -312,8 +504,8 @@ enum Phase {
     Over,
 }
 
-/// Le déroulé d'une intro en images : quel dessin de sa feuille montrer, et quand c'est fini.
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// Le déroulé d'un film : quel dessin de sa feuille montrer, et quand c'est fini.
+#[derive(Clone, Debug, PartialEq)]
 pub struct Intro {
     film: &'static Film,
     phase: Phase,
@@ -397,7 +589,7 @@ impl Intro {
         End::Cut { why, at }
     }
 
-    /// Le dessin n° `index` est illisible : avant le premier, pas d'intro ; au milieu, elle
+    /// Le dessin n° `index` est illisible : avant le premier, pas de film ; au milieu, il
     /// s'arrête là.
     pub fn broken(&mut self, index: u32) -> End {
         let end = match self.phase {
@@ -408,7 +600,7 @@ impl Intro {
         end
     }
 
-    /// Pas d'intro (voir [`Missing`]) : finie tout de suite.
+    /// Pas de film (voir [`Missing`]) : fini tout de suite.
     pub fn missing(&mut self, why: Missing) -> End {
         self.phase = Phase::Over;
         End::Missing(why)
@@ -458,28 +650,26 @@ mod tests {
     }
 
     #[test]
-    fn every_film_is_well_formed() {
-        for entry in LIST {
-            let Play::Film(film) = entry.play else { continue };
-            assert!(!film.is_empty() && !film.files.is_empty(), "{}", entry.key);
-            assert!(film.size.0 > 0 && film.size.1 > 0, "{}", entry.key);
-            for pair in film.sheet.windows(2) {
-                assert_ne!(pair[0].0, pair[1].0, "{} : deux fois la même image de suite", entry.key);
-            }
-            for &(image, hold) in film.sheet {
-                assert!((image as usize) < film.files.len() && hold >= 1, "{}", entry.key);
-            }
-            // chaque image sert
-            for image in 0..film.files.len() {
-                assert!(
-                    film.sheet.iter().any(|&(shown, _)| shown as usize == image),
-                    "{} {image}",
-                    entry.key
-                );
-            }
-            // une intro, pas un film : 4 s au plus
-            assert!(film.frames() as f64 / FRAME_RATE <= 4.0, "{}", entry.key);
+    fn the_film_is_well_formed() {
+        let film = FILM;
+        assert_eq!(film, &UP_CLOSE, "« de tout près », toujours");
+        assert!(!film.is_empty() && !film.files.is_empty());
+        assert!(film.size.0 > 0 && film.size.1 > 0);
+        for pair in film.sheet.windows(2) {
+            assert_ne!(pair[0].0, pair[1].0, "deux fois la même image de suite");
         }
+        for &(image, hold) in film.sheet {
+            assert!((image as usize) < film.files.len() && hold >= 1);
+        }
+        // chaque image sert
+        for image in 0..film.files.len() {
+            assert!(film.sheet.iter().any(|&(shown, _)| shown as usize == image), "{image}");
+        }
+        // une intro, pas un film de cinéma : 4 s au plus
+        assert!(film.frames() as f64 / FRAME_RATE <= 4.0);
+        // son glitch a une force pour chacun de ses dessins
+        assert_eq!(film.glitch.map(|envelope| envelope.force.len()), Some(film.len() as usize));
+        assert!(!film.name.is_empty() && !film.name.contains('/'));
     }
 
     #[test]
@@ -493,7 +683,7 @@ mod tests {
         }
         assert_eq!(by_key("inconnue"), None);
         assert_eq!(plain().play, Play::Plain);
-        // « rien » est la plus rare
+        // « se matérialise » est la plus rare
         assert!(LIST.iter().all(|entry| entry.play == Play::Plain || entry.weight > plain().weight));
         assert_eq!(LIST.iter().filter(|entry| entry.play == Play::Plain).count(), 1);
     }
@@ -510,7 +700,7 @@ mod tests {
                 }
             }
         }
-        // chacune sort, à peu près selon son poids ; « rien » rarement
+        // chacune sort, à peu près selon son poids ; « se matérialise » moins souvent
         let total: u32 = LIST.iter().map(|entry| entry.weight).sum();
         for (entry, &count) in LIST.iter().zip(&counts) {
             let expected = 4000.0 * f64::from(entry.weight) / f64::from(total);
@@ -521,19 +711,43 @@ mod tests {
     }
 
     #[test]
-    fn only_possible_intros_are_drawn_and_nothing_remains_without_images() {
-        let films_only = |entry: &Entry| matches!(entry.play, Play::Film(_));
+    fn only_possible_entries_are_drawn_and_she_materializes_without_her_sheets() {
+        let falls_only = |entry: &Entry| entry.play == Play::Act(Act::Fall);
         for seed in 0..500u64 {
             let drawn = draw(seed, |_| false, None);
-            assert_eq!(drawn.play, Play::Plain, "sans aucune image, il reste « rien »");
-            // la dernière était « rien » : rien d'autre n'est possible, « rien » encore
+            assert_eq!(drawn.play, Play::Plain, "sans ses planches, elle se matérialise");
+            // la dernière était « se matérialise » : rien d'autre n'est possible, encore elle
             assert_eq!(draw(seed, |_| false, Some("rien")).play, Play::Plain);
-            let drawn = draw(seed, films_only, None);
-            assert!(films_only(drawn) || drawn.play == Play::Plain, "{drawn:?}");
-            // une seule possible en plus de « rien », et c'était la dernière : « rien »
-            let up_close = |entry: &Entry| entry.key == "upclose";
-            assert_eq!(draw(seed, up_close, Some("upclose")).play, Play::Plain);
+            let drawn = draw(seed, falls_only, None);
+            assert!(falls_only(drawn) || drawn.play == Play::Plain, "{drawn:?}");
+            // une seule possible en plus de « se matérialise », et c'était la dernière
+            assert_eq!(draw(seed, falls_only, Some("tombe")).play, Play::Plain);
         }
+    }
+
+    #[test]
+    fn the_names_of_the_intros_of_before_constrain_nothing() {
+        // « de tout près » et le coucou étaient des intros tirées au sort : leur nom, retenu par un
+        // lancement d'avant, ne dit rien de la dernière entrée
+        for old in ["upclose", "coucou", "inconnue"] {
+            assert_eq!(by_key(old), None);
+            let mut seen = std::collections::HashSet::new();
+            for seed in 0..400u64 {
+                seen.insert(draw(seed, |_| true, Some(old)).key);
+                assert_eq!(draw(seed, |_| true, Some(old)), draw(seed, |_| true, None), "graine {seed}");
+            }
+            assert_eq!(seen.len(), LIST.len(), "chacune peut sortir après {old}");
+        }
+        // la liste n'a plus que des entrées : aucune n'est un film
+        assert!(LIST.iter().all(|entry| matches!(entry.play, Play::Act(_) | Play::Plain)));
+        let acts: Vec<Act> = LIST
+            .iter()
+            .filter_map(|entry| match entry.play {
+                Play::Act(act) => Some(act),
+                Play::Plain => None,
+            })
+            .collect();
+        assert_eq!(acts, Act::ALL, "chacune de ses entrées jouées, une fois");
     }
 
     #[test]
@@ -549,7 +763,7 @@ mod tests {
         let keys: Vec<&str> = LIST.iter().map(|entry| entry.key).collect();
         assert_eq!(seen[..LIST.len()], keys[..]);
         assert_eq!(seen[LIST.len()..], keys[..], "puis de nouveau depuis le début");
-        // sans images : « rien », toujours
+        // sans ses planches : « se matérialise », toujours
         assert_eq!(next(None, |_| false).play, Play::Plain);
         assert_eq!(next(Some("rien"), |_| false).play, Play::Plain);
         // une inconnue : la première
@@ -559,12 +773,14 @@ mod tests {
         assert!(matches!(next(None, acts).play, Play::Act(_)));
     }
 
-    /// Une petite intro d'essai : trois images, la n° 1 tenue trois images.
+    /// Un petit film d'essai : trois images, la n° 1 tenue trois images.
     static UNEVEN: Film = Film {
+        name: "essai",
         dir: "essai",
         files: &["a.png", "b.png", "c.png"],
         size: (8, 6),
         sheet: &[(0, 2), (1, 3), (2, 2), (1, 1)],
+        glitch: None,
     };
 
     #[test]
@@ -669,8 +885,8 @@ mod tests {
         assert_eq!(intro.cut(Cut::Talked), End::Cut { why: Cut::Talked, at: Some(1) });
         assert_eq!(intro.step(1000), None, "coupée, elle ne finit pas une seconde fois");
 
-        // ce qui suit : cachée, elle le reste ; sinon elle est là, et ne dit bonjour qu'après
-        // l'intro
+        // ce qui suit : cachée, elle le reste ; sinon elle est là ; seul ce qui s'est joué compte
+        // pour son bonjour
         let hidden = End::Cut { why: Cut::Hidden, at: Some(4) };
         let talked = End::Cut { why: Cut::Talked, at: Some(4) };
         let grabbed = End::Cut { why: Cut::Grabbed, at: Some(4) };
@@ -691,7 +907,7 @@ mod tests {
             Missing::NoDecoder,
         ] {
             let end = End::Missing(why);
-            assert!(!end.greets() && !end.hides(), "sans intro, comme sans elle : {end:?}");
+            assert!(!end.greets() && !end.hides(), "rien de joué : {end:?}");
         }
     }
 
@@ -736,10 +952,7 @@ mod tests {
     fn it_always_covers_the_whole_screen_in_whole_pixels() {
         let mut sizes: Vec<f32> = (0..4000).step_by(37).map(|v| v as f32).collect();
         sizes.extend([0.5, 1.0, 1.5, 799.25, 1919.9, 1080.1]);
-        for image in LIST.iter().filter_map(|entry| match entry.play {
-            Play::Film(film) => Some(film.size),
-            _ => None,
-        }) {
+        for image in [FILM.size] {
             let ratio = image.1 as f32 / image.0 as f32;
             for &w in &sizes {
                 for &h in &sizes {
@@ -760,6 +973,87 @@ mod tests {
                     }
                 }
             }
+        }
+    }
+
+    #[test]
+    fn the_suite_plays_the_film_then_the_entry_then_she_says_hello() {
+        let entry = by_key("tombe").expect("tombe du ciel");
+        let mut suite = Suite::new(entry, true, true);
+        assert_eq!((suite.part(), suite.entry(), suite.with_film()), (Part::Film, entry, true));
+        assert!(!suite.greets() && !suite.is_over(), "pas avant la fin");
+        // l'entrée ne finit pas pendant le film
+        suite.record_entry(End::Played { shown: 30 });
+        assert_eq!((suite.part(), suite.entry_end()), (Part::Film, None));
+        assert_eq!(suite.record_film(End::Played { shown: 22 }), Some(After::Entry));
+        assert_eq!(suite.part(), Part::Entry);
+        assert!(!suite.greets(), "pas avant la fin de l'entrée");
+        assert_eq!(suite.record_film(End::Played { shown: 22 }), None, "le film ne finit qu'une fois");
+        suite.record_entry(End::Played { shown: 30 });
+        assert!(suite.is_over() && suite.greets() && !suite.hides() && !suite.was_cut());
+        assert_eq!(suite.film_end(), Some(End::Played { shown: 22 }));
+        assert_eq!(suite.entry_end(), Some(End::Played { shown: 30 }));
+        // « Voir une intro » : la même suite, sans bonjour
+        let mut encore = Suite::new(entry, true, false);
+        encore.record_film(End::Played { shown: 22 });
+        encore.record_entry(End::Played { shown: 30 });
+        assert!(encore.is_over() && !encore.greets());
+        // « se matérialise » après le film : un bonjour aussi
+        let mut plain_one = Suite::new(plain(), true, true);
+        plain_one.record_film(End::Played { shown: 22 });
+        plain_one.record_entry(End::Played { shown: 0 });
+        assert!(plain_one.greets());
+        // un film arrêté par une image illisible au milieu : l'entrée suit, et le bonjour
+        let mut broken = Suite::new(entry, true, true);
+        assert_eq!(broken.record_film(End::Broken { at: 9 }), Some(After::Entry));
+        broken.record_entry(End::Played { shown: 30 });
+        assert!(broken.greets());
+    }
+
+    #[test]
+    fn without_the_film_the_entry_plays_alone() {
+        let entry = by_key("rassemble").expect("se rassemble");
+        // ses images absentes dès le départ : l'entrée tout de suite
+        let mut alone = Suite::new(entry, false, true);
+        assert_eq!((alone.part(), alone.with_film()), (Part::Entry, false));
+        assert_eq!(alone.record_film(End::Played { shown: 22 }), None, "pas de film à finir");
+        alone.record_entry(End::Played { shown: 28 });
+        assert!(alone.greets() && alone.film_end().is_none());
+        // ses images manquent en route (illisibles, refusées, la première trop lente) : de même
+        for why in
+            [Missing::Absent { found: 3 }, Missing::Unreadable { index: 0 }, Missing::Refused, Missing::Late]
+        {
+            let mut late = Suite::new(entry, true, true);
+            assert_eq!(late.record_film(End::Missing(why)), Some(After::Entry), "{why:?}");
+            late.record_entry(End::Played { shown: 28 });
+            assert!(late.greets(), "{why:?}");
+        }
+        // rien de joué du tout (ni film, ni planches) : pas de bonjour
+        let mut nothing = Suite::new(entry, true, true);
+        nothing.record_film(End::Missing(Missing::Absent { found: 0 }));
+        nothing.record_entry(End::Missing(Missing::Absent { found: 0 }));
+        assert!(nothing.is_over() && !nothing.greets());
+    }
+
+    #[test]
+    fn hidden_or_talked_to_during_the_film_there_is_no_entry_and_no_hello() {
+        let entry = by_key("marche").expect("arrive en marchant");
+        let mut hidden = Suite::new(entry, true, true);
+        assert_eq!(hidden.record_film(End::Cut { why: Cut::Hidden, at: Some(4) }), Some(After::Hidden));
+        assert!(hidden.is_over() && hidden.hides() && hidden.was_cut() && !hidden.greets());
+        assert_eq!(hidden.entry_end(), None, "pas d'entrée");
+        hidden.record_entry(End::Played { shown: 30 });
+        assert_eq!(hidden.entry_end(), None, "finie : plus rien ne change");
+        let mut talked = Suite::new(entry, true, true);
+        assert_eq!(talked.record_film(End::Cut { why: Cut::Talked, at: None }), Some(After::Here));
+        assert!(talked.is_over() && !talked.hides() && !talked.greets());
+        // pendant l'entrée : cachée, on lui parle, attrapée, sa taille ; jamais de bonjour
+        for why in [Cut::Hidden, Cut::Talked, Cut::Grabbed, Cut::Resized] {
+            let mut suite = Suite::new(entry, true, true);
+            suite.record_film(End::Played { shown: 22 });
+            suite.record_entry(End::Cut { why, at: Some(12) });
+            assert!(suite.is_over() && suite.was_cut() && !suite.greets(), "{why:?}");
+            assert_eq!(suite.hides(), why == Cut::Hidden, "{why:?}");
         }
     }
 }

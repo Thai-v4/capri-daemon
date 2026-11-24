@@ -7,7 +7,9 @@
 //! **Ses images** sont confiées une fois pour toutes à la carte graphique ([`Renderer::add_image`]) :
 //! son dessin d'avant (une image entière) et ses planches, remises en grilles d'au plus 2 304 px de
 //! côté. Chaque image dessinée en est une part rectangulaire ([`Crop`]) : une case de planche, ou
-//! l'image entière. Une fois confiée, l'image n'a plus besoin d'être gardée en mémoire.
+//! l'image entière. Une fois confiée, l'image n'a plus besoin d'être gardée en mémoire. Un dessin
+//! peut porter une teinte ([`Tint`] : sa silhouette d'un aplat de couleur, pour les doubles du
+//! glitch de l'intro) ; sans elle, il est exactement le même qu'avant elle.
 //!
 //! **Une toile** ([`Renderer::add_canvas`]) est une image qu'on réécrit en place, d'une seule
 //! texture : l'intro du lancement y peint ses images l'une après l'autre
@@ -93,10 +95,37 @@ pub struct SpriteDraw {
     pub opacity: f32,
     /// La part de l'image à dessiner.
     pub crop: Crop,
+    /// Une teinte : sa silhouette, d'un aplat de couleur ([`Tint::NONE`] : elle telle quelle).
+    pub tint: Tint,
+}
+
+/// Une teinte posée sur un dessin : sa silhouette (sa copie violette comprise), d'un aplat de
+/// `color`, à la part `strength` (0 : rien ne change ; 1 : l'aplat seul). Ce qui est transparent
+/// le reste. C'est ainsi que se dessinent les doubles colorés du glitch de l'intro.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Tint {
+    /// Sa couleur, de 0 à 1 par canal, telle qu'à l'écran (la surface ne convertit rien).
+    pub color: [f32; 3],
+    pub strength: f32,
+}
+
+impl Tint {
+    /// Aucune teinte : le dessin tel quel, exactement comme sans elle.
+    pub const NONE: Self = Self { color: [0.0; 3], strength: 0.0 };
+
+    /// L'aplat de la couleur `rgb` (8 bits par canal), à la part `strength`.
+    pub fn of(rgb: [u8; 3], strength: f32) -> Self {
+        Self { color: rgb.map(|c| f32::from(c) / 255.0), strength: strength.clamp(0.0, 1.0) }
+    }
 }
 
 /// La force de la copie violette du dessin d'avant et du bandeau.
 pub const GHOST: f32 = 0.55;
+
+/// Combien de jeux de réglages (un par dessin d'une image) [`Renderer::settle`] garde : de quoi
+/// dessiner Capri, sa bouche et son bandeau sans en recréer. Ceux de l'intro (ses bandes et leurs
+/// doubles : 39 au plus, `capri_core::intro::glitch::MAX_BANDS` fois trois) sont rendus avec elle.
+pub const SLOTS_KEPT: usize = 4;
 
 /// Ce qu'attend au plus [`Renderer::settle`] : la carte graphique finit en quelques millisecondes
 /// ce que Capri lui donne, et la boucle ne doit pas rester bloquée si elle tarde.
@@ -115,10 +144,13 @@ struct Uniforms {
     boil: f32,
     opacity: f32,
     ghost_strength: f32,
+    /// La teinte : sa couleur, puis sa force.
+    tint: [f32; 4],
 }
 
 impl Uniforms {
     fn of(draw: &SpriteDraw, viewport: [f32; 2]) -> Self {
+        let [r, g, b] = draw.tint.color;
         Self {
             viewport,
             rect_min: draw.min,
@@ -130,6 +162,7 @@ impl Uniforms {
             boil: draw.boil,
             opacity: draw.opacity,
             ghost_strength: draw.ghost_strength,
+            tint: [r, g, b, draw.tint.strength],
         }
     }
 }
@@ -243,8 +276,9 @@ impl Renderer {
 
     /// Attend que la carte graphique ait fini ce qui lui a été soumis ([`SETTLE`] au plus), et rend
     /// tout de suite ce qu'elle ne tient plus : les images lâchées, les copies faites. Sinon, wgpu
-    /// ne le fait qu'à la soumission suivante, et une fenêtre cachée n'en fait plus aucune.
-    pub fn settle(&self) {
+    /// ne le fait qu'à la soumission suivante, et une fenêtre cachée n'en fait plus aucune. Les
+    /// jeux de réglages de plus que [`SLOTS_KEPT`] sont lâchés aussi (recréés au besoin).
+    pub fn settle(&mut self) {
         self.painter.settle();
     }
 
@@ -433,7 +467,10 @@ impl Painter {
         }
     }
 
-    fn settle(&self) {
+    fn settle(&mut self) {
+        // ceux d'une intro (ses bandes) ne servent plus ; wgpu garde ce qu'une soumission en cours
+        // lit encore, jusqu'à ce qu'elle soit finie
+        self.slots.truncate(SLOTS_KEPT);
         let wait = wgpu::PollType::Wait { submission_index: None, timeout: Some(SETTLE) };
         if let Err(err) = self.device.poll(wait) {
             log::debug!("carte graphique pas encore libre : {err}");
@@ -605,7 +642,7 @@ impl Offscreen {
         self.painter.remove_image(id);
     }
 
-    pub fn settle(&self) {
+    pub fn settle(&mut self) {
         self.painter.settle();
     }
 
@@ -615,6 +652,12 @@ impl Offscreen {
 
     pub fn image_bytes(&self) -> u64 {
         self.painter.image_bytes
+    }
+
+    /// Combien de jeux de réglages sont gardés (un par dessin de l'image la plus chargée depuis le
+    /// dernier [`Offscreen::settle`]).
+    pub fn slots(&self) -> usize {
+        self.painter.slots.len()
     }
 
     /// Dessine comme [`Renderer::render`], et rend l'image : RGBA 8 bits **prémultiplié**, ligne
@@ -838,7 +881,9 @@ mod tests {
 
     #[test]
     fn uniforms_match_the_wgsl_layout() {
-        assert_eq!(std::mem::size_of::<Uniforms>(), 64);
+        // le WGSL aligne la teinte (un vec4f) sur 16 octets : elle commence juste après les 64 d'avant
+        assert_eq!(std::mem::size_of::<Uniforms>(), 80);
+        assert_eq!(std::mem::offset_of!(Uniforms, tint), 64);
     }
 
     #[test]
@@ -885,6 +930,7 @@ mod gpu_tests {
             boil: 0.0,
             opacity: 1.0,
             crop: Crop::pixels((8, 0), (4, 4), (16, 4)),
+            tint: Tint::NONE,
         };
         let pixels = offscreen.render(&[(grid, draw)], None).expect("relue");
         let at = |x: usize, y: usize| &pixels[(y * 64 + x) * 4..(y * 64 + x) * 4 + 4];
@@ -992,6 +1038,7 @@ mod gpu_tests {
             boil: 0.0,
             opacity: 1.0,
             crop: Crop::WHOLE,
+            tint: Tint::NONE,
         };
         let middle = |pixels: &[u8]| pixels[(8 * 16 + 8) * 4..(8 * 16 + 8) * 4 + 4].to_vec();
         assert_eq!(middle(&offscreen.render(&[(canvas, draw)], None).expect("relue")), [0, 0, 0, 0]);
@@ -1007,6 +1054,62 @@ mod gpu_tests {
         offscreen.remove_image(canvas); // une seconde fois : rien
         assert!(matches!(offscreen.paint_canvas(canvas, &[0; 64]), Err(RenderError::UnknownImage(_))));
         assert_eq!(middle(&offscreen.render(&[(canvas, draw)], None).expect("relue")), [0, 0, 0, 0]);
+    }
+
+    /// Sur la vraie carte graphique : une teinte dessine sa silhouette d'un aplat de sa couleur,
+    /// prémultiplié (une moitié transparente reste à moitié transparente, et sa couleur aussi) ;
+    /// sans teinte, l'image est exactement la même que sans le champ ; et `settle` rend les jeux de
+    /// réglages de plus que `SLOTS_KEPT`.
+    #[test]
+    #[ignore = "dessine sur la vraie carte graphique de cette machine"]
+    fn a_tint_draws_a_flat_silhouette_and_none_changes_nothing() {
+        let mut offscreen = Offscreen::new(16, 16).expect("une carte graphique");
+        // la moitié gauche opaque (orange), la droite à moitié transparente (bleue)
+        let mut rgba = Vec::new();
+        for _y in 0..4 {
+            rgba.extend_from_slice(&[240, 120, 20, 255, 240, 120, 20, 255, 0, 0, 255, 128, 0, 0, 255, 128]);
+        }
+        let image = offscreen.add_image(SpriteImage { width: 4, height: 4, rgba: &rgba }).expect("confiée");
+        let draw = SpriteDraw {
+            min: [0.0, 0.0],
+            size: [16.0, 16.0],
+            ghost: [0.0, 0.0],
+            ghost_strength: 0.0,
+            boil_seed: 0,
+            boil: 0.0,
+            opacity: 1.0,
+            crop: Crop::WHOLE,
+            tint: Tint::NONE,
+        };
+        let at = |pixels: &[u8], x: usize| pixels[(8 * 16 + x) * 4..(8 * 16 + x) * 4 + 4].to_vec();
+        let plain = offscreen.render(&[(image, draw)], None).expect("relue");
+        assert_eq!(at(&plain, 2), [240, 120, 20, 255]);
+        let blue = at(&plain, 13);
+        assert!(blue[3] == 128 && blue[2] == 128 && blue[0] == 0, "{blue:?}");
+        // une teinte nulle : à l'octet près la même image
+        let none = SpriteDraw { tint: Tint { color: [1.0, 0.0, 1.0], strength: 0.0 }, ..draw };
+        assert_eq!(offscreen.render(&[(image, none)], None).expect("relue"), plain);
+        // le violet de ses doubles, en aplat : opaque où elle l'est, à moitié où elle l'est à moitié
+        let violet = SpriteDraw { tint: Tint::of([122, 57, 252], 1.0), ..draw };
+        let tinted = offscreen.render(&[(image, violet)], None).expect("relue");
+        assert_eq!(at(&tinted, 2), [122, 57, 252, 255]);
+        let half = at(&tinted, 13);
+        assert_eq!(half[3], 128);
+        for (channel, full) in [122u8, 57, 252].into_iter().enumerate() {
+            let expected = f32::from(full) * 128.0 / 255.0;
+            assert!((f32::from(half[channel]) - expected).abs() <= 1.0, "{half:?}");
+        }
+        // dehors, rien
+        let empty = SpriteDraw { min: [0.0, 0.0], size: [4.0, 4.0], ..violet };
+        let outside = offscreen.render(&[(image, empty)], None).expect("relue");
+        assert_eq!(at(&outside, 12), [0, 0, 0, 0]);
+        // trente dessins d'un coup, puis `settle` : il n'en garde que `SLOTS_KEPT`
+        let many = vec![(image, draw); 30];
+        let _ = offscreen.render(&many, None).expect("relue");
+        assert_eq!(offscreen.slots(), 30);
+        offscreen.settle();
+        assert_eq!(offscreen.slots(), SLOTS_KEPT);
+        assert_eq!(offscreen.render(&[(image, draw)], None).expect("relue"), plain, "toujours la même");
     }
 }
 

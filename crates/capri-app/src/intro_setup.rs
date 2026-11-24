@@ -1,11 +1,12 @@
-//! Le réglage « Intro au démarrage », et la dernière intro jouée au lancement, côté fichiers.
+//! Le réglage « Intro au démarrage », et la dernière entrée tirée au lancement, côté fichiers.
 //!
 //! `intro.json`, dans le dossier de Capri, dit deux choses : `"enabled": false` quand on lui a
-//! retiré son intro depuis son menu (sans ce fichier, l'intro se joue au lancement, et elle dit
-//! bonjour après) ; et `"last"`, le nom court de la dernière intro tirée au lancement
-//! (`capri_core::intro::Entry::key`), pour ne pas jouer la même deux lancements de suite. Il ne
-//! contient rien d'autre. Un fichier illisible : l'intro se joue, tirée sans contrainte ; un nom
-//! inconnu, ou qui n'est pas un texte, ne contraint rien.
+//! retiré son intro depuis son menu (sans ce fichier, l'intro se joue au lancement : le film, puis
+//! une entrée, et elle dit bonjour après) ; et `"last"`, le nom court de la dernière entrée tirée au
+//! lancement (`capri_core::intro::Entry::key`), pour ne pas jouer la même deux lancements de suite.
+//! Il ne contient rien d'autre. Un fichier illisible : l'intro se joue, l'entrée tirée sans
+//! contrainte ; un nom inconnu (dont ceux des intros d'avant, `upclose` et `coucou`), ou qui n'est
+//! pas un texte, vaut « aucune ».
 //!
 //! **Jamais pendant un essai** ([`testing`]) : dès que `CAPRI_CONFIG_DIR` est posée, ou qu'une
 //! répétition de la vraie app est demandée (`update_setup::REHEARSALS` : sa variable là, vide ou
@@ -21,7 +22,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result, bail};
 use capri_claude::places::CAPRI_DIR_ENV;
 
-use capri_core::intro::Entry;
+use capri_core::intro::{self, Entry};
 
 use crate::brain_setup::read_text;
 use crate::update_setup;
@@ -33,7 +34,7 @@ const INTRO_FILE: &str = "intro.json";
 pub struct IntroSettings {
     /// L'intro se joue-t-elle au lancement ?
     pub enabled: bool,
-    /// Le nom court de la dernière intro tirée au lancement, s'il y en a un.
+    /// Le nom court de la dernière entrée tirée au lancement, s'il y en a un.
     pub last: Option<String>,
 }
 
@@ -51,7 +52,7 @@ pub fn load(directory: &Path) -> Result<IntroSettings> {
     parse(&text).with_context(|| format!("réglage illisible ({})", file.display()))
 }
 
-/// Retient la case de son menu et la dernière intro tirée au lancement.
+/// Retient la case de son menu et la dernière entrée tirée au lancement.
 pub fn save(directory: &Path, settings: &IntroSettings) -> Result<PathBuf> {
     let last = match &settings.last {
         Some(key) => format!(",\n  \"last\": {}", serde_json::to_string(key).context("son nom")?),
@@ -66,14 +67,15 @@ pub fn save(directory: &Path, settings: &IntroSettings) -> Result<PathBuf> {
 pub struct Opening {
     /// La case « Intro au démarrage », telle que retenue (cochée si le fichier est illisible).
     pub enabled: bool,
-    /// L'intro tirée, s'il y en a une (case cochée, et pas pendant un essai).
+    /// L'entrée tirée, s'il y a une intro (case cochée, et pas pendant un essai).
     pub entry: Option<&'static Entry>,
 }
 
-/// L'intro du lancement : ce que dit `intro.json` dans `directory` (`None` : pas de dossier),
-/// tirée par `draw` d'après la dernière jouée, puis retenue pour la prochaine fois. Pendant un essai
-/// (`testing`), ni intro ni écriture. Un fichier illisible : elle joue l'intro, tirée sans
-/// contrainte, et **le fichier n'est pas réécrit** (la dernière jouée n'est pas retenue cette
+/// L'intro du lancement : ce que dit `intro.json` dans `directory` (`None` : pas de dossier), son
+/// entrée tirée par `draw` d'après la dernière (un nom qui n'est pas celui d'une entrée de
+/// `capri_core::intro::LIST` vaut « aucune »), puis retenue pour la prochaine fois. Pendant un
+/// essai (`testing`), ni intro ni écriture. Un fichier illisible : elle joue l'intro, l'entrée
+/// tirée sans contrainte, et **le fichier n'est pas réécrit** (la dernière n'est pas retenue cette
 /// fois-là ; une ligne d'avertissement le dit) : seule la case de son menu le réécrit.
 pub fn opening(
     directory: Option<&Path>,
@@ -92,7 +94,8 @@ pub fn opening(
     if !settings.enabled || testing {
         return Opening { enabled: settings.enabled, entry: None };
     }
-    let entry = draw(settings.last.as_deref());
+    let last = settings.last.as_deref().filter(|key| intro::by_key(key).is_some());
+    let entry = draw(last);
     match (directory, &loaded) {
         (Some(directory), Some(Ok(_))) => {
             let remembered = IntroSettings { last: Some(entry.key.to_owned()), ..settings.clone() };
@@ -172,7 +175,7 @@ mod tests {
         // un nom qui n'est pas un texte ne contraint rien, et ne rend pas le fichier illisible
         let odd = parse(r#"{"enabled": false, "last": 4}"#).expect("lisible");
         assert_eq!(odd, IntroSettings { enabled: false, last: None });
-        // un nom inconnu est gardé tel quel : le tirage l'ignore (`capri_core::intro::draw`)
+        // un nom inconnu est gardé tel quel à la lecture : au lancement, il vaut « aucune »
         let unknown = parse(r#"{"last": "disparue"}"#).expect("lisible");
         assert_eq!(unknown.last.as_deref(), Some("disparue"));
         assert!(capri_core::intro::by_key("disparue").is_none());
@@ -217,6 +220,32 @@ mod tests {
         });
         assert!(unreadable.enabled && unreadable.entry.is_some());
         assert_eq!(std::fs::read_to_string(directory.join("intro.json")).expect("lu"), hand_written);
+        std::fs::remove_dir_all(&directory).expect("nettoyé");
+    }
+
+    #[test]
+    fn the_name_of_an_intro_of_before_counts_as_none_and_is_replaced() {
+        use capri_core::intro::{LIST, by_key};
+        let directory = temporary("ancien");
+        for old in ["upclose", "coucou", "disparue"] {
+            save(&directory, &IntroSettings { enabled: true, last: Some(old.to_owned()) }).expect("écrit");
+            let mut asked = Vec::new();
+            let opening = opening(Some(&directory), false, |last| {
+                asked.push(last.map(str::to_owned));
+                &LIST[1]
+            });
+            assert_eq!(asked, [None], "{old} : comme si aucune");
+            assert_eq!(opening.entry, Some(&LIST[1]));
+            // remplacé par l'entrée tirée
+            assert_eq!(load(&directory).expect("relu").last.as_deref(), Some(LIST[1].key), "{old}");
+        }
+        // une entrée connue, elle, contraint le tirage
+        save(&directory, &IntroSettings { enabled: true, last: Some("tombe".to_owned()) }).expect("écrit");
+        let opening = opening(Some(&directory), false, |last| {
+            assert_eq!(last, Some("tombe"));
+            by_key("rien").expect("se matérialise")
+        });
+        assert_eq!(opening.entry.map(|entry| entry.key), Some("rien"));
         std::fs::remove_dir_all(&directory).expect("nettoyé");
     }
 

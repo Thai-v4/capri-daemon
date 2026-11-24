@@ -51,8 +51,8 @@ cd "$ROOT"
 # Les images que lit le code : son dessin d'avant, indispensable (assets.rs : SPRITE), sa pose
 # assise (capri_core::sheets), sa pose debout (capri_core::sheets::stand), les planches de sa
 # vie (capri_core::sheets::life, son sommeil et son réveil debout compris), sa pose allongée
-# (capri_core::sheets::lie ; ces deux-là lues à la demande, pas au lancement) et l'intro du
-# lancement (capri_core::intro : 01.png à 22.png).
+# (capri_core::sheets::lie ; ces deux-là lues à la demande, pas au lancement) et le film de
+# l'intro du lancement (capri_core::intro, « de tout près » : 01.png à 22.png).
 # Les autres images que télécharge tools/fetch-assets.sh ne servent pas : elles restent hors de
 # l'app.
 IMAGES=(
@@ -105,15 +105,6 @@ IMAGES=(
   capri/intro/20.png
   capri/intro/21.png
   capri/intro/22.png
-  capri/intro-grab.webp
-  capri/intro-smear.webp
-  capri/intro-wave1.webp
-  capri/intro-wave2.webp
-  capri/intro-wave3.webp
-  capri/intro-mouth1.webp
-  capri/intro-mouth2.webp
-  capri/intro-mouth3.webp
-  capri/intro-happy.webp
 )
 
 # Avant de compiler : toutes les images sont-elles là ?

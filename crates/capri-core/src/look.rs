@@ -851,8 +851,9 @@ impl Look {
     }
 
     /// « Voir une intro », à l'image `frame` : elle s'efface de là où elle est dessinée, comme
-    /// cachée, mais la fenêtre reste montrée ; une fois effacée ([`Look::is_offstage`]), l'intro
-    /// se joue ([`Look::perform`], ou `Look::enter` après une intro en images ou « rien »). Seulement
+    /// cachée, mais la fenêtre reste montrée ; une fois effacée ([`Look::is_offstage`]), la suite
+    /// se joue : le film, puis l'entrée ([`Look::perform`], ou `Look::enter` pour « se
+    /// matérialise », ou le film coupé en lui parlant). Seulement
     /// si elle est là et libre : ni tenue ni lancée, ni en marche, et on ne se parle pas
     /// ([`Look::set_conversing`], à dire juste avant) ; sinon rend
     /// ce qui la retient, et rien ne change. Un geste en cours s'arrête. Sans ses planches de vie,
@@ -897,11 +898,31 @@ impl Look {
     /// et se relever ; arriver en marchant : sa marche, et assez de place pour marcher au moins
     /// `act::WALK_SHORTEST` jusqu'à sa place ; se rassembler : son arrivée.
     pub fn can_perform(&self, act: Act, capri: &Capri) -> bool {
-        match act {
+        self.lacks(act, capri).is_none()
+    }
+
+    /// Ce qui lui manque pour jouer cette intro d'où elle est : ses planches
+    /// (`Missing::Absent { found: 0 }`), ou la place (`Missing::NoRoom`).
+    fn lacks(&self, act: Act, capri: &Capri) -> Option<intro::Missing> {
+        let sheets = match act {
             Act::Fall => self.has_move(life::Strip::Dangle) && self.has_move(life::Strip::Glitch),
-            Act::Walk => self.has_move(life::Strip::Walk) && self.walk_in(capri).is_some(),
+            Act::Walk => self.has_move(life::Strip::Walk),
             Act::Gather => self.has_life(),
+        };
+        if !sheets {
+            return Some(intro::Missing::Absent { found: 0 });
         }
+        (act == Act::Walk && self.walk_in(capri).is_none()).then_some(intro::Missing::NoRoom)
+    }
+
+    /// Pourquoi [`Look::perform`] refuserait cette intro maintenant : ses planches lui manquent
+    /// (`Missing::Absent { found: 0 }`), ou la place d'où elle est (`Missing::NoRoom`), ou elle
+    /// n'est pas prête (`Missing::NotReady` : ni à son entrée en scène ni effacée pour une intro,
+    /// tenue, en marche) ; `None` si elle la jouerait. Pour que le journal dise la vraie raison.
+    pub fn cannot_perform(&self, act: Act, capri: &Capri) -> Option<intro::Missing> {
+        let ready = matches!(self.presence, Presence::Here | Presence::Gone(_, Exit::Encore));
+        self.lacks(act, capri)
+            .or_else(|| (!ready || carried(capri) || capri.is_walking()).then_some(intro::Missing::NotReady))
     }
 
     /// D'où elle part pour arriver en marchant à sa place (ses pieds, debout, dans l'écran), et
@@ -4020,7 +4041,7 @@ mod tests {
         assert!(look.is_offstage() && !look.is_gone() && !look.is_between());
         assert!(look.perform(&mut c, Act::Gather, 30));
         assert!(look.is_performing() && (c.feet() - place).length() < 1e-3);
-        // l'intro en images, ou « rien » : elle se matérialise ensuite
+        // « se matérialise », ou le film coupé en lui parlant : elle se matérialise ensuite
         let mut look = moving();
         let mut c = capri(&look);
         c.step(0.0, 0);
@@ -4098,6 +4119,128 @@ mod tests {
         at(&mut look, &mut c, 200, false, false);
         assert!(look.perform(&mut c, Act::Walk, 200));
         assert!(c.perched().is_none() && !look.is_seated(&c));
+    }
+
+    /// Elle, effacée pour « Voir une intro » (`encore`), ou telle qu'au lancement, pas encore
+    /// entrée en scène : prête pour la suite d'une intro, à l'image rendue.
+    fn before_the_suite(look: &mut Look, c: &mut Capri, encore: bool) -> u64 {
+        c.step(0.0, 0);
+        if !encore {
+            return 0;
+        }
+        look.bow_out(c, 0).expect("libre");
+        let frame = life::leaving().len() + 2;
+        at(look, c, frame, false, false);
+        assert!(look.is_offstage());
+        frame
+    }
+
+    /// Elle apparaît (son arrivée, d'abord), puis elle est là, en moins de deux secondes : jamais
+    /// laissée là où elle était (pas encore entrée en scène, ou effacée pour toujours).
+    fn appears(look: &mut Look, c: &mut Capri, from: u64, what: &str) {
+        assert!(!look.is_here() && !look.is_away() && !look.is_offstage(), "{what} : elle n'apparaît pas");
+        assert!(!look.is_performing(), "{what}");
+        let here = (from + 1..from + 48).find(|&frame| {
+            at(look, c, frame, false, false);
+            look.is_here()
+        });
+        assert!(here.is_some(), "{what} : jamais là");
+    }
+
+    #[test]
+    fn after_the_film_the_suite_makes_her_appear_play_her_entry_or_stay_hidden() {
+        use crate::intro::{After, Cut, Missing, Suite, by_key, plain};
+        let played = End::Played { shown: 22 };
+        let falls = by_key("tombe").expect("tombe du ciel");
+        let walks = by_key("marche").expect("arrive en marchant");
+        // arriver en marchant n'est jamais impossible faute de place d'où elle est, dans l'écran :
+        // il faudrait ses pieds à la fois à plus de 4 s de marche du bord droit, sa toile de vie
+        // comprise, et à moins d'une seconde de là où sa toile y tient entière ; ses proportions
+        // (à gauche et à droite de ses pieds, sa vitesse) l'excluent, à toute taille
+        let look = moving();
+        for width in [3024.0, 1400.0, 700.0, 300.0] {
+            let screen = Rect::new(Vec2::ZERO, Vec2::new(width, 1964.0));
+            for x in (0..width as u32).step_by(3) {
+                let mut c = Capri::new(look.standing_size(), screen, Vec2::new(0.0, 800.0));
+                c.set_feet(look.standing_feet());
+                c.set_at(Vec2::new(x as f32, 1500.0));
+                assert_ne!(look.cannot_perform(Act::Walk, &c), Some(Missing::NoRoom), "{width} {x}");
+            }
+        }
+        for encore in [false, true] {
+            let when = if encore { "« Voir une intro »" } else { "au lancement" };
+            // le film joué, puis « se matérialise » : elle apparaît, la suite est finie
+            let (mut look, mut c) = (moving(), capri(&moving()));
+            let frame = before_the_suite(&mut look, &mut c, encore);
+            let mut suite = Suite::new(plain(), true, !encore);
+            assert_eq!(suite.film_over(played, &mut look, &mut c, frame), Some(After::Entry));
+            assert!(suite.is_over() && suite.greets() == !encore, "{when}");
+            assert_eq!(suite.entry_end(), Some(End::Played { shown: 0 }));
+            appears(&mut look, &mut c, frame, &format!("{when}, après le film, « se matérialise »"));
+            // le film coupé parce qu'on lui parle : elle apparaît à sa place, sans entrée
+            let (mut look, mut c) = (moving(), capri(&moving()));
+            let frame = before_the_suite(&mut look, &mut c, encore);
+            let mut suite = Suite::new(falls, true, !encore);
+            let talked = End::Cut { why: Cut::Talked, at: Some(5) };
+            assert_eq!(suite.film_over(talked, &mut look, &mut c, frame), Some(After::Here));
+            assert!(suite.is_over() && !suite.greets() && suite.entry_end().is_none(), "{when}");
+            appears(&mut look, &mut c, frame, &format!("{when}, le film coupé en lui parlant"));
+            // le film coupé en la cachant : cachée, sans s'être montrée
+            let (mut look, mut c) = (moving(), capri(&moving()));
+            let frame = before_the_suite(&mut look, &mut c, encore);
+            let mut suite = Suite::new(falls, true, !encore);
+            let hidden = End::Cut { why: Cut::Hidden, at: Some(5) };
+            assert_eq!(suite.film_over(hidden, &mut look, &mut c, frame), Some(After::Hidden));
+            assert!(look.is_gone() && look.is_hidden() && suite.hides(), "{when}");
+            // le film joué, puis une entrée qu'elle joue : elle la joue ; finie, la suite aussi
+            let (mut look, mut c) = (moving(), capri(&moving()));
+            let frame = before_the_suite(&mut look, &mut c, encore);
+            let mut suite = Suite::new(falls, true, !encore);
+            suite.film_over(played, &mut look, &mut c, frame);
+            assert!(look.is_performing() && !suite.is_over(), "{when}");
+            let end = (frame + 1..frame + 200).find_map(|frame| {
+                c.step(1.0 / 24.0, frame);
+                look.update(&mut c, frame, false, false);
+                look.take_performed().map(|end| (end, frame))
+            });
+            let (end, ended) = end.expect("finie");
+            suite.entry_over(end, &mut look, &mut c, ended);
+            assert!(suite.is_over() && suite.greets() == !encore, "{when} : {end:?}");
+            // sans le film (ses images absentes) : l'entrée tout de suite
+            let (mut look, mut c) = (moving(), capri(&moving()));
+            let frame = before_the_suite(&mut look, &mut c, encore);
+            let mut alone = Suite::new(plain(), false, !encore);
+            alone.begin_entry(&mut look, &mut c, frame);
+            assert!(alone.is_over());
+            appears(&mut look, &mut c, frame, &format!("{when}, sans film"));
+        }
+        // une entrée qu'elle n'est pas prête à jouer (déjà en train d'apparaître) : elle se
+        // matérialise, et le journal dira pourquoi (pas « pas de planches ») ; elle dit bonjour
+        // (le film s'est joué)
+        let mut look = moving();
+        let mut c = capri(&look);
+        c.step(0.0, 0);
+        look.enter(&mut c, 0);
+        let mut suite = Suite::new(falls, true, true);
+        suite.film_over(played, &mut look, &mut c, 1);
+        assert_eq!(suite.entry_end(), Some(End::Missing(Missing::NotReady)));
+        assert!(suite.greets() && !look.is_performing());
+        // sans sa planche de marche : « pas de planches »
+        let mut bare = dressed(true, true);
+        let mut c = capri(&bare);
+        c.step(0.0, 0);
+        assert_eq!(bare.cannot_perform(Act::Walk, &c), Some(Missing::Absent { found: 0 }));
+        let mut suite = Suite::new(walks, true, true);
+        suite.film_over(played, &mut bare, &mut c, 0);
+        assert_eq!(suite.entry_end(), Some(End::Missing(Missing::Absent { found: 0 })));
+        appears(&mut bare, &mut c, 0, "sans sa planche de marche");
+        // prête, rien ne manque ; en train d'apparaître, pas prête
+        let mut look = moving();
+        let mut c = capri(&look);
+        c.step(0.0, 0);
+        assert_eq!(look.cannot_perform(Act::Fall, &c), None);
+        look.enter(&mut c, 0);
+        assert_eq!(look.cannot_perform(Act::Fall, &c), Some(Missing::NotReady));
     }
 
     #[test]

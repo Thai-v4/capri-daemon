@@ -101,6 +101,17 @@ fn check(scratch: &Path, extra: &[(&str, &str)]) -> (bool, String) {
     (output.status.success(), said)
 }
 
+/// Tout son journal en fichier, dans le dossier `logs` : le précédent (`capri.old.log`, s'il a
+/// tourné, ce qu'il fait vite au niveau `trace`), puis le courant ; ce qui est attendu peut être
+/// dans l'un ou l'autre, et ce qui ne doit jamais y être, ni dans l'un ni dans l'autre. Rend aussi
+/// s'il a tourné.
+fn whole_journal(logs: &Path) -> (String, bool) {
+    let old = std::fs::read_to_string(logs.join("capri.old.log")).ok();
+    let current = std::fs::read_to_string(logs.join("capri.log")).unwrap_or_default();
+    let rotated = old.is_some();
+    (old.unwrap_or_default() + &current, rotated)
+}
+
 #[test]
 fn from_a_test_folder_the_command_looks_nowhere() {
     let scratch = Scratch::new("capri-test-mises-a-jour-commande");
@@ -219,7 +230,9 @@ fn the_real_app_hears_of_a_newer_version_from_a_local_server_and_never_logs_the_
     assert!(log.contains("mises à jour : le serveur d'essai regardé dans 3 s"), "{}", shown.join("\n"));
     assert!(log.contains("mises à jour : version 9.0.0 disponible"), "{}", shown.join("\n"));
     assert!(log.contains("message de l'app affiché à son tour"), "{}", shown.join("\n"));
-    let journal = std::fs::read_to_string(directory.0.join("logs").join("capri.log")).expect("son journal");
+    // ses deux fichiers : au niveau `trace`, il tourne vite
+    let (journal, rotated) = whole_journal(&directory.0.join("logs"));
+    println!("journal : {} octets, tourné : {rotated}", journal.len());
     assert!(journal.contains("mises à jour : version 9.0.0 disponible"));
     for text in [&log, &journal] {
         assert!(!text.contains(SIGNATURE), "l'adresse signée est dans le journal");

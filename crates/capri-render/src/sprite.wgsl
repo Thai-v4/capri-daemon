@@ -1,5 +1,6 @@
 // Capri : un quad texturé, une part rectangulaire de son image (une case de planche, ou l'image
-// entière), son « boil » et sa copie violette mal repérée.
+// entière), son « boil », sa copie violette mal repérée, et une teinte (les doubles colorés du
+// glitch de l'intro : sa silhouette d'un aplat de couleur).
 // Couleurs prémultipliées de bout en bout (macOS et DirectComposition composent ainsi).
 
 struct Uniforms {
@@ -13,6 +14,7 @@ struct Uniforms {
     boil: f32,         // amplitude du boil, px
     opacity: f32,
     ghost_strength: f32, // 0 : pas de copie violette
+    tint: vec4f,       // teinte : sa couleur (rgb), sa force (a) ; 0 : aucune
 }
 
 @group(0) @binding(0) var<uniform> u: Uniforms;
@@ -80,5 +82,10 @@ fn fs_main(in: VsOut) -> @location(0) vec4f {
     let violet = vec4f(0.45, 0.16, 0.88, 1.0) * ghost_a * u.ghost_strength;
 
     // elle, par-dessus sa copie violette
-    return (body + violet * (1.0 - body.a)) * u.opacity;
+    let shown = body + violet * (1.0 - body.a);
+    // une teinte : sa silhouette d'un aplat de sa couleur, prémultiplié (la couleur fois l'alpha) ;
+    // sans teinte, `select` rend exactement ce qui précède
+    let flat = vec4f(u.tint.rgb * shown.a, shown.a);
+    let tinted = select(shown, mix(shown, flat, u.tint.a), u.tint.a > 0.0);
+    return tinted * u.opacity;
 }

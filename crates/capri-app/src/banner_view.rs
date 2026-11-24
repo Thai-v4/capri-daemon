@@ -578,6 +578,7 @@ impl BannerView {
             boil: 0.0,
             opacity: pose.opacity,
             crop: capri_render::Crop::WHOLE,
+            tint: capri_render::Tint::NONE,
         })
     }
 }

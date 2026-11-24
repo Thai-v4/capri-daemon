@@ -39,7 +39,7 @@ use capri_core::Rect;
 use capri_core::intro::act;
 use capri_core::look::{Drawing, Look, Moves, Picture, Wants, Wardrobe};
 use capri_core::sheets::{self, Shown, lie, life, stand};
-use capri_render::{Crop, GHOST, ImageId, RenderError, SpriteDraw, SpriteImage};
+use capri_render::{Crop, GHOST, ImageId, RenderError, SpriteDraw, SpriteImage, Tint};
 
 use crate::assets::Sprite;
 use crate::assets::life::LifeSheets;
@@ -270,6 +270,7 @@ impl Figure {
             boil: 0.0,
             opacity: 1.0,
             crop: Crop::WHOLE,
+            tint: Tint::NONE,
         };
         let cutout = || {
             let unit = rect.size.y / 420.0; // son dessin d'avant fait 420 px de haut

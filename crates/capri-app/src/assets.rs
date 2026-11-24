@@ -582,17 +582,16 @@ pub mod rest {
     }
 }
 
-/// Ses intros en images (« Up close » dans `assets/capri/intro/`, le coucou dans `assets/capri/`,
-/// voir CREDITS.md et `capri_core::intro`) : de grandes images, **jamais lues toutes ensemble**.
-/// Elles sont vérifiées d'abord (toutes là, et toutes à la bonne taille, d'après leur seul
-/// en-tête), puis décodées une à une, à la demande, par le thread de `intro_view`. PNG ou WebP
-/// (le crate `image`, avec sa fonction `webp` : `image-webp`, en Rust seulement).
+/// Le film de ses intros (« de tout près » dans `assets/capri/intro/`, voir CREDITS.md et
+/// `capri_core::intro`) : de grandes images, **jamais lues toutes ensemble**. Elles sont vérifiées
+/// d'abord (toutes là, et toutes à la bonne taille, d'après leur seul en-tête), puis décodées une à
+/// une, à la demande, par le thread de `intro_view`. En PNG.
 pub mod intro {
     use std::path::{Path, PathBuf};
 
     use capri_core::intro::{Film, Missing};
 
-    /// Une intro en images : où sont ses fichiers, et ce qu'elle joue.
+    /// Un film : où sont ses fichiers, et ce qu'il joue.
     pub struct Sequence {
         /// Le dossier de ses fichiers.
         pub dir: PathBuf,
@@ -600,7 +599,7 @@ pub mod intro {
     }
 
     impl Sequence {
-        /// L'intro `film`, dans le dossier d'images `assets` (celui qui contient `capri/`).
+        /// Le film `film`, dans le dossier d'images `assets` (celui qui contient `capri/`).
         pub fn of(film: &'static Film, assets: &Path) -> Self {
             Self { dir: assets.join(film.dir), film }
         }
@@ -609,16 +608,23 @@ pub mod intro {
             self.dir.join(self.film.files[image])
         }
 
-        /// Ses fichiers sont-ils tous là (sans les lire) ?
+        /// Ses fichiers sont-ils tous là (sans les lire) ? (« Voir une intro », que seuls macOS et
+        /// Windows ont.)
+        #[cfg(any(target_os = "macos", windows, test))]
         pub fn present(&self) -> bool {
             (0..self.film.files.len()).all(|image| self.path(image).is_file())
+        }
+
+        /// Combien de ses fichiers sont là (sans les lire) ?
+        pub fn found(&self) -> u32 {
+            (0..self.film.files.len()).filter(|&image| self.path(image).is_file()).count() as u32
         }
 
         /// Toutes là, et toutes de la taille attendue ? D'après leur en-tête seulement : rien
         /// n'est décodé ici. Le journal n'en dira que des nombres (`intro_view`).
         pub fn check(&self) -> Result<(), Missing> {
             let count = self.film.files.len();
-            let found = (0..count).filter(|&image| self.path(image).is_file()).count() as u32;
+            let found = self.found();
             if found < count as u32 {
                 return Err(Missing::Absent { found });
             }
@@ -649,12 +655,14 @@ pub mod intro {
         }
     }
 
-    /// L'intro `film`, dans le premier dossier d'images trouvé ; `None` s'il n'y en a aucun.
+    /// Le film `film`, dans le premier dossier d'images trouvé ; `None` s'il n'y en a aucun.
     pub fn sequence(film: &'static Film) -> Option<Sequence> {
         Some(Sequence::of(film, &super::assets_dir()?))
     }
 
-    /// Ses fichiers sont-ils tous là (sans les lire) ? De quoi la tirer au sort, ou non.
+    /// Ses fichiers sont-ils tous là (sans les lire) ? (« Voir une intro », que seuls macOS et
+    /// Windows ont.)
+    #[cfg(any(target_os = "macos", windows))]
     pub fn present(film: &'static Film) -> bool {
         sequence(film).is_some_and(|sequence| sequence.present())
     }
@@ -893,11 +901,7 @@ mod tests {
             read.extend(stand::Strip::ALL.iter().map(|strip| format!("{}/{}", stand::DIR, strip.file())));
             read.extend(life::Strip::ALL.iter().map(|strip| format!("{}/{}", life::DIR, strip.file())));
             read.extend(lie::Strip::ALL.iter().map(|strip| format!("{}/{}", lie::DIR, strip.file())));
-            for entry in intro::LIST {
-                if let intro::Play::Film(film) = entry.play {
-                    read.extend(film.files.iter().map(|file| format!("{}/{file}", film.dir)));
-                }
-            }
+            read.extend(intro::FILM.files.iter().map(|file| format!("{}/{}", intro::FILM.dir, file)));
             listed.sort_unstable();
             read.sort_unstable();
             read.dedup();
@@ -1196,47 +1200,39 @@ mod tests {
         assert!(last.as_chunks::<4>().0.iter().any(|pixel| pixel[3] == 0), "à fond transparent");
     }
 
-    /// Les vraies images de chacune de ses intros en images, si `tools/fetch-assets.sh` les a
-    /// téléchargées (rien n'est téléchargé ici) : toutes là, à la taille décrite, décodées en RGBA
-    /// 8 bits (PNG ou WebP à canal alpha), à fond transparent (une bonne part de l'une des deux
-    /// images décodées). Seules deux par intro sont décodées : en version de débogage, les
-    /// décodeurs sont lents.
+    /// Les vraies images du film, si `tools/fetch-assets.sh` les a téléchargées (rien n'est
+    /// téléchargé ici) : toutes là, à la taille décrite, décodées en RGBA 8 bits, à fond transparent
+    /// (une bonne part de l'une des deux images décodées). Seules deux sont décodées : en version de
+    /// débogage, le décodeur est lent.
     #[test]
-    fn the_real_films_match_their_description_when_present() {
-        use capri_core::intro::{self, Play};
+    fn the_real_film_matches_its_description_when_present() {
+        use capri_core::intro;
 
         let Some(dir) = super::assets_dir() else { return };
-        for entry in intro::LIST {
-            let Play::Film(film) = entry.play else { continue };
-            let sequence = super::intro::Sequence::of(film, &dir);
-            if !sequence.present() {
-                continue;
-            }
-            assert_eq!(sequence.check(), Ok(()), "{}", entry.key);
-            // à fond transparent : une bonne part d'au moins une des deux (la première de « Up
-            // close » est pleine)
-            let mut clearest = 0.0f64;
-            for position in [0, film.len() - 3] {
-                let image = usize::from(film.image(position).expect("son image"));
-                let path = sequence.dir.join(film.files[image]);
-                let started = std::time::Instant::now();
-                let decoded = image::ImageReader::open(&path).unwrap().decode().unwrap();
-                println!(
-                    "{} : {} décodée en {} ms",
-                    entry.key,
-                    film.files[image],
-                    started.elapsed().as_millis()
-                );
-                assert_eq!(decoded.color(), image::ColorType::Rgba8, "{}", film.files[image]);
-                let pixels = sequence.decode(position).expect("lisible");
-                assert_eq!(pixels.len(), (film.size.0 * film.size.1 * 4) as usize);
-                let clear = pixels.as_chunks::<4>().0.iter().filter(|pixel| pixel[3] == 0).count();
-                let share = clear as f64 / (pixels.len() / 4) as f64;
-                println!("{} : {:.0} % de pixels transparents", film.files[image], share * 100.0);
-                clearest = clearest.max(share);
-            }
-            assert!(clearest > 0.2, "{} : à fond transparent : {clearest}", entry.key);
+        let film = intro::FILM;
+        let sequence = super::intro::Sequence::of(film, &dir);
+        if !sequence.present() {
+            return;
         }
+        assert_eq!(sequence.found(), film.files.len() as u32);
+        assert_eq!(sequence.check(), Ok(()));
+        // à fond transparent : une bonne part d'au moins une des deux (la première est pleine)
+        let mut clearest = 0.0f64;
+        for position in [0, film.len() - 3] {
+            let image = usize::from(film.image(position).expect("son image"));
+            let path = sequence.dir.join(film.files[image]);
+            let started = std::time::Instant::now();
+            let decoded = image::ImageReader::open(&path).unwrap().decode().unwrap();
+            println!("{} décodée en {} ms", film.files[image], started.elapsed().as_millis());
+            assert_eq!(decoded.color(), image::ColorType::Rgba8, "{}", film.files[image]);
+            let pixels = sequence.decode(position).expect("lisible");
+            assert_eq!(pixels.len(), (film.size.0 * film.size.1 * 4) as usize);
+            let clear = pixels.as_chunks::<4>().0.iter().filter(|pixel| pixel[3] == 0).count();
+            let share = clear as f64 / (pixels.len() / 4) as f64;
+            println!("{} : {:.0} % de pixels transparents", film.files[image], share * 100.0);
+            clearest = clearest.max(share);
+        }
+        assert!(clearest > 0.2, "à fond transparent : {clearest}");
     }
 
     mod alive {

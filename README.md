@@ -329,69 +329,72 @@ faudra `tools/install-macos.sh`, et la ligne de son menu le dira.
 Écrit et testé sans écran le 23 novembre 2026, images fixes rendues et regardées ; regardé par l'utilisateur le soir même, la Capri du dépôt lancée avec ses vrais réglages : vu et jugé bon dans l'ensemble, pas point par point
 (la liste est dans « État de validation »).
 
-### Ses intros au démarrage, puis son bonjour
+### Son intro au démarrage, puis son bonjour
 
-Le deuxième lot, puis le sixième. Au lancement, avant de prendre sa place, elle joue une intro,
-**tirée au sort** parmi six, jamais deux lancements de suite la même :
+Les lots 2, 6 et 8. Au lancement, avant de prendre sa place, elle joue une suite en deux temps :
 
-| Intro | Ce qu'on voit | Durée |
+1. **« de tout près »**, toujours : 22 images en plein écran, du projet Capri (« Up close »). Elle
+   surgit, regarde autour d'elle, colle son visage à la vitre avec un grand sourire, puis repart.
+   1,8 s, avec un **effet de glitch** ;
+2. **une entrée, tirée au sort**, jamais deux lancements de suite la même :
+
+| Entrée | Ce qu'on voit | Durée |
 |---|---|---|
-| De tout près (« Up close ») | 22 images en plein écran, du projet Capri : elle surgit, regarde autour d'elle, colle son visage à la vitre avec un grand sourire, puis repart | 1,8 s |
-| Le coucou | 9 images en plein écran, de mochiiwuff : elle attrape l'écran, fait coucou de la main, parle, sourit. **Un autre style de dessin** (des captures de la série et du fan art) | 3 s |
 | Elle tombe du ciel | elle entre par le haut de l'écran en pendant, tombe de plus en plus vite jusqu'à sa place, puis se relève | 2,1 s |
 | Elle arrive en marchant | elle entre par le bord droit et marche jusqu'à sa place ; si c'est trop loin, elle se matérialise d'abord moins loin, entière dans l'écran | 1 à 4 s de marche |
 | Elle se rassemble | les premiers dessins de son apparition, découpés en bandes étirées d'un bord à l'autre de l'écran, se resserrent en elle | 1,2 s |
-| Rien | elle se matérialise simplement à sa place | 1,2 s |
+| Elle se matérialise | simplement, à sa place | 1,2 s |
 
-Les trois du milieu sont écrites par nous, avec ses propres dessins ; « rien » est tirée
-rarement (une fois sur dix-sept). Une intro dont il manque une image ou une planche n'est
-simplement pas tirée ; sans aucune image, il reste « rien ».
+Les trois premières entrées sont écrites par nous, avec ses propres dessins. Une entrée dont il
+manque une planche n'est pas tirée ; sans les images du film, l'entrée se joue seule.
 
-- **les deux en images remplissent l'écran**, calées en bas, les côtés coupés s'ils dépassent ;
-  tes clics passent au travers, et rien ne prend le focus ;
-- **dans les trois jouées par elle**, tu peux l'attraper : elle pend à ton curseur, sans saut,
-  même prise alors qu'elle est encore en partie hors de l'écran, et l'intro s'arrête là. Lâchée
-  encore dehors, elle revient d'elle-même dans l'écran ;
+**Le glitch de « de tout près »** est calculé à l'affichage, sur les vrais dessins de l'artiste :
+aucune image générée, aucune image de plus. Des bandes horizontales décalées de côté (des
+déchirures), des doubles violet et vert derrière elle (les couleurs mesurées sur les doubles de sa
+propre apparition), des bandes manquantes par instants, et un tremblement bref de toute l'image.
+Fort sur les premiers dessins et sur les derniers, encore net au milieu avec une ou deux
+rafales, et léger quand elle colle son visage à la vitre : là, surtout ses doubles colorés, une
+déchirure fine de temps en temps, jamais une bande manquante. Il change à chaque lancement,
+et **une seule constante en règle la force** (`capri_core::intro::glitch::STRENGTH`).
+
+- **le film remplit l'écran**, calé en bas, les côtés coupés s'ils dépassent ; tes clics passent
+  au travers, et rien ne prend le focus ;
+- **pendant l'entrée**, tu peux l'attraper : elle pend à ton curseur, sans saut, même prise alors
+  qu'elle est encore en partie hors de l'écran, et l'intro s'arrête là. Lâchée encore dehors,
+  elle revient d'elle-même dans l'écran ;
 - **ensuite** elle dit une courte phrase de bonjour dans sa bulle, sa bouche qui bouge, et sa
   voix si elle est activée. Dix phrases écrites pour elle, tirées au sort ; aucune ne vient de la
-  série, aucun modèle n'est appelé, et la phrase n'entre pas dans votre conversation. Si tu lui
-  parles avant, que tu la fais taire ou que tu l'attrapes pendant l'intro, elle l'oublie ;
-- **ce qui coupe une intro** : ⌃⌥C l'arrête net, et elle est masquée ; ⌃⌥P ou ⌃⌥D l'arrêtent, et
-  elle est là tout de suite, sans bonjour ; changer sa taille pendant une intro qu'elle joue
-  aussi ; « Quitter » reste immédiat ;
-- **son menu** : la case **« Intro au démarrage »**, cochée par défaut (décochée : ni intro ni
-  bonjour, elle se matérialise simplement), et **« Voir une intro »**, qui joue tout de suite la
-  suivante de la liste, dans l'ordre, sans bonjour : elle s'efface, l'intro se joue, elle
-  revient. Refusée pendant qu'on se parle, qu'on la tient ou qu'elle est en chemin ;
+  série, aucun modèle n'est appelé, et la phrase n'entre pas dans votre conversation. Si quoi que
+  ce soit a coupé la suite, elle ne le dit pas ;
+- **ce qui coupe** : ⌃⌥C arrête net, et elle est masquée ; ⌃⌥P ou ⌃⌥D arrêtent, et elle est à sa
+  place tout de suite, sans entrée ni bonjour ; changer sa taille pendant l'entrée aussi ;
+  « Quitter » reste immédiat ;
+- **son menu** : la case **« Intro au démarrage »**, cochée par défaut (décochée : ni film, ni
+  entrée tirée au sort, ni bonjour, elle se matérialise simplement), et **« Voir une intro »**,
+  qui rejoue tout de suite le film puis l'entrée suivante de la liste, dans l'ordre, sans
+  bonjour. Refusée pendant qu'on se parle, qu'on la tient ou qu'elle est en chemin ;
 - **ce qu'elle retient** : dans `intro.json` (son dossier), la case et le nom de la dernière
-  intro jouée, rien d'autre ; jamais écrit pendant un essai. Un fichier illisible n'est pas
-  réécrit au lancement : elle joue une intro, ne retient pas laquelle, et son journal le dit ;
+  entrée jouée, rien d'autre ; jamais écrit pendant un essai. Un fichier illisible n'est pas
+  réécrit au lancement ;
 - **tant que son bonjour attend**, elle ne sourit pas pour Claude Code et n'a pas d'éclat
-  d'elle-même ; « Voir une intro » lui fait oublier un bonjour en attente.
+  d'elle-même.
 
-**Le coucou est facile à retirer** si l'écart de style gêne : c'est une ligne de la liste des
-intros (`capri_core::intro::LIST`), son fichier, et ses neuf images dans la liste de
-`tools/bundle-macos.sh`. Ses images sont en WebP : elles sont décodées par la fonction `webp` du
-crate `image`, en Rust pur (rien qui compile du C).
+**Ce que ça pèse.** Les 22 images du film pèseraient 182 Mo si elles étaient toutes chargées.
+Elles sont décodées une à une pendant qu'elles défilent, sur un thread à part, et peintes sur une
+seule toile de la carte graphique, que le glitch découpe en 39 calques au plus. Mesuré par
+`footprint` le 24 novembre 2026 : +29 Mo au plus haut. L'intro finie, la toile est rendue tout
+de suite, même si plus rien ne se dessine (fenêtre masquée, écran verrouillé), et le thread a
+disparu ; il reste +3,9 Mo dans la réserve de l'allocateur après la première fois, qui ne
+grandissent pas quand on la rejoue. Les entrées ne chargent rien de plus.
 
-**Ce que ça pèse.** Les 22 images de « de tout près » pèseraient 182 Mo si elles étaient toutes
-chargées. Les images d'une intro sont décodées une à une pendant qu'elles défilent, sur un thread
-à part, et peintes sur une seule toile de la carte graphique. Mesuré par `footprint` le 23
-novembre 2026 : +22 à +28 Mo au plus haut pour « de tout près », +28 Mo pour le coucou la
-première fois. L'intro finie, la toile est rendue tout de suite, même si plus rien ne se dessine
-(fenêtre masquée, écran verrouillé), et le thread a disparu ; il reste quelques Mo dans la réserve
-de l'allocateur (jusqu'à 10,9 Mo après le premier coucou), qui ne grandissent pas quand on la
-rejoue. Décoder une image prend 1,4 ms pour « de tout près » et 11 ms pour le coucou, en version
-optimisée (en version de débogage, 360 ms : le coucou y saute des images). Les intros jouées par
-elle ne chargent rien de plus.
+**Ce qui a été retiré.** Une intro de plus, « le coucou », jouait neuf gros plans de mochiiwuff
+(elle attrapait l'écran et faisait coucou), dans un autre style de dessin. L'utilisateur l'a vue
+à l'écran le 24 novembre 2026 : elle ne lui plaît pas du tout, et elle a été retirée, avec ses
+images dans l'app et le décodeur WebP qui ne servait qu'à elle.
 
-Écrit et testé sans écran le 23 novembre 2026. « De tout près » a été regardée par l'utilisateur
-le soir même, la Capri du dépôt lancée avec ses vrais réglages (son journal : « intro : jouée, 22
-images sur 22 montrées, la première prête en 47 ms »). Les six ont été vues par l'utilisateur le
-24 novembre 2026, par « Voir une intro » (son journal : dix-huit intros jouées, trois tours de la
-liste) : **le coucou ne lui plaît pas du tout, il sera retiré**, et « de tout près » sera jouée à
-chaque lancement, avec un effet de glitch, suivie d'une des autres tirée au sort. Les autres
-intros n'ont pas été commentées une par une : la liste est dans « État de validation ».
+Écrit et testé sans écran, du 23 au 24 novembre 2026. « De tout près », sans glitch, et les
+entrées ont été vues par l'utilisateur, dans l'ensemble. **Le glitch et la suite en deux temps
+n'ont pas encore été vus en mouvement** : la liste est dans « État de validation ».
 
 ### Elle vit sa vie : elle va s'asseoir seule sur tes fenêtres
 
@@ -1339,9 +1342,9 @@ Le script, dans l'ordre (rien de tout cela ne demande `sudo`) :
    session** : d'ici là, l'inscription mène encore à l'ancienne app, qui n'existe plus.
 
 Ce que l'app emporte : les deux programmes (`capri`, `capri-hook`), les images que lit le code
-(`capri-cutout.png`, les planches de `perch/`, de `stand/` et de `life/`, les 22 images de
-`intro/` et les neuf du coucou, `intro-*.webp` ; pas les autres images que télécharge
-`fetch-assets.sh`, qui ne servent pas) dans `Contents/Resources/assets/`, et
+(`capri-cutout.png`, les planches de `perch/`, de `stand/`, de `laydown/` et de `life/`, et les
+22 images de `intro/` ; pas les autres images que télécharge `fetch-assets.sh`, qui ne servent
+pas) dans `Contents/Resources/assets/`, et
 `CREDITS.md`, qui porte les mentions que leurs licences exigent. `bundle-macos.sh` prend les
 images dans `assets/`, ou dans le dossier que désigne `CAPRI_ASSETS` (celui qui contient
 `capri/`), et s'arrête s'il en manque une, en disant de lancer `tools/fetch-assets.sh` : il ne
@@ -1557,9 +1560,9 @@ Règle : tout ce qui peut être testé sans écran va dans `capri-core`, `capri-
 
 Vérifié automatiquement :
 
-- formatage, `clippy -D warnings` et 836 tests sur **macOS Apple Silicon** (le 24 novembre 2026 ;
-  835 en version optimisée, un essai de la répétition de la musique n'existant qu'en version de
-  débogage ; plus 25 qui ne
+- formatage, `clippy -D warnings` et 849 tests sur **macOS Apple Silicon** (le 24 novembre 2026 ;
+  848 en version optimisée, un essai de la répétition de la musique n'existant qu'en version de
+  débogage ; plus 26 qui ne
   tournent qu'à la main : ils écrivent des images ou dessinent sur la vraie carte graphique,
   lisent un vrai `settings.json`, touchent au vrai trousseau, créent de vraies voix et un vrai
   moteur audio, sans bruit, lisent la vraie liste des fenêtres, guettent une annonce d'essai
@@ -1822,6 +1825,18 @@ Vérifié automatiquement :
   allongée, puis rendue. Une relecture indépendante n'y a trouvé aucun défaut grave ; elle a
   comparé 360 vies simulées avec le commit précédent, identiques sans ses planches de repos, et
   relevé une lacune d'essai et cinq points mineurs, corrigés ;
+- la suite de son lancement et son glitch (le 24 novembre 2026) : le film puis une entrée tirée
+  (jamais la dernière quand une autre est possible, un ancien nom dans `intro.json` valant
+  « aucune »), ce que la suite fait d'elle après le film (la matérialiser, lui faire jouer son
+  entrée, la cacher : du code pur, appelé par l'app et par l'essai de gestes au hasard), le
+  bonjour seulement si rien n'a coupé ; le glitch déterministe, borné, nul à force nulle (la
+  toile est alors dessinée exactement comme avant), plus fort au début et à la fin, et jamais de
+  bande manquante sur son visage. Sur la vraie carte graphique, à la main : la teinte du shader,
+  et le film joué en entier avec son glitch, sa mémoire rendue. Une relecture indépendante n'y a
+  trouvé aucun défaut réel (sans teinte, le rendu est identique octet pour octet à celui
+  d'avant) ; elle a relevé qu'aucun essai ne protégeait le branchement dans la boucle, et qu'un
+  essai qui vérifie que rien d'une annonce de musique n'entre dans le journal ne lisait qu'un
+  de ses deux fichiers : corrigés ;
 - deux essais anciens de `capri-net` échouaient parfois sur une machine chargée (des délais trop
   courts pour le TLS du système : un faux serveur qui n'attendait le client qu'une demi-seconde,
   un appel borné à une seconde) : corrigés le 23 novembre 2026, ils passent 25 et 20 fois de
@@ -2400,29 +2415,28 @@ bord assez large, sans musique :
 10. **dans le Moniteur d'activité** : sa mémoire monte quand elle s'allonge et redescend une
     minute après qu'elle s'est relevée.
 
-**Ses intros tirées au sort : à regarder à la main** (écrit et testé sans écran le 23 novembre
-2026 ; les six vues par l'utilisateur le 24, dans l'ensemble : le coucou sera retiré, aucun des
-points ci-dessous n'a été confirmé un par un). « Voir une intro », dans son menu, les
-joue l'une après l'autre sans relancer :
+**Son intro en deux temps et son glitch : à regarder à la main** (écrit et testé sans écran le
+24 novembre 2026 ; le glitch et la suite n'ont pas encore été vus en mouvement). « Voir une
+intro », dans son menu, rejoue le film puis l'entrée suivante, sans relancer :
 
-1. **relancer plusieurs fois** : jamais la même intro deux fois de suite, et son journal la nomme
-   (« intro : jouée (…) ») ;
-2. **le coucou** : l'écart de style avec ses autres dessins (c'est le point à trancher : on le
-   retire s'il est trop grand), sa cadence, son cadrage ;
-3. **elle tombe du ciel** : la vitesse de la chute, l'arrivée sans saut, puis elle se relève, et
-   son bonjour ne vient qu'après ;
-4. **elle arrive en marchant** : l'entrée par le bord droit, ses pieds qui glissent ; et de loin
-   (déplace-la à gauche de l'écran, puis « Voir une intro »), elle se matérialise d'abord ;
-5. **elle se rassemble** : l'effet des bandes, d'éventuelles coutures entre elles ;
-6. **tes clics passent au travers** pendant les deux intros en images et pendant les bandes ;
-   pendant la chute ou la marche, tu peux l'attraper, et elle pend ;
-7. **pour chaque intro** : ⌃⌥C (coupée net et masquée, puis de retour à sa place), ⌃⌥P et ⌃⌥D
-   (là tout de suite, sans bonjour), « Quitter » (immédiat), « La faire taire » (pas de bonjour) ;
-8. **« Voir une intro »**, dans ses deux menus : elles défilent dans l'ordre, sans bonjour ;
-   refusée pendant qu'on se parle ; depuis un bord de fenêtre, elle finit debout ;
-9. **changer d'écran** pendant une chute ou une marche : rien ne casse ;
-10. **le processeur** : la boucle se presse pendant une chute ou une marche, puis revient au
-    repos.
+1. **le glitch de « de tout près »** : assez marqué au début et à la fin ? Son visage reste-t-il
+   lisible quand elle le colle à la vitre ? Voit-on les rafales du milieu ? C'est le point à
+   trancher : sa force se règle par une constante ;
+2. **le violet et le vert** de ses doubles, à l'écran ;
+3. **le raccord** entre la fin du film et chacune des quatre entrées, sans image vide ;
+4. **relancer plusieurs fois** : jamais la même entrée deux fois de suite, et son journal le dit
+   (« intro : jouée (de tout près, puis …) ») ;
+5. **pendant le film** : ⌃⌥C la masque net, et rien du film ne réapparaît quand tu la montres ;
+   ⌃⌥P la met à sa place tout de suite, sans entrée ni bonjour ;
+6. **pendant l'entrée** : l'attraper (elle pend, sans saut), lui parler, changer sa taille, la
+   masquer ;
+7. **le bonjour**, après toute la suite, et seulement si rien ne l'a coupée ;
+8. **« Voir une intro »**, dans ses deux menus : le film, puis les entrées dans l'ordre, sans
+   bonjour ; refusée pendant qu'on se parle ; depuis un bord de fenêtre, elle finit debout ;
+9. **sur un écran 16:9** : les déchirures peuvent laisser voir un vide sur les bords, l'image n'y
+   dépassant pas ;
+10. **la case « Intro au démarrage » décochée** : ni film, ni entrée tirée au sort, ni bonjour ;
+11. **le processeur** pendant le film et pendant une chute ou une marche, puis au repos.
 
 **Elle vit sa vie : à regarder à la main** (écrit et testé sans écran le 23 novembre 2026 ;
 regardé par l'utilisateur le soir même, dans l'ensemble : aucun de ces points n'a été confirmé un
@@ -2691,8 +2705,9 @@ Points à surveiller :
    regarder en mouvement) ; ~~elle
    s'allonge, s'endort et se réveille~~ (écrit et testé sans écran le 24 novembre 2026 ; reste
    à regarder en mouvement) ; ~~plusieurs intros tirées au sort~~ (écrit le 23 et le 24 novembre
-   2026, vues à l'écran le 24 : le coucou de mochiiwuff ne plaît pas, il sera retiré, et « de
-   tout près » sera suivie d'une entrée tirée au sort, avec un effet de glitch) ; se tourner des
+   2026, vues à l'écran le 24 : le coucou de mochiiwuff ne plaisait pas, il est retiré ; « de
+   tout près » est suivie d'une entrée tirée au sort, avec un effet de glitch calculé : écrit le
+   24, pas encore vu en mouvement) ; se tourner des
    deux côtés.
 
 ## Licence

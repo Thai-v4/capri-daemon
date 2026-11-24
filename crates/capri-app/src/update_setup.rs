@@ -233,13 +233,14 @@ mod tests {
         /// Au format 2, ses planches de vie en plus (elle apparaît, elle s'efface ; elle marche,
         /// elle pend, elle se relève, elle sourit ; elle dort debout, elle se réveille), ses
         /// planches facultatives assises et debout (un éclat, ses clignements glitchés), sa pose
-        /// allongée, et ses intros en images (« Up close » et le coucou).
+        /// allongée, et le film de ses intros (« de tout près » ; le coucou, essayé un temps, en a été
+        /// retiré).
         /// Cette liste a pu changer sans
         /// que le numéro change : aucune version n'a été publiée au format 2 (la 0.2.0, la dernière
         /// publiée, le 23 novembre 2026, est au format 1), et aucune app installée ne l'attend
         /// encore. Une fois une version publiée à ce format, elle ne change plus : toute nouvelle
         /// image demande le format 3.
-        const FORMAT_2: [&str; 58] = [
+        const FORMAT_2: [&str; 49] = [
             "capri/capri-cutout.png",
             "capri/perch/perch.png",
             "capri/perch/perch_blink.png",
@@ -289,15 +290,6 @@ mod tests {
             "capri/intro/20.png",
             "capri/intro/21.png",
             "capri/intro/22.png",
-            "capri/intro-grab.webp",
-            "capri/intro-smear.webp",
-            "capri/intro-wave1.webp",
-            "capri/intro-wave2.webp",
-            "capri/intro-wave3.webp",
-            "capri/intro-mouth1.webp",
-            "capri/intro-mouth2.webp",
-            "capri/intro-mouth3.webp",
-            "capri/intro-happy.webp",
         ];
         let script = include_str!("../../../tools/bundle-macos.sh");
         let mut listed: Vec<&str> = script

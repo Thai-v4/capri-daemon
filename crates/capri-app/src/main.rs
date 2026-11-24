@@ -3,13 +3,14 @@
 //! (jalon 3), et on peut lui parler : elle répond dans une bulle, avec le modèle qu'on lui a donné,
 //! local ou chez un fournisseur (jalon 4). Elle vit sa vie : de temps en temps, elle s'efface là où
 //! elle est et apparaît ailleurs, de préférence assise sur une autre fenêtre (`roam_view`).
-//! Au lancement, avant qu'elle n'apparaisse, une intro tirée au sort (`capri_core::intro`) : en
-//! images, elle prend l'écran (`intro_view`), ou elle la joue elle-même (elle tombe du ciel, arrive
-//! en marchant, se rassemble), ou rien ; puis elle est à sa place et dit bonjour ; « Intro au
-//! démarrage » de son menu la retire (`intro_setup`), « Voir une intro » les montre l'une après
-//! l'autre. Elle bouge et réagit (`capri_core::look`) : tenue, elle pend ; lâchée, elle se
-//! relève ; un clic sur elle (un appui bref, relâché sans la déplacer : `capri_core::input::Hand`)
-//! la fait sourire, ou lui donne un éclat assise ; elle sourit quand Claude Code finit son tour ;
+//! Au lancement, avant qu'elle n'apparaisse, une intro (`capri_core::intro`) : toujours le film
+//! « de tout près », en plein écran avec son glitch (`intro_view`), puis une entrée tirée au sort
+//! (elle tombe du ciel, arrive en marchant, se rassemble, ou se matérialise) ; puis elle est à sa
+//! place et dit bonjour ; « Intro au démarrage » de son menu la retire (`intro_setup`), « Voir une
+//! intro » rejoue le film puis montre les entrées l'une après l'autre. Elle bouge et réagit
+//! (`capri_core::look`) : tenue, elle pend ; lâchée, elle se relève ; un clic sur elle (un appui
+//! bref, relâché sans la déplacer : `capri_core::input::Hand`) la fait sourire, ou lui donne un
+//! éclat assise ; elle sourit quand Claude Code finit son tour ;
 //! elle marche d'une place à l'autre en bas de l'écran. Elle se repose : tranquille un moment,
 //! elle s'allonge sur son bord, puis s'endort, ou s'endort debout ; on lui parle, on clique sur
 //! elle, Claude Code attend une réponse : elle se réveille. Ses planches de repos sont chargées à
@@ -94,7 +95,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result};
 use banner_view::BannerView;
 use capri_core::input::{CLICK_SLOP, Hand, Let};
-use capri_core::intro::{self, Cut, End, Entry, Play};
+use capri_core::intro::{self, Cut, End, Entry, Missing, Part, Play, Suite};
 use capri_core::look::{Gesture, Look, Picture};
 use capri_core::{
     Button, Capri, Press, Rect, Scale, Stance, Vec2, frame_at, interpret_press, pace, place_input,
@@ -263,14 +264,16 @@ struct Running {
     music: music_view::MusicView,
     /// Vivre sa vie : changer d'elle-même de place, et sur un geste.
     roam: roam_view::RoamView,
-    /// L'intro, tant qu'elle se joue (au lancement, ou sur « Voir une intro ») : en images, elle
-    /// prend l'écran, et Capri n'est pas encore là ; jouée par elle, rien au-dessus de sa tête. Une
+    /// L'intro, tant qu'elle se joue (au lancement, ou sur « Voir une intro ») : le film prend
+    /// l'écran, et Capri n'est pas encore là ; puis l'entrée, sans rien au-dessus de sa tête. Une
     /// fois finie ou coupée, tout ce qu'elle tenait est lâché.
     intro: Option<Showing>,
-    /// « Voir une intro » : l'intro qui se jouera une fois qu'elle se sera effacée.
+    /// « Voir une intro » : l'entrée qui se jouera après le film, une fois qu'elle se sera effacée.
     encore: Option<&'static Entry>,
-    /// La dernière intro montrée (son nom court) : « Voir une intro » montre la suivante.
+    /// La dernière entrée montrée (son nom court) : « Voir une intro » montre la suivante.
     intro_seen: Option<&'static str>,
+    /// La graine de sa vie : ses trajets, son entrée, son bonjour, le glitch du film.
+    seed: u64,
     /// Image d'animation courante.
     frame: u64,
     /// Ce qui est à l'écran.
@@ -301,20 +304,19 @@ struct Running {
     gesture: Option<(Gesture, u64)>,
 }
 
-/// Une intro en cours.
+/// Une intro en cours : sa suite (le film, puis l'entrée ; au lancement, son bonjour l'attend), et
+/// le film tant qu'il se joue.
 struct Showing {
-    entry: &'static Entry,
-    /// Celle du lancement : son bonjour l'attend. Sur « Voir une intro », pas de bonjour.
-    at_launch: bool,
-    /// Ses images et leur thread, pour une intro en images qui a pu commencer.
+    suite: Suite,
+    /// Ses images et leur thread, tant que le film se joue.
     film: Option<intro_view::IntroView>,
+    /// Combien de temps la première image du film a mis à arriver, pour le journal.
+    first_after: Option<Duration>,
 }
 
-/// Cette intro est-elle possible : ses images toutes là (sans les lire), ou ses planches, et
-/// assez de place d'où elle est (`capri`) ?
+/// Cette entrée est-elle possible : ses planches, et assez de place d'où elle est (`capri`) ?
 fn intro_possible(entry: &Entry, look: &Look, capri: &Capri) -> bool {
     match entry.play {
-        Play::Film(film) => assets::intro::present(film),
         Play::Act(act) => look.can_perform(act, capri),
         Play::Plain => true,
     }
@@ -442,12 +444,13 @@ impl App {
         let mut capri = Capri::new(body, bounds, start_at);
         capri.set_feet(figure.look.standing_feet());
         capri.set_leave_frames(figure.look.leave_frames());
-        // l'intro d'abord, au lancement seulement, case cochée et jamais pendant un essai : tirée
-        // au sort parmi celles que ses images permettent, jamais la même que la dernière fois ; elle
-        // sera là quand l'intro finira ; sans intro, elle se matérialise dès l'image 0 (le premier
-        // dessin est déjà celui de son arrivée)
+        // l'intro d'abord, au lancement seulement, case cochée et jamais pendant un essai : le film,
+        // puis une entrée tirée au sort parmi celles que ses planches permettent, jamais la même que
+        // la dernière fois ; elle sera là quand l'intro finira ; sans intro, elle se matérialise dès
+        // l'image 0 (le premier dessin est déjà celui de son arrivée)
         let testing = intro_setup::testing(|name| std::env::var_os(name));
-        // la graine de sa vie : ses trajets, son intro, et son bonjour, attendu dès qu'elle commence
+        // la graine de sa vie : ses trajets, son entrée, le glitch du film, et son bonjour, attendu
+        // dès que l'intro commence
         let seed = life_seed();
         let directory = brain_setup::config_dir()
             .inspect_err(|err| log::warn!("intro : pas de dossier de réglages : {err:#}"))
@@ -566,6 +569,7 @@ impl App {
             intro: None,
             encore: None,
             intro_seen: None,
+            seed,
             frame: 0,
             drawn: None,
             awaiting_present: true,
@@ -1117,10 +1121,10 @@ impl App {
         }
     }
 
-    /// « Voir une intro » : la suivante de la liste (`capri_core::intro::next`), tout de suite :
-    /// elle s'efface, l'intro se joue, elle revient, sans bonjour. Refusée pendant qu'on se parle,
-    /// qu'on la tient, qu'elle marche ou change de place, qu'elle apparaît ou s'efface, et pendant
-    /// une intro ; cachée, rien. Rien ne change alors ; « on se parle » le dit, comme « Changer de
+    /// « Voir une intro » : le film, puis l'entrée suivante de la liste (`capri_core::intro::next`),
+    /// tout de suite : elle s'efface, la suite se joue, elle revient, sans bonjour. Refusée pendant
+    /// qu'on se parle, qu'on la tient, qu'elle marche ou change de place, qu'elle apparaît ou
+    /// s'efface, et pendant une intro ; cachée, rien. Rien ne change alors ; « on se parle » le dit, comme « Changer de
     /// place ».
     #[cfg(any(target_os = "macos", windows))]
     fn see_intro(&mut self) {
@@ -1138,7 +1142,8 @@ impl App {
         let look = &r.figure.look;
         let entry = intro::next(r.intro_seen, |entry| intro_possible(entry, look, &r.capri));
         let answer = r.figure.look.bow_out(&mut r.capri, r.frame);
-        let encore = intro_view::encore(answer, entry);
+        let film = assets::intro::present(intro::FILM).then_some(intro::FILM);
+        let encore = intro_view::encore(answer, entry, film);
         log::debug!("{}", encore.log);
         if encore.accepted {
             r.encore = Some(entry);
@@ -1446,11 +1451,11 @@ impl Running {
     /// Le curseur est-il sur elle (au pixel près, d'après la pose dessinée, avec une petite
     /// marge) ?
     fn is_over(&self, cursor: Vec2) -> bool {
-        // pendant une intro en images, elle n'est pas encore là : rien ne s'attrape
+        // pendant le film, elle n'est pas encore là : rien ne s'attrape
         self.film().is_none() && self.figure.look.is_over(&self.capri, cursor)
     }
 
-    /// L'intro en images en cours, s'il y en a une.
+    /// Le film de l'intro, tant qu'il se joue.
     fn film(&self) -> Option<&intro_view::IntroView> {
         self.intro.as_ref().and_then(|showing| showing.film.as_ref())
     }
@@ -1539,14 +1544,14 @@ impl Running {
         // son bonjour d'abord : tant qu'il attend, aucun geste d'elle-même
         self.figure.look.set_greeting_due(self.banner.greeting_due());
         self.figure.look.update(&mut self.capri, self.frame, talking, music);
-        // une intro qu'elle joue : finie (jouée, ou coupée parce qu'on l'attrape) ; elle dit
+        // l'entrée qu'elle joue : finie (jouée, ou coupée parce qu'on l'attrape) ; elle dit
         // toujours comment, mais si elle ne le disait pas, l'intro ne resterait pas ouverte
         if let Some(end) = self.figure.look.take_performed() {
-            self.end_intro(end);
-        } else if self.intro.as_ref().is_some_and(|showing| showing.film.is_none())
+            self.entry_over(end);
+        } else if self.intro.as_ref().is_some_and(|showing| showing.suite.part() == Part::Entry)
             && !self.figure.look.is_performing()
         {
-            self.end_intro(End::Played { shown: 0 });
+            self.entry_over(End::Played { shown: 0 });
         }
         // Claude Code a fini son tour : debout et libre, elle sourit (une fois par minute au plus)
         if self.banner.take_turn_end() && self.figure.look.cheer(&mut self.capri, self.frame) {
@@ -1560,7 +1565,7 @@ impl Running {
         self.roam_step(seconds);
         // ses planches de repos : chargées si elle en veut, lâchées si elle n'en veut plus
         self.figure.sync_rests(&mut self.renderer, now);
-        // « Voir une intro » : effacée, l'intro se joue
+        // « Voir une intro » : effacée, la suite se joue
         if let Some(entry) = self.encore.filter(|_| self.figure.look.is_offstage()) {
             self.encore = None;
             self.begin_intro(entry, false);
@@ -1597,16 +1602,16 @@ impl Running {
         }
     }
 
-    /// Un pas pendant une intro en images : elle seule à l'écran, et rien ne s'attrape. Capri n'est
-    /// pas encore là : rien au-dessus de sa tête (son bandeau suit Claude Code sans rien dessiner),
-    /// ni sa fenêtre suivie, ni sa vie, ni la musique.
+    /// Un pas pendant le film : lui seul à l'écran, et rien ne s'attrape. Capri n'est pas encore
+    /// là : rien au-dessus de sa tête (son bandeau suit Claude Code sans rien dessiner), ni sa
+    /// fenêtre suivie, ni sa vie, ni la musique.
     fn intro_tick(&mut self, now: Instant) {
         self.banner.listen_only();
         self.music.tick(now, false);
         let frame = self.frame;
         let Some(view) = self.intro.as_mut().and_then(|showing| showing.film.as_mut()) else { return };
         if let Some(end) = view.step(frame, &mut self.renderer) {
-            return self.end_intro(end);
+            return self.film_over(end);
         }
         if self.drawn != Some(self.scene()) {
             self.overlay.request_redraw();
@@ -1614,44 +1619,71 @@ impl Running {
     }
 
     /// Une intro commence, à l'image courante : au lancement (`at_launch` : son bonjour l'attend),
-    /// ou effacée pour « Voir une intro ». En images, son thread est lancé (sans ses images, pas
-    /// d'intro) ; jouée par elle, elle la joue ; « rien » : elle se matérialise, et c'est fini.
+    /// ou effacée pour « Voir une intro ». D'abord le film : son thread est lancé ; sans ses images,
+    /// l'entrée tout de suite.
     fn begin_intro(&mut self, entry: &'static Entry, at_launch: bool) {
         self.intro_seen = Some(entry.key);
-        self.intro = Some(Showing { entry, at_launch, film: None });
+        self.intro =
+            Some(Showing { suite: Suite::new(entry, true, at_launch), film: None, first_after: None });
         self.drawn = None;
         self.overlay.request_redraw();
-        match entry.play {
-            Play::Film(film) => {
-                let started = match assets::intro::sequence(film) {
-                    Some(sequence) => intro_view::IntroView::start(sequence, self.frame),
-                    None => Err(End::Missing(intro::Missing::Absent { found: 0 })),
-                };
-                match started {
-                    Ok(view) => {
-                        if let Some(showing) = self.intro.as_mut() {
-                            showing.film = Some(view);
-                        }
-                    }
-                    Err(end) => self.end_intro(end),
+        // ses images comptées (sans les lire) : toutes là, le film se joue
+        let sequence = assets::intro::sequence(intro::FILM);
+        let found = sequence.as_ref().map_or(0, |sequence| sequence.found());
+        let started = match sequence {
+            Some(sequence) if found == intro::FILM.files.len() as u32 => {
+                intro_view::IntroView::start(sequence, self.frame, self.seed)
+            }
+            _ => Err(End::Missing(Missing::Absent { found })),
+        };
+        match started {
+            Ok(view) => {
+                if let Some(showing) = self.intro.as_mut() {
+                    showing.film = Some(view);
                 }
             }
-            Play::Act(act) => {
-                if !self.figure.look.perform(&mut self.capri, act, self.frame) {
-                    // ses planches lui manquent (ce qui l'a fait tirer l'a vérifié) : elle apparaît
-                    self.figure.look.enter(&mut self.capri, self.frame);
-                    self.end_intro(End::Missing(intro::Missing::Absent { found: 0 }));
-                }
-            }
-            Play::Plain => {
-                self.figure.look.enter(&mut self.capri, self.frame);
-                self.end_intro(End::Played { shown: 0 });
-            }
+            Err(end) => self.film_over(end),
         }
     }
 
-    /// L'intro est coupée (`why`), si elle se joue encore ; on lui parle pendant qu'elle s'efface
-    /// pour une intro qui n'a pas commencé : elle revient sur ses pas, sans intro.
+    /// Le film est fini (`end`) : lâché (sa toile, son thread), puis ce qui suit, que décide et fait
+    /// la suite (`Suite::film_over`) : l'entrée ; ou, coupé, elle est à sa place tout de suite, ou
+    /// cachée. Finie, l'intro l'est aussi.
+    fn film_over(&mut self, end: End) {
+        let Some(showing) = self.intro.as_mut() else { return };
+        let had_film = match showing.film.take() {
+            Some(view) => {
+                showing.first_after = view.close(&mut self.renderer);
+                true
+            }
+            None => false,
+        };
+        showing.suite.film_over(end, &mut self.figure.look, &mut self.capri, self.frame);
+        let over = showing.suite.is_over();
+        self.drawn = None;
+        self.overlay.request_redraw();
+        if had_film {
+            // la toile lâchée est rendue tout de suite, même si plus rien ne se dessine ensuite
+            // (cachée, ou l'écran verrouillé) : wgpu ne le ferait qu'à la prochaine soumission ;
+            // et les réglages de ses bandes avec elle
+            self.renderer.settle();
+        }
+        if over {
+            self.end_intro();
+        }
+    }
+
+    /// L'entrée qu'elle jouait est finie (`end`) : la suite aussi (`Suite::entry_over`).
+    fn entry_over(&mut self, end: End) {
+        if let Some(showing) = self.intro.as_mut() {
+            showing.suite.entry_over(end, &mut self.figure.look, &mut self.capri, self.frame);
+        }
+        self.end_intro();
+    }
+
+    /// L'intro est coupée (`why`), si elle se joue encore : pendant le film, le film ; pendant
+    /// l'entrée, l'entrée. On lui parle pendant qu'elle s'efface pour une intro qui n'a pas
+    /// commencé : elle revient sur ses pas, sans intro.
     fn cut_intro(&mut self, why: Cut) {
         if why == Cut::Talked && self.encore.take().is_some() {
             self.figure.look.turn_back(&mut self.capri, self.frame);
@@ -1659,7 +1691,7 @@ impl Running {
         let Some(showing) = self.intro.as_mut() else { return };
         if let Some(view) = showing.film.as_mut() {
             let end = view.cut(why);
-            return self.end_intro(end);
+            return self.film_over(end);
         }
         match why {
             Cut::Talked => self.figure.look.cut_performance(&mut self.capri, self.frame),
@@ -1668,50 +1700,36 @@ impl Running {
             Cut::Grabbed | Cut::Resized => {}
         }
         if let Some(end) = self.figure.look.take_performed() {
-            self.end_intro(end);
+            self.entry_over(end);
         }
     }
 
-    /// L'intro est finie (`end`) : tout ce qu'elle tenait est lâché, et sa ligne écrite au journal.
-    /// Coupée en la cachant, Capri est cachée ; sinon elle est là (après une intro en images, elle
-    /// se matérialise à sa place), et, au lancement, dit bonjour si l'intro s'est jouée.
-    fn end_intro(&mut self, end: End) {
+    /// L'intro est finie : tout ce qu'elle tenait est lâché, et sa ligne écrite au journal. Coupée
+    /// en la cachant, Capri est cachée ; sinon elle est là, et, au lancement, dit bonjour si rien
+    /// n'a coupé la suite.
+    fn end_intro(&mut self) {
         let Some(showing) = self.intro.take() else { return };
-        let film = match showing.entry.play {
-            Play::Film(film) => Some(film),
-            Play::Act(_) | Play::Plain => None,
-        };
-        let closing = intro_view::closing(end, film.is_some());
-        let had_canvas = showing.film.is_some();
-        let line = match showing.film {
-            Some(view) => view.close(end, showing.entry.name, &mut self.renderer),
-            None => intro_view::journal_line(showing.entry.name, film, end, None),
-        };
-        log::info!("{line}");
-        self.drawn = None;
-        // son bonjour, s'il est encore attendu, attend qu'elle soit là et libre ; ou il n'y en a pas
-        if showing.at_launch {
-            self.banner.intro_over(end.greets());
-        }
-        if closing.blank {
-            // une image vide avant de cacher la fenêtre : rien de l'intro n'y reste, qu'elle
-            // montrerait un instant quand on la montre de nouveau
-            let overlay = &self.overlay;
-            self.renderer.render(&[], None, || overlay.pre_present_notify());
-        }
-        if had_canvas {
-            // la toile lâchée est rendue tout de suite, même si plus rien ne se dessine ensuite
-            // (cachée, ou l'écran verrouillé) : wgpu ne le ferait qu'à la prochaine soumission
+        let Showing { suite, film, mut first_after } = showing;
+        if let Some(view) = film {
+            // un film qui se jouait encore (ce qui ne se fait pas) est lâché lui aussi
+            first_after = first_after.or(view.close(&mut self.renderer));
             self.renderer.settle();
         }
-        if end.hides() {
-            self.figure.look.hide_unseen(&mut self.capri, self.frame);
+        log::info!("{}", intro_view::journal_line(&suite, intro::FILM, first_after));
+        self.drawn = None;
+        // son bonjour, s'il est encore attendu, attend qu'elle soit là et libre ; ou il n'y en a pas
+        if suite.at_launch() {
+            self.banner.intro_over(suite.greets());
+        }
+        if suite.hides() {
+            // une image vide avant de cacher la fenêtre : rien de l'intro n'y reste (le film, ou ses
+            // bandes étirées sur tout l'écran), qu'elle montrerait un instant quand on la montre de
+            // nouveau
+            // (la suite l'a déjà cachée : `Suite::film_over`, `Suite::entry_over`)
+            let overlay = &self.overlay;
+            self.renderer.render(&[], None, || overlay.pre_present_notify());
             self.overlay.set_shown(false);
             return;
-        }
-        // après ses images, elle se matérialise ; une intro qu'elle joue l'a déjà fait
-        if closing.enter {
-            self.figure.look.enter(&mut self.capri, self.frame);
         }
         let seconds = self.seconds();
         self.roam.came_back(seconds, &self.capri);
@@ -1843,9 +1861,8 @@ impl Running {
         let screen = Rect::new(Vec2::ZERO, Vec2::new(width as f32, height as f32));
         let (layers, banner) = match scene {
             Scene::Her(picture, banner) => (self.figure.layers(&picture, screen), banner),
-            Scene::Intro(shown) => {
-                (shown.map(|(id, _, rect)| vec![intro_view::layer(id, rect)]).unwrap_or_default(), None)
-            }
+            // le film, avec le glitch du dessin qui y est
+            Scene::Intro(_) => (self.film().map(|view| view.layers(screen.size)).unwrap_or_default(), None),
         };
         let overlay = &self.overlay;
         #[cfg(debug_assertions)]
@@ -1873,7 +1890,8 @@ impl Running {
 enum Scene {
     /// Elle, et son bandeau s'il y en a un.
     Her(Picture, Option<SpriteDraw>),
-    /// L'intro : sa toile, le numéro de l'image qui y est peinte, et où ; rien avant la première.
+    /// Le film : sa toile, le numéro du dessin qui y est peint (son glitch en dépend), et où ;
+    /// rien avant le premier.
     Intro(Option<(ImageId, u32, Rect)>),
 }
 

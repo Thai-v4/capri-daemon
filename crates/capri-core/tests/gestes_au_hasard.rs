@@ -28,12 +28,16 @@
 //!   finit ; une vie sur trois la laisse aller au bout (rien ne la dérange en marchant), et elle
 //!   arrive là où elle allait ou au bord de l'écran ; elle ne s'arrête en chemin que si on lui
 //!   parle ;
-//! - une vie peut commencer par n'importe quelle intro (`capri_core::intro::LIST`), et « Voir une
-//!   intro » fait partie des gestes, comme dans l'app : refusée seulement quand quelque chose la
-//!   retient, sans rien changer ; une intro qu'elle joue finit toujours, à temps, coupée net si on la
-//!   cache, matérialisée à sa place si on lui parle, tenue si on l'attrape ; jouée jusqu'au bout,
-//!   elle est à sa place ; hors d'une intro, elle est toujours dans l'écran ; ce qui est dessiné
-//!   pendant une intro est l'intro en cours ;
+//! - une vie commence par la suite de l'intro, comme dans l'app : le film « de tout près » (quand
+//!   ses images sont là : deux vies sur trois), puis n'importe quelle entrée
+//!   (`capri_core::intro::LIST`) ; pendant le film, rien d'elle ne se joue ni ne s'attrape, la
+//!   cacher le coupe net (cachée, sans entrée), lui parler aussi (à sa place tout de suite, sans
+//!   entrée) ; fini à son heure, l'entrée suit. « Voir une intro » fait partie des gestes : refusée
+//!   seulement quand quelque chose la retient, sans rien changer ; acceptée, elle s'efface, le film
+//!   se joue, puis l'entrée suivante ; une entrée qu'elle joue finit toujours, à temps, coupée net si
+//!   on la cache, matérialisée à sa place si on lui parle, tenue si on l'attrape ; jouée jusqu'au
+//!   bout, elle est à sa place ; hors d'une intro, elle est toujours dans l'écran ; ce qui est
+//!   dessiné pendant une entrée est l'entrée en cours ;
 //! - son repos : de temps en temps, personne ne s'occupe d'elle pendant longtemps (le temps passe
 //!   alors à grandes enjambées) ; elle s'allonge, s'endort, se réveille par chaque moyen (on lui
 //!   parle, un clic, une prise, Claude Code qui attend, « Changer de place », cachée), son bord s'en
@@ -50,7 +54,7 @@ use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
 use capri_core::input::{Hand, Let};
-use capri_core::intro::{self, Act, End, Entry, Play};
+use capri_core::intro::{self, Act, After, End, Entry, Part, Play, Suite};
 use capri_core::look::{
     Drawing, Gesture, LONGEST_GESTURE, LieMasks, Look, Moves, NapMasks, PerchMasks, Rest, Unsettled, Wants,
     Wardrobe,
@@ -382,6 +386,12 @@ struct Tally {
     /// cache, on lui parle, on l'attrape) ; « Voir une intro » demandé, servi, refusé, et revenue
     /// sur ses pas avant l'intro.
     performed: [usize; 3],
+    /// Le film : joué jusqu'au bout (l'entrée suit), coupé en la cachant, en lui parlant ; et
+    /// joué pour « Voir une intro ».
+    films: usize,
+    film_cut_hidden: usize,
+    film_cut_talked: usize,
+    encore_films: usize,
     played: usize,
     cut_hidden: usize,
     cut_talked: usize,
@@ -421,13 +431,62 @@ struct Tally {
     unsettled: usize,
 }
 
-/// Une intro est-elle possible avec ses planches (ses intros en images le sont toujours ici : leurs
-/// images, la boucle ne les voit pas) ?
+/// Une entrée est-elle possible avec ses planches ?
 fn possible(entry: &Entry, look: &Look, capri: &Capri) -> bool {
     match entry.play {
-        Play::Film(_) | Play::Plain => true,
+        Play::Plain => true,
         Play::Act(act) => look.can_perform(act, capri),
     }
+}
+
+/// Ce que la suite a fait en commençant son entrée (`Suite::begin_entry`, par `Suite::film_over`
+/// ou directement, comme l'app) : jouée par elle, on la suit (sa place, `place`, prise juste
+/// avant) ; « se matérialise », la suite est finie. Une entrée possible n'est jamais refusée.
+fn entry_begun(
+    suite: &Suite,
+    look: &Look,
+    place: Vec2,
+    frame: u64,
+    performing: &mut Option<(Act, u64, Vec2, bool)>,
+    tally: &mut Tally,
+) -> Result<(), String> {
+    match suite.entry().play {
+        Play::Act(act) if suite.part() == Part::Entry && look.is_performing() => {
+            tally.performed[act_index(act)] += 1;
+            *performing = Some((act, 0, place, false));
+        }
+        Play::Plain if suite.is_over() && suite.entry_end() == Some(End::Played { shown: 0 }) => {}
+        _ => {
+            return Err(format!(
+                "image {frame} : l'entrée {:?} : {:?}",
+                suite.entry().key,
+                suite.entry_end()
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// L'entrée qu'elle jouait a fini par `end` : la suite aussi (`Suite::entry_over`, comme l'app).
+fn suite_over(
+    suite: &mut Option<Suite>,
+    end: End,
+    look: &mut Look,
+    capri: &mut Capri,
+    frame: u64,
+) -> Result<(), String> {
+    let Some(playing) = suite.take() else {
+        return Err(format!("image {frame} : une entrée finie hors d'une suite"));
+    };
+    let mut playing = playing;
+    playing.entry_over(end, look, capri, frame);
+    if !playing.is_over() || playing.entry_end() != Some(end) {
+        return Err(format!("image {frame} : l'entrée finie ({end:?}), et la suite {playing:?}"));
+    }
+    if playing.hides() && !look.is_gone() {
+        return Err(format!("image {frame} : l'entrée coupée en la cachant, et pas cachée"));
+    }
+    Ok(())
 }
 
 /// L'indice d'une intro jouée par elle, pour le décompte.
@@ -475,36 +534,55 @@ fn live(seed: u64, dressed: (bool, bool, bool, u8), tally: &mut Tally) -> Result
     let (mut hidden, mut talking, mut music) = (false, false, false);
     let mut frame = 0u64;
     capri.step(0.0, frame);
-    // une vie commence par une intro, chacune à son tour selon la graine (« rien » si ses planches
-    // ne la permettent pas) ; une sur cinq est coupée en la cachant : partie d'un coup, sans
-    // s'être jamais montrée (`Running::end_intro`, `Look::hide_unseen`, `Look::vanish`). Une intro
-    // en images se joue sans elle : ensuite, elle se matérialise
+    // une vie commence par la suite de l'intro : le film, quand ses images sont là (deux vies sur
+    // trois), puis une entrée, chacune à son tour selon la graine (« se matérialise » si ses
+    // planches ne la permettent pas) ; une sur cinq est coupée en la cachant tout de suite : partie
+    // d'un coup, sans s'être jamais montrée (`Running::end_intro`, `Look::hide_unseen`,
+    // `Look::vanish`). Le film se joue sans elle : ensuite, l'entrée
+    let with_film = seed % 3 != 2;
     let opening = &intro::LIST[(seed / 5) as usize % intro::LIST.len()];
     let opening = if possible(opening, &look, &capri) { opening } else { intro::plain() };
     let mut shown_last = Some(opening.key);
-    // l'intro qu'elle joue : laquelle, depuis combien de pas, sa place, et si sa taille a changé
+    // l'entrée qu'elle joue : laquelle, depuis combien de pas, sa place, et si sa taille a changé
     // entre-temps
     let mut performing: Option<(Act, u64, Vec2, bool)> = None;
+    // la suite qui se joue (`Running::intro`, par les mêmes méthodes que l'app) ; et le film :
+    // l'image d'animation où il finit
+    let mut suite = Some(Suite::new(opening, with_film, true));
+    let mut film: Option<u64> = None;
     // combien elle dépassait de l'écran au pas précédent (hors d'une intro qu'elle joue)
     let mut last_out: Option<f32> = None;
-    match opening.play {
-        Play::Act(act) => {
-            let place = capri_place(&capri);
-            if !look.perform(&mut capri, act, frame) {
-                return Err(format!("l'intro {act:?} refusée au lancement"));
+    if let Some(launch) = suite.as_mut() {
+        if with_film {
+            if seed % 5 == 4 {
+                // cachée pendant le film : ni entrée, ni rien
+                let cut = End::Cut { why: intro::Cut::Hidden, at: None };
+                if launch.film_over(cut, &mut look, &mut capri, frame) != Some(After::Hidden)
+                    || !look.is_gone()
+                {
+                    return Err("le film coupé en la cachant au lancement, et pas cachée".to_owned());
+                }
+                tally.film_cut_hidden += 1;
+            } else {
+                film = Some(frame + intro::FILM.frames());
             }
-            tally.performed[act_index(act)] += 1;
-            performing = Some((act, 0, place, false));
+        } else if seed % 5 == 4 && opening.play == Play::Plain {
+            // cachée tout de suite : partie d'un coup, sans s'être montrée
+            launch.record_entry(End::Cut { why: intro::Cut::Hidden, at: None });
+            look.hide_unseen(&mut capri, frame);
+        } else {
+            let place = capri_place(&capri);
+            launch.begin_entry(&mut look, &mut capri, frame);
+            entry_begun(launch, &look, place, frame, &mut performing, tally)?;
+            if seed % 5 == 4 {
+                look.vanish(&mut capri, frame);
+            }
         }
-        Play::Film(_) | Play::Plain if seed % 5 == 4 => {}
-        Play::Film(_) | Play::Plain => look.enter(&mut capri, frame),
+    }
+    if suite.as_ref().is_some_and(Suite::is_over) {
+        suite = None;
     }
     if seed % 5 == 4 {
-        if look.is_performing() {
-            look.vanish(&mut capri, frame);
-        } else {
-            look.hide_unseen(&mut capri, frame);
-        }
         hidden = true;
     }
     // « Voir une intro » demandé : celle qui se jouera une fois effacée
@@ -561,6 +639,66 @@ fn live(seed: u64, dressed: (bool, bool, bool, u8), tally: &mut Tally) -> Result
         }
         let now = frame as f64 / 24.0;
 
+        // --- le film de l'intro (`Running::intro_tick`) : elle n'est pas encore là, rien ne
+        // s'attrape, sa vie ne bouge pas ; la cacher le coupe net, lui parler aussi ; fini à son
+        // heure, l'entrée suit ; ce qui suit, la suite le fait (`Suite::film_over`, comme l'app) ---
+        if let (Some(until), Some(playing)) = (film, suite.as_mut()) {
+            if look.is_performing() || performing.is_some() || playing.part() != Part::Film {
+                return fail(format!("image {frame} : pendant le film, elle joue déjà une entrée"), &story);
+            }
+            let place = capri_place(&capri);
+            if !quiet_stretch && dice.chance(200) {
+                film = None;
+                hidden = true;
+                toggled_at = frame;
+                away_since = None;
+                let cut = End::Cut { why: intro::Cut::Hidden, at: Some(3) };
+                let after = playing.film_over(cut, &mut look, &mut capri, frame);
+                if after != Some(After::Hidden) || !look.is_gone() || !playing.is_over() {
+                    return fail(format!("image {frame} : cachée pendant le film, et {after:?}"), &story);
+                }
+                tally.film_cut_hidden += 1;
+                story.push(format!("{frame} : cachée pendant le film"));
+            } else if !quiet_stretch && dice.chance(200) {
+                film = None;
+                talking = true;
+                away_since = None;
+                let cut = End::Cut { why: intro::Cut::Talked, at: Some(3) };
+                let after = playing.film_over(cut, &mut look, &mut capri, frame);
+                if after != Some(After::Here) || !playing.is_over() || playing.entry_end().is_some() {
+                    return fail(
+                        format!("image {frame} : on lui parle pendant le film, et {after:?}"),
+                        &story,
+                    );
+                }
+                roamer.came_back(now, &capri);
+                asked = false;
+                tally.film_cut_talked += 1;
+                story.push(format!("{frame} : on lui parle pendant le film"));
+            } else if frame >= until {
+                film = None;
+                away_since = None;
+                tally.films += 1;
+                story.push(format!("{frame} : le film fini, l'entrée {}", playing.entry().key));
+                if playing.film_over(End::Played { shown: 22 }, &mut look, &mut capri, frame)
+                    != Some(After::Entry)
+                {
+                    return fail(format!("image {frame} : le film fini, et pas d'entrée"), &story);
+                }
+                if let Err(what) = entry_begun(playing, &look, place, frame, &mut performing, tally) {
+                    return fail(what, &story);
+                }
+                if playing.is_over() {
+                    roamer.came_back(now, &capri);
+                    asked = false;
+                }
+            }
+            if playing.is_over() {
+                suite = None;
+            }
+            continue;
+        }
+
         // --- entre deux pas : le bureau, les menus, les raccourcis, la souris ---
         if dice.chance(20) {
             desk.cursor = Some(Vec2::new(dice.between(0.0, 3024.0), dice.between(0.0, 1964.0)));
@@ -600,6 +738,9 @@ fn live(seed: u64, dressed: (bool, bool, bool, u8), tally: &mut Tally) -> Result
                 if let Some(end) = look.take_performed() {
                     if let Err(what) = performed(end, &mut performing, &look, &capri, hidden, tally) {
                         return fail(format!("image {frame} : {what}"), &story);
+                    }
+                    if let Err(what) = suite_over(&mut suite, end, &mut look, &mut capri, frame) {
+                        return fail(what, &story);
                     }
                     roamer.came_back(now, &capri);
                     asked = false;
@@ -887,6 +1028,9 @@ fn live(seed: u64, dressed: (bool, bool, bool, u8), tally: &mut Tally) -> Result
             if let Err(what) = performed(end, &mut performing, &look, &capri, hidden, tally) {
                 return fail(format!("image {frame} : {what}"), &story);
             }
+            if let Err(what) = suite_over(&mut suite, end, &mut look, &mut capri, frame) {
+                return fail(what, &story);
+            }
             if !end.hides() {
                 roamer.came_back(now, &capri);
                 asked = false;
@@ -1098,6 +1242,9 @@ fn live(seed: u64, dressed: (bool, bool, bool, u8), tally: &mut Tally) -> Result
         if let Some(end) = look.take_performed() {
             if let Err(what) = performed(end, &mut performing, &look, &capri, hidden, tally) {
                 return fail(format!("image {frame} : {what}"), &story);
+            }
+            if let Err(what) = suite_over(&mut suite, end, &mut look, &mut capri, frame) {
+                return fail(what, &story);
             }
             story.push(format!("{frame} : son intro finie : {end:?}"));
             roamer.came_back(now, &capri);
@@ -1379,30 +1526,28 @@ fn live(seed: u64, dressed: (bool, bool, bool, u8), tally: &mut Tally) -> Result
                 }
             }
         }
-        // effacée pour « Voir une intro » : l'intro se joue (une intro en images, ou « rien » : elle
-        // revient tout de suite, l'intro jouée sans elle)
+        // effacée pour « Voir une intro » : la suite se joue, le film d'abord (s'il est là), puis
+        // l'entrée (« se matérialise » : elle revient tout de suite)
         if let Some(entry) = encore.filter(|_| look.is_offstage()) {
             encore = None;
             tally.encores_started += 1;
             away_since = None;
-            match entry.play {
-                Play::Act(act) => {
-                    let place = capri_place(&capri);
-                    if !look.perform(&mut capri, act, frame) {
-                        return fail(
-                            format!("image {frame} : l'intro {act:?} refusée une fois effacée"),
-                            &story,
-                        );
-                    }
-                    tally.performed[act_index(act)] += 1;
-                    performing = Some((act, 0, place, false));
+            let mut playing = Suite::new(entry, with_film, false);
+            if with_film {
+                film = Some(frame + intro::FILM.frames());
+                tally.encore_films += 1;
+            } else {
+                let place = capri_place(&capri);
+                playing.begin_entry(&mut look, &mut capri, frame);
+                if let Err(what) = entry_begun(&playing, &look, place, frame, &mut performing, tally) {
+                    return fail(what, &story);
                 }
-                Play::Film(_) | Play::Plain => {
-                    look.enter(&mut capri, frame);
+                if playing.is_over() {
                     roamer.came_back(now, &capri);
                     asked = false;
                 }
             }
+            suite = (!playing.is_over()).then_some(playing);
             story.push(format!("{frame} : l'intro {} commence", entry.key));
         }
         if look.is_between() {
@@ -1688,7 +1833,7 @@ fn performed(
                 return Err(format!("{act:?} coupée en l'attrapant, et pas tenue : {:?}", capri.stance()));
             }
         }
-        other => return Err(format!("{act:?} : une fin d'intro en images, {other:?}")),
+        other => return Err(format!("{act:?} : une fin qui n'est pas celle d'une entrée, {other:?}")),
     }
     Ok(())
 }
@@ -1799,6 +1944,10 @@ fn random_gestures_never_leave_her_stuck_hidden_or_off_her_edge() {
         for (sum, count) in total.performed.iter_mut().zip(tally.performed) {
             *sum += count;
         }
+        total.films += tally.films;
+        total.film_cut_hidden += tally.film_cut_hidden;
+        total.film_cut_talked += tally.film_cut_talked;
+        total.encore_films += tally.encore_films;
         total.played += tally.played;
         total.cut_hidden += tally.cut_hidden;
         total.cut_talked += tally.cut_talked;
@@ -1858,6 +2007,14 @@ fn random_gestures_never_leave_her_stuck_hidden_or_off_her_edge() {
         "{total:?}"
     );
     assert!(total.encores_turned_back > 3 && total.cut_resized > 3, "{total:?}");
+    // le film : joué puis l'entrée, coupé de chaque façon, et rejoué pour « Voir une intro »
+    assert!(
+        total.films > 200
+            && total.film_cut_hidden > 50
+            && total.film_cut_talked > 20
+            && total.encore_films > 100,
+        "{total:?}"
+    );
     // son repos, par chaque chemin : réveillée d'elle-même et par quelqu'un (dont Claude Code),
     // relevée, son bord parti sous elle allongée, cachée allongée, attrapée au repos, ses planches
     // attendues, et en échec

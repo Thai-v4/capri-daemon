@@ -9,7 +9,8 @@
 //!   chaque mot de sa sortie figure dans le code source de la répétition ou du guetteur ;
 //! - la vraie app (`CAPRI_MUSIC_REHEARSAL`, journal au niveau `trace`) : l'annonce est reçue alors
 //!   que l'app n'est pas active, et le journal ne contient ni les faux champs ni le nom d'un vrai
-//!   lecteur, ni sur sa sortie d'erreur ni dans son fichier (`<CAPRI_CONFIG_DIR>/logs/capri.log`).
+//!   lecteur, ni sur sa sortie d'erreur ni dans ses fichiers (`<CAPRI_CONFIG_DIR>/logs/capri.log`,
+//!   et `capri.old.log` s'il a tourné, ce qu'il fait vite au niveau `trace`).
 //!   Tous ses lieux sont d'essai : ses réglages, son journal et son dossier d'ouverture de session
 //!   (`CAPRI_CONFIG_DIR` : elle ne lit ni n'écrit rien dans le vrai `~/Library/LaunchAgents`, et,
 //!   ce dossier vide, ne veille pas sur Ollama), le trousseau (`CAPRI_KEYCHAIN_SERVICE`), le canal
@@ -20,7 +21,7 @@
 //! Ne joue aucun son, ne demande aucune permission, ne pilote aucun lecteur.
 
 use std::collections::HashSet;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
@@ -74,6 +75,31 @@ fn assert_no_player(text: &str) {
     for player in ["Spotify", "Musique", "com.spotify", "com.apple.Music"] {
         assert!(!text.contains(player), "un lecteur est nommé : {player}");
     }
+}
+
+/// Tout son journal en fichier, dans le dossier `logs` : le précédent (`capri.old.log`, s'il a
+/// tourné, ce qu'il fait vite au niveau `trace`), puis le courant ; ce qui est attendu peut être
+/// dans l'un ou l'autre, et ce qui ne doit jamais y être, ni dans l'un ni dans l'autre. Rend aussi
+/// s'il a tourné.
+fn whole_journal(logs: &Path) -> (String, bool) {
+    let old = std::fs::read_to_string(logs.join("capri.old.log")).ok();
+    let current = std::fs::read_to_string(logs.join("capri.log")).unwrap_or_default();
+    let rotated = old.is_some();
+    (old.unwrap_or_default() + &current, rotated)
+}
+
+/// Le journal lu par ces essais, ce sont ses deux fichiers : une ligne (ou un faux titre) passée
+/// dans `capri.old.log` par une rotation n'échappe pas à la lecture.
+#[test]
+fn the_whole_journal_is_both_its_files() {
+    let logs = std::env::temp_dir().join(format!("capri-test-journal-entier-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&logs);
+    std::fs::create_dir_all(&logs).unwrap();
+    std::fs::write(logs.join("capri.log"), "après\n").unwrap();
+    assert_eq!(whole_journal(&logs), ("après\n".to_owned(), false));
+    std::fs::write(logs.join("capri.old.log"), "avant la rotation\n").unwrap();
+    assert_eq!(whole_journal(&logs), ("avant la rotation\naprès\n".to_owned(), true));
+    std::fs::remove_dir_all(&logs).unwrap();
 }
 
 #[test]
@@ -197,8 +223,15 @@ fn the_real_app_hears_an_announcement_while_inactive_and_never_logs_the_title() 
         lines.join("\n")
     );
     assert!(!log.contains("Ollama"), "elle ne veille pas sur Ollama");
-    // le seul fichier écrit : son journal, dans le dossier d'essai, sans les faux champs non plus
-    let journal = std::fs::read_to_string(directory.0.join("logs").join("capri.log")).unwrap_or_default();
+    // le seul fichier écrit : son journal, dans le dossier d'essai, sans les faux champs non plus ;
+    // ses deux fichiers (au niveau `trace`, il tourne vite)
+    let (journal, rotated) = whole_journal(&directory.0.join("logs"));
+    let current = std::fs::read_to_string(directory.0.join("logs").join("capri.log")).unwrap_or_default();
+    println!(
+        "journal : {} octets, tourné : {rotated} ; la ligne attendue dans le fichier courant : {}",
+        journal.len(),
+        current.contains("répétition de la musique : tout est conforme")
+    );
     let written: Vec<String> = std::fs::read_dir(&directory.0)
         .map(|entries| {
             entries.flatten().map(|entry| entry.file_name().to_string_lossy().into_owned()).collect()

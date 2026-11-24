@@ -9,10 +9,11 @@
 //! Ce que ces images ne montrent pas : le mouvement (sauf image par image), le suivi d'une vraie
 //! fenêtre, la musique réelle.
 //!
-//! Ses intros en images (`intro_portraits`) se rendent de même, sur un faux écran de MacBook Pro
-//! et un faux écran 1080p ; `intro_played_for_real` les joue à 24 i/s par le code de l'app et dit
-//! ce qu'elles ont montré et ce qu'elles ont pesé. Celles qu'elle joue elle-même, et « rien »
-//! (`act_intro_portraits`), sur un faux écran de MacBook Pro, image par image. Ses gestes (`gesture_portraits`) : tenue en l'air, sa
+//! Le film de ses intros, « de tout près », avec et sans son glitch, et toute la suite (le film puis
+//! chaque entrée, et leur raccord), sur un faux écran de MacBook Pro (`intro_portraits`) ;
+//! `intro_played_for_real` le joue à 24 i/s par le code de l'app et dit ce qu'il a montré et ce
+//! qu'il a pesé. Ses entrées, et « se matérialise » (`act_intro_portraits`), sur un faux écran de
+//! MacBook Pro, image par image. Ses gestes (`gesture_portraits`) : tenue en l'air, sa
 //! mèche et le curseur marqués ; lancée ; elle se relève ; elle sourit ; elle marche ; son éclat
 //! assise ; ses clignements glitchés. Son repos (`rest_portraits`) : elle s'allonge, allongée
 //! (clignement, parole), endormie, elle se rassoit, son départ allongée, la superposition de sa
@@ -27,7 +28,7 @@ use capri_core::look::{Drawing, Picture};
 use capri_core::perch::{Perch, Spot};
 use capri_core::sheets::{self, stand};
 use capri_core::{Capri, Rect, Vec2};
-use capri_render::{Crop, ImageId, Offscreen, SpriteDraw, SpriteImage};
+use capri_render::{Crop, ImageId, Offscreen, SpriteDraw, SpriteImage, Tint};
 
 use crate::assets;
 use crate::figure::Figure;
@@ -95,6 +96,7 @@ impl Scene {
                 boil: 0.0,
                 opacity: 1.0,
                 crop: Crop::WHOLE,
+                tint: Tint::NONE,
             },
         )
     }
@@ -746,94 +748,177 @@ impl crate::intro_view::Canvas for Offscreen {
     }
 }
 
-/// Ses intros en images, posées sur un faux écran de chaque taille (un MacBook Pro 14", 3024 ×
-/// 1964 ; un écran 1080p, 1920 × 1080) : quelques dessins entiers de chacune
-/// (`intro-<nom>-<écran>-<dessin>.png`), et une planche de tous, réduite
-/// (`intro-<nom>-planche.png`), chacun peint sur la même toile, comme dans l'app. Dit aussi
-/// combien de temps prend chacun à décoder et prémultiplier (le travail du thread « capri-intro »).
+/// La graine des portraits du film : son glitch, tel qu'un lancement de cette graine le tirerait.
+const FILM_SEED: u64 = 0x5eed_0008;
+
+/// Les dessins du film que l'utilisateur veut voir en entier, par leur numéro (depuis 1).
+const FILM_DRAWINGS: [u32; 9] = [1, 2, 4, 8, 11, 14, 18, 21, 22];
+
+/// Le film « de tout près » et toute la suite, sur un faux écran de MacBook Pro 14" (3024 × 1964),
+/// peints sur une seule toile et dessinés par le même code que l'app (`intro_view::film_layers`) :
+/// - ses dessins 1, 2, 4, 8, 11, 14, 18, 21 et 22 entiers, avec leur glitch
+///   (`film-glitch-<dessin>.png`) et sans (`film-<dessin>.png`) ; les deux extrêmes aussi sur un
+///   écran 1080p (`film-glitch-1920x1080-<dessin>.png`), où l'image ne dépasse pas sur les côtés ;
+/// - ses 22 dessins avec leur glitch, au huitième (`film-planche.png`) ;
+/// - pour chaque entrée, toute la suite au huitième : le film puis l'entrée, une image sur deux,
+///   jusqu'à ce qu'elle soit là (`suite-<entrée>-planche.png`) ; et le raccord, au quart : les
+///   deux derniers dessins du film, puis les premières images de l'entrée
+///   (`raccord-<entrée>.png`).
+///
+/// Dit aussi ce que fait le glitch à chaque dessin, et le temps de décoder chacun.
 #[test]
 #[ignore = "écrit des images PNG dans CAPRI_PORTRAITS_DIR, avec les vraies images et la vraie carte graphique"]
 fn intro_portraits() {
+    use capri_core::intro::glitch::{self, Glitch};
     use capri_core::intro::{self, Play};
 
-    let dir = directory();
-    for entry in intro::LIST {
-        let Play::Film(film) = entry.play else { continue };
-        let sequence = assets::intro::sequence(film).expect("un dossier d'images");
-        sequence.check().expect("toutes les images de l'intro, à la bonne taille");
-        let decoded = |position: u32| {
-            let started = Instant::now();
-            let mut pixels = sequence.decode(position).expect("lisible");
-            capri_render::premultiply_in_place(&mut pixels);
-            (pixels, started.elapsed())
-        };
-        // six dessins, de son début à sa fin
-        let count = film.len();
-        let picked: Vec<u32> = (0..6).map(|n| n * (count - 1) / 5).collect();
-        for screen in [(3024u32, 1964u32), (1920, 1080)] {
-            let mut offscreen = Offscreen::new(screen.0, screen.1).expect("une carte graphique");
-            let desk =
-                offscreen.add_image(SpriteImage { width: 1, height: 1, rgba: &DESK }).expect("le bureau");
-            let canvas = offscreen.add_canvas(film.size.0, film.size.1).expect("la toile");
-            let whole = Rect::new(Vec2::ZERO, Vec2::new(screen.0 as f32, screen.1 as f32));
-            let rect = intro::place(whole.size, film.size);
-            println!("{} sur un écran {} × {} : en {rect:?}", entry.name, screen.0, screen.1);
-            for &position in &picked {
-                let (pixels, _) = decoded(position);
-                offscreen.paint_canvas(canvas, &pixels).expect("peinte");
-                let layers = [Scene::rect(desk, whole), crate::intro_view::layer(canvas, rect)];
-                let image = offscreen.render(&layers, None).expect("rendue");
-                let name = format!("intro-{}-{}x{}-{:02}.png", entry.key, screen.0, screen.1, position + 1);
-                save(&dir, &name, &image, screen);
-            }
-        }
+    use crate::intro_view::{film_layers, layer};
 
-        // tous ses dessins, réduits, sur un écran de MacBook Pro au huitième ; et le temps de chacun
-        let small = (378, 246);
-        let mut offscreen = Offscreen::new(small.0, small.1).expect("une carte graphique");
-        let desk = offscreen.add_image(SpriteImage { width: 1, height: 1, rgba: &DESK }).expect("le bureau");
-        let canvas = offscreen.add_canvas(film.size.0, film.size.1).expect("la toile");
+    let dir = directory();
+    let film = intro::FILM;
+    let sequence = assets::intro::sequence(film).expect("un dossier d'images");
+    sequence.check().expect("toutes les images du film, à la bonne taille");
+    let decoded = |position: u32| {
+        let started = Instant::now();
+        let mut pixels = sequence.decode(position).expect("lisible");
+        capri_render::premultiply_in_place(&mut pixels);
+        (pixels, started.elapsed())
+    };
+    let size = (3024u32, 1964u32);
+    let mut scene = Scene::new(size, HEIGHT);
+    let canvas = scene.offscreen.add_canvas(film.size.0, film.size.1).expect("la toile");
+    let whole = Rect::new(Vec2::ZERO, Vec2::new(size.0 as f32, size.1 as f32));
+    let rect = intro::place(whole.size, film.size);
+    println!("{} sur un écran {} × {} : en {rect:?}", film.name, size.0, size.1);
+    println!(
+        "graine {FILM_SEED:#x} : rafales aux dessins {:?} (depuis 0)",
+        glitch::UP_CLOSE.bursts(FILM_SEED)
+    );
+    let mut wide = Offscreen::new(1920, 1080).expect("une carte graphique");
+    let wide_desk = wide.add_image(SpriteImage { width: 1, height: 1, rgba: &DESK }).expect("le bureau");
+    let wide_canvas = wide.add_canvas(film.size.0, film.size.1).expect("la toile");
+    let wide_whole = Rect::new(Vec2::ZERO, Vec2::new(1920.0, 1080.0));
+    let wide_rect = intro::place(wide_whole.size, film.size);
+
+    let mut film_thumbs = Vec::new();
+    let mut ending = Vec::new();
+    let mut times = Vec::new();
+    let mut most = 0;
+    for position in 0..film.len() {
+        let number = position + 1;
+        let (pixels, took) = decoded(position);
+        times.push(took.as_secs_f64() * 1000.0);
+        scene.offscreen.paint_canvas(canvas, &pixels).expect("peinte");
+        let glitch = Glitch::of(film, position, FILM_SEED, glitch::STRENGTH);
+        let drawn = film_layers(canvas, rect, film.size, &glitch);
+        most = most.max(drawn.len());
         println!(
-            "{} : mémoire graphique de la toile : {:.1} Mo",
-            entry.name,
-            (offscreen.image_bytes() - 4) as f64 / 1_000_000.0
+            "dessin {number:2} : force {:.2}, {} bandes dont {} décalées et {} manquantes, doubles {:?} / {:?}, \
+             tremblement {:?} : {} dessins",
+            glitch.force,
+            glitch.bands.len(),
+            glitch.bands.iter().filter(|band| band.shift != 0 && !band.missing).count(),
+            glitch.bands.iter().filter(|band| band.missing).count(),
+            (glitch.doubles[0].offset, (glitch.doubles[0].opacity * 100.0).round()),
+            (glitch.doubles[1].offset, (glitch.doubles[1].opacity * 100.0).round()),
+            glitch.shake,
+            drawn.len()
         );
-        let whole = Rect::new(Vec2::ZERO, Vec2::new(small.0 as f32, small.1 as f32));
-        let rect = intro::place(whole.size, film.size);
-        let mut images = Vec::new();
-        let mut times = Vec::new();
-        for position in 0..count {
-            let (pixels, took) = decoded(position);
-            times.push(took.as_secs_f64() * 1000.0);
-            offscreen.paint_canvas(canvas, &pixels).expect("peinte");
-            drop(pixels);
-            let layers = [Scene::rect(desk, whole), crate::intro_view::layer(canvas, rect)];
-            images.push(offscreen.render(&layers, None).expect("rendue"));
+        let mut layers = vec![Scene::rect(scene.desk, whole)];
+        layers.extend(drawn);
+        let image = scene.offscreen.render(&layers, None).expect("rendue");
+        if FILM_DRAWINGS.contains(&number) {
+            save(&dir, &format!("film-glitch-{number:02}.png"), &image, size);
+            let plain = [Scene::rect(scene.desk, whole), layer(canvas, rect)];
+            let image = scene.offscreen.render(&plain, None).expect("rendue");
+            save(&dir, &format!("film-{number:02}.png"), &image, size);
         }
-        let (sheet, sheet_size) = contact(&images, small, 6);
-        save(&dir, &format!("intro-{}-planche.png", entry.key), &sheet, sheet_size);
-        let slowest = times.iter().cloned().fold(0.0, f64::max);
-        let shortest = film.sheet.iter().map(|&(_, hold)| hold).min().unwrap_or(1);
-        println!(
-            "{} : décoder et prémultiplier une image : {:.1} ms en moyenne, {slowest:.1} ms au plus (la plus courte \
-             est tenue {:.0} ms)",
-            entry.name,
-            times.iter().sum::<f64>() / times.len() as f64,
-            1000.0 * f64::from(shortest) / capri_core::FRAME_RATE
-        );
+        if number == 1 || number == film.len() {
+            wide.paint_canvas(wide_canvas, &pixels).expect("peinte");
+            let mut layers = vec![Scene::rect(wide_desk, wide_whole)];
+            layers.extend(film_layers(wide_canvas, wide_rect, film.size, &glitch));
+            let image = wide.render(&layers, None).expect("rendue");
+            save(&dir, &format!("film-glitch-1920x1080-{number:02}.png"), &image, (1920, 1080));
+        }
+        drop(pixels);
+        film_thumbs.push(eighth(&image, size));
+        if number + 2 > film.len() {
+            ending.push(quarter(&image, size));
+        }
+    }
+    let (sheet, sheet_size) = contact(&film_thumbs, (size.0 / 8, size.1 / 8), 6);
+    save(&dir, "film-planche.png", &sheet, sheet_size);
+    let slowest = times.iter().cloned().fold(0.0, f64::max);
+    println!(
+        "décoder et prémultiplier une image : {:.1} ms en moyenne, {slowest:.1} ms au plus (chacune est tenue {:.0} \
+         ms) ; au plus {most} dessins pour une image du film",
+        times.iter().sum::<f64>() / times.len() as f64,
+        1000.0 * 2.0 / capri_core::FRAME_RATE
+    );
+    // la toile lâchée, comme l'app à la fin du film
+    scene.offscreen.remove_image(canvas);
+    scene.offscreen.settle();
+
+    // pour chaque entrée : toute la suite, et le raccord
+    let look = &scene.figure.look;
+    let body = look.standing_size();
+    let feet_uv = look.standing_feet();
+    let start = Vec2::new(size.0 as f32 - body.x * 1.8, size.1 as f32 - body.y * 1.3);
+    let home = start + Vec2::new(body.x * feet_uv.x, body.y * feet_uv.y);
+    for entry in intro::LIST {
+        let mut scene = Scene::new(size, HEIGHT);
+        let mut c = capri(&scene.figure, size, home);
+        c.step(0.0, 0);
+        match entry.play {
+            Play::Act(act) => assert!(scene.figure.look.perform(&mut c, act, 0), "{}", entry.key),
+            Play::Plain => scene.figure.look.enter(&mut c, 0),
+        }
+        let mut thumbs = film_thumbs.clone();
+        let mut joined = ending.clone();
+        let mut frame = 0u64;
+        let mut over = None;
+        loop {
+            let picture = scene.figure.look.picture(&c);
+            if frame.is_multiple_of(2) || frame < 2 {
+                let image = scene.render(None, &[picture]);
+                if [0, 1, 2, 4, 6, 8].contains(&frame) {
+                    joined.push(quarter(&image, size));
+                }
+                if frame.is_multiple_of(2) {
+                    thumbs.push(eighth(&image, size));
+                }
+            }
+            let done = !scene.figure.look.is_performing() && scene.figure.look.is_here();
+            if done && over.is_none() {
+                over = Some(frame);
+            }
+            if over.is_some_and(|at| frame >= at + 12) || frame > 400 {
+                break;
+            }
+            frame += 1;
+            c.step(1.0 / 24.0, frame);
+            scene.figure.look.update(&mut c, frame, false, false);
+            let _ = scene.figure.look.take_performed();
+        }
+        let (sheet, sheet_size) = contact(&thumbs, (size.0 / 8, size.1 / 8), 8);
+        save(&dir, &format!("suite-{}-planche.png", entry.key), &sheet, sheet_size);
+        let (strip, strip_size) = contact(&joined, (size.0 / 4, size.1 / 4), 4);
+        save(&dir, &format!("raccord-{}.png", entry.key), &strip, strip_size);
+        println!("{} : là à l'image {over:?} après le film", entry.name);
     }
 }
 
-/// Ses intros en images jouées pour de vrai, l'une après l'autre (puis de nouveau), à 24 images par
-/// seconde, par
-/// `intro_view` (son thread, sa toile), sur la vraie carte graphique : combien de dessins montrés,
-/// à l'heure ou non, et l'empreinte mémoire du processus (`phys_footprint`, lue par
-/// `/usr/bin/footprint`, mémoire graphique comprise sur un Mac à puce Apple) avant, au plus haut
-/// pendant (aussi souvent que l'outil répond), et après ; puis ce qui a changé, par catégorie.
+/// Le film joué pour de vrai, deux fois de suite, à 24 images par seconde, par `intro_view` (son
+/// thread, sa toile) et dessiné avec son glitch (`IntroView::layers`), sur la vraie carte graphique
+/// : combien de dessins montrés, à l'heure ou non, combien de dessins par image au plus, et
+/// l'empreinte mémoire du processus (`phys_footprint`, lue par `/usr/bin/footprint`, mémoire
+/// graphique comprise sur un Mac à puce Apple) avant, au plus haut pendant (aussi souvent que
+/// l'outil répond), et après ; puis ce qui a changé, par catégorie. Ensuite, la carte graphique ne
+/// garde rien du film : ni sa toile, ni les réglages de ses bandes (`SLOTS_KEPT` au plus).
 #[test]
 #[ignore = "joue les intros sur la vraie carte graphique, avec les vraies images"]
 fn intro_played_for_real() {
-    use capri_core::intro::{self, End, Play};
+    use capri_core::intro::{self, End};
 
     use crate::intro_view::IntroView;
 
@@ -874,10 +959,10 @@ fn intro_played_for_real() {
     let block = std::hint::black_box(vec![7u8; 1920 * 1080 * 4]);
     drop(block);
     std::thread::sleep(std::time::Duration::from_millis(300));
-    // deux fois chacune : la seconde dit si quelque chose reste d'une fois à l'autre, ou si ce qui
-    // reste après la première est la réserve de l'allocateur
-    for entry in intro::LIST.iter().chain(intro::LIST) {
-        let Play::Film(film) = entry.play else { continue };
+    // deux fois : la seconde dit si quelque chose reste d'une fois à l'autre, ou si ce qui reste
+    // après la première est la réserve de l'allocateur
+    let film = intro::FILM;
+    for round in 0..2u64 {
         let sequence = assets::intro::sequence(film).expect("un dossier d'images");
         // la mémoire se lit sur un autre thread pendant qu'elle se joue
         let (stop, stopped) = std::sync::mpsc::channel::<()>();
@@ -892,37 +977,45 @@ fn intro_played_for_real() {
             (highest, samples)
         });
         let started = Instant::now();
-        let mut view: IntroView = IntroView::start(sequence, 0).expect("lancée");
+        let mut view: IntroView = IntroView::start(sequence, 0, FILM_SEED + round).expect("lancé");
         let mut painted = 0;
+        let mut most = 0;
         let mut last = None;
         let end = loop {
             let frame = capri_core::frame_at(started.elapsed());
             if let Some(end) = view.step(frame, &mut offscreen) {
                 break end;
             }
-            if let Some((id, shown, rect)) = view.picture(Vec2::new(64.0, 64.0))
+            if let Some((_, shown, _)) = view.picture(Vec2::new(64.0, 64.0))
                 && last != Some(shown)
             {
                 last = Some(shown);
                 painted += 1;
-                let _ = offscreen.render(&[crate::intro_view::layer(id, rect)], None).expect("rendue");
+                let layers = view.layers(Vec2::new(64.0, 64.0));
+                most = most.max(layers.len());
+                let _ = offscreen.render(&layers, None).expect("rendue");
             }
             std::thread::sleep(std::time::Duration::from_millis(16));
         };
         let elapsed = started.elapsed();
-        let line = view.close(end, entry.name, &mut offscreen);
-        // la toile lâchée : la carte graphique ne garde rien ; comme l'app à la fin de l'intro
-        // (`Running::end_intro`), elle la rend tout de suite, puis un dessin de plus
+        let first_after = view.close(&mut offscreen);
+        // la toile lâchée : la carte graphique ne garde rien ; comme l'app à la fin du film
+        // (`Running::film_over`), elle la rend tout de suite, avec les réglages de ses bandes, puis
+        // un dessin de plus
         assert_eq!(offscreen.image_bytes(), 0);
         offscreen.settle();
+        assert!(offscreen.slots() <= capri_render::SLOTS_KEPT, "{}", offscreen.slots());
         let _ = offscreen.render(&[], None).expect("rendue");
         std::thread::sleep(std::time::Duration::from_millis(300));
         let _ = stop.send(());
         let (highest, samples) = sampler.join().expect("les mesures");
         let last = report();
         let after = total(&last);
-        println!("{line}");
-        println!("jouée en {:.2} s, {painted} dessins à l'écran", elapsed.as_secs_f64());
+        println!("{} : {end:?}, la première image prête en {first_after:?}", film.name);
+        println!(
+            "joué en {:.2} s, {painted} dessins à l'écran, au plus {most} dessins par image",
+            elapsed.as_secs_f64()
+        );
         println!(
             "empreinte mémoire : {:.1} Mo avant, {:.1} Mo au plus haut (+{:.1}, {samples} mesures), {:.1} Mo après ({:+.1})",
             before as f64 / 1e6,
@@ -938,8 +1031,9 @@ fn intro_played_for_real() {
                 println!("  {category} : {:+.1} Mo", change as f64 / 1e6);
             }
         }
-        assert!(matches!(end, End::Played { .. }), "{}: {end:?}", entry.name);
-        assert!(elapsed.as_secs_f64() < 1.0 + film.frames() as f64 / 24.0, "{}", entry.name);
+        assert!(matches!(end, End::Played { .. }), "{end:?}");
+        assert!(elapsed.as_secs_f64() < 1.0 + film.frames() as f64 / 24.0);
+        assert!(most <= 3 * capri_core::intro::glitch::MAX_BANDS, "{most}");
     }
 }
 
@@ -949,7 +1043,13 @@ fn quarter(rgba: &[u8], size: (u32, u32)) -> Vec<u8> {
     image::imageops::thumbnail(&image, size.0 / 4, size.1 / 4).into_raw()
 }
 
-/// Les intros qu'elle joue elle-même, et « rien », sur un faux écran de MacBook Pro 14" (3024 ×
+/// De même, au huitième.
+fn eighth(rgba: &[u8], size: (u32, u32)) -> Vec<u8> {
+    let image = image::RgbaImage::from_raw(size.0, size.1, rgba.to_vec()).expect("une image");
+    image::imageops::thumbnail(&image, size.0 / 8, size.1 / 8).into_raw()
+}
+
+/// Ses entrées, qu'elle joue elle-même, et « se matérialise », sur un faux écran de MacBook Pro 14" (3024 ×
 /// 1964), à sa place du lancement (en bas à droite), à sa taille d'origine, son corps avancé d'un
 /// vingt-quatrième de seconde par image comme dans l'app : une planche de chacune, un dessin sur
 /// deux, au quart (`intro-<nom>-planche.png`), et quelques images entières
@@ -980,7 +1080,6 @@ fn act_intro_portraits() {
         match entry.play {
             Play::Act(act) => cases.push((entry.key.to_owned(), Some(act), home)),
             Play::Plain => cases.push((entry.key.to_owned(), None, home)),
-            Play::Film(_) => {}
         }
     }
     cases.push(("marche-loin".to_owned(), Some(intro::Act::Walk), far));
