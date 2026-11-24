@@ -601,6 +601,70 @@ s'accroche au côté d'une fenêtre : le premier lui donnait un visage humain ; 
 son vrai dessin en référence, s'en approchait beaucoup, mais la pose n'était pas naturelle.
 Écartés aussi : elle guette avec ses vrais dessins.
 
+### Son rythme : ce qu'elle fait d'elle-même, et quand
+
+Tout ce qui suit, elle le fait sans qu'on le lui demande. Les durées sont tirées au sort entre
+deux bornes, avec une graine prise à l'horloge au lancement. Ce sont des constantes du code, pas
+des réglages : leur nom est donné pour les retrouver (`capri_core::roam`, sauf mention).
+
+**Au lancement**
+
+| Quand | Ce qu'elle fait | Case de son menu |
+|---|---|---|
+| tout de suite | son intro : « de tout près », puis une entrée tirée au sort, puis un bonjour | « Intro au démarrage » |
+| 20 à 40 s après (`FIRST`) | son premier changement de place | « Vivre sa vie » |
+| 60 s après, puis une fois par jour (`update::schedule::GRACE`, `EVERY`) | elle regarde si une version existe | « Chercher les mises à jour » |
+| tout de suite | elle lance Ollama, s'il est son cerveau sur cette machine et que rien n'y répond | « Se lancer à l'ouverture de session » |
+
+**Changer de place** (case « Vivre sa vie »)
+
+| Où elle est | Ce qu'elle fait | Constante |
+|---|---|---|
+| assise sur un bord | elle va sur un autre bord après 3 à 8 minutes | `SEATED` |
+| debout en bas de l'écran | elle cherche un bord, ou un côté où guetter, toutes les 30 s à 2 minutes ; sans rien, elle ne change de place debout qu'après 3 à 8 minutes | `STANDING`, `SEATED` |
+| en train de guetter | elle regarde toutes les 30 s à 2 minutes si un bord s'est libéré, et va s'y asseoir ; sinon elle change de côté après 3 à 8 minutes | `LURKING`, `LURK_STAY` |
+| posée ou lâchée par toi, ou descendue par un de tes gestes (sa taille, une case décochée) | elle y reste 5 minutes | `BY_HAND` |
+| son bord ou son côté parti sans geste (fenêtre fermée, recouverte, déplacée) | elle se choisit une autre place en 5 à 20 s | `LOST` |
+| aucune place possible | elle réessaie 30 s plus tard | `NOWHERE` |
+| tu viens de t'occuper d'elle | elle attend encore au moins 10 s | `PATIENCE` |
+
+Elle ne part pas tant qu'on la tient ou qu'elle vole, qu'on lui parle, qu'elle parle, que le
+champ de saisie est ouvert, qu'elle se balance sur la musique, que le curseur est sur elle,
+qu'elle est cachée ou qu'elle se repose. « Changer de place », dans son menu, la fait partir
+tout de suite.
+
+Où elle va : sur un bord tiré au sort (les plus larges ont plus de chances, jamais le même deux
+fois de suite quand un autre existe, de préférence sur une autre fenêtre, loin du curseur) ;
+sans bord, derrière le côté d'une fenêtre ; sans côté non plus, debout en bas de l'écran.
+Comment : elle s'efface et apparaît là-bas ; debout, pour un trajet court vers la gauche (10 s
+de marche au plus, `WALK_LONGEST`), elle y va en marchant ; vers un côté, elle sort de derrière
+la fenêtre en 0,6 s (`body::GLIDE`).
+
+**Ses petits mouvements**
+
+| Ce qu'elle fait | Quand | Constante |
+|---|---|---|
+| un tour de sa boucle | toutes les 2,5 s | `look::TOUR` |
+| elle cligne des yeux | quatre fois en 20 s, espacées de 5 s, 2,5 s, 5 s puis 7,5 s, toujours dans cet ordre | `look::BLINKS` |
+| son clignement à glitch | le dernier des quatre, une fois toutes les 20 s | `look::GLITCHY_BLINK` |
+| assise, un éclat de glitch | 1 à 4 minutes après le précédent | `FIDGET` |
+| elle sourit quand Claude Code finit son tour | une fois par minute au plus, jamais pendant qu'on se parle | `look::CHEER_EVERY` |
+| assise, elle se balance | tant qu'un lecteur connu (Spotify, Musique) annonce qu'il joue | « Se balancer sur la musique » |
+
+**Son repos** (case « Vivre sa vie » ; tranquille veut dire : ni clic, ni prise, ni conversation, et, assise, pas de musique)
+
+| Où elle en est | Ce qu'elle fait | Constante |
+|---|---|---|
+| assise et tranquille | elle s'allonge après 6 à 12 minutes | `LIE_AFTER` |
+| allongée et tranquille | elle s'endort après 3 à 6 minutes | `DOZE_AFTER` |
+| allongée, éveillée | elle se rassoit après 10 à 20 minutes | `UP_AWAKE` |
+| endormie, allongée ou debout | elle se réveille après 20 à 40 minutes | `UP_ASLEEP` |
+| debout, immobile et tranquille | elle s'endort debout après 10 à 20 minutes | `STAND_DOZE_AFTER` |
+| allongée d'affilée | jamais plus d'une heure | `LIE_LONGEST` |
+
+Un clic, une prise, lui parler, ou Claude Code qui attend ta réponse la réveillent. Elle ne se
+repose pas quand elle guette.
+
 ## Jalon 4 : lui parler
 
 **⌃⌥P** (Ctrl+Alt+P), ou « Parler à Capri » dans son menu, ouvre un champ de saisie sous ses
