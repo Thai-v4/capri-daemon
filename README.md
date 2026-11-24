@@ -585,8 +585,12 @@ d'un coup ; pendant un dessin de son clignement à glitch, un bout de ses yeux p
 bord (3 px de planche) ; prise près d'un bord de l'écran, son image redressée peut en dépasser
 tant qu'on la tient ; sous Windows, rien n'a été exécuté, seulement compilé.
 
-Écrit et testé sans écran le 24 novembre 2026, images fixes rendues et regardées ; **pas encore
-regardé en mouvement** : la liste est dans « État de validation ».
+Écrit et testé sans écran le 24 novembre 2026, images fixes rendues et regardées ; vu par
+l'utilisateur le soir même, la Capri du dépôt lancée avec ses vrais réglages : « tout est bon »
+(la pose, la glissade, un clic à côté d'elle qui va à la fenêtre), dans l'ensemble, pas point
+par point. Son journal : derrière le côté gauche puis le droit sur demande, assise dès qu'un
+bord existait, debout en bas de l'écran quand il n'y avait ni bord ni côté. La liste est dans
+« État de validation ».
 
 **Essayé et écarté : des dessins générés.** Trois essais pour ajouter à sa boucle
 debout un coucou de la main par un générateur d'images : le premier changeait son corps d'un
@@ -2438,7 +2442,8 @@ d'après son journal, et aucun de ces points n'a été confirmé un par un). Il 
 12. **les dix phrases de bonjour** : dire si le ton lui va, et lesquelles retirer.
 
 **Elle guette de derrière une fenêtre : à regarder à la main** (écrit et testé sans écran le 24
-novembre 2026 ; rien n'a encore été vu en mouvement). Il faut qu'aucun bord ne convienne : une
+novembre 2026 ; vu par l'utilisateur le même jour, « tout est bon », dans l'ensemble : aucun de
+ces points n'a été confirmé un par un). Il faut qu'aucun bord ne convienne : une
 fenêtre dont le haut est près de la barre des menus, avec de la place à côté, puis « Changer de
 place » dans son menu :
 
@@ -2460,8 +2465,9 @@ place » dans son menu :
 11. **les coins arrondis** de la fenêtre : s'en tient-elle assez loin ?
 12. **le processeur** : au repos quand elle guette sans bouger.
 
-**Elle se repose : à regarder à la main** (écrit et testé sans écran le 24 novembre 2026 ; rien
-n'a encore été vu en mouvement). Il faut la laisser tranquille 6 à 12 minutes, assise sur un
+**Elle se repose : à regarder à la main** (écrit et testé sans écran le 24 novembre 2026 ;
+d'après son journal, elle s'est endormie debout une fois dans la vraie app le même jour, ses
+planches chargées en 35 ms ; rien n'a été confirmé à l'œil). Il faut la laisser tranquille 6 à 12 minutes, assise sur un
 bord assez large, sans musique :
 
 1. **elle s'allonge** : le passage d'assise à allongée, et sa hanche qui reste au même endroit ;
@@ -2775,8 +2781,8 @@ Points à surveiller :
    2026, vues à l'écran le 24 : le coucou de mochiiwuff ne plaisait pas, il est retiré ; « de
    tout près » est suivie d'une entrée tirée au sort, avec un effet de glitch calculé : écrit le
    24, vu le même jour, le glitch convient) ; ~~elle guette de derrière le côté d'une fenêtre
-   quand aucun bord ne convient~~ (écrit et testé sans écran le 24 novembre 2026 ; reste à
-   regarder en mouvement) ; se tourner des deux côtés.
+   quand aucun bord ne convient~~ (écrit et testé sans écran le 24 novembre 2026, vu le même
+   jour dans l'ensemble) ; se tourner des deux côtés.
 
 ## Licence
 

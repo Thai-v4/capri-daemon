@@ -96,7 +96,11 @@ cinquième (elle s'allonge sur son bord, s'endort, se réveille ; ses planches d
 à la demande) est écrit et testé sans écran le 24 novembre 2026 ; pas regardé en mouvement.
 Le neuvième, demandé le 24 novembre 2026 (sans bord où s'asseoir, elle guette de derrière le
 côté d'une fenêtre, penchée et coupée au bord, au lieu d'aller debout en bas de l'écran), est
-écrit et testé sans écran le même jour ; pas regardé en mouvement.
+écrit et testé sans écran le même jour ; vu par l'utilisateur le soir même, la Capri du dépôt
+lancée avec ses vrais réglages : « tout est bon » (la pose, la glissade, un clic à côté d'elle
+qui va à la fenêtre), dans l'ensemble, pas point par point (son journal : derrière le côté
+gauche puis le droit sur demande, assise dès qu'un bord existait, debout en bas de l'écran sans
+bord ni côté).
 Reste : se tourner des deux côtés (lot 7). Des dessins
 générés par un outil d'images ont été essayés le même jour pour un coucou de la main, trois
 fois, et écartés : aucun ne se mêlait à ses dessins ; deux essais de plus le 24 novembre, pour
