@@ -11,7 +11,10 @@
 //!
 //! Quand la session principale finit son tour (`Message::ends_main_turn`), elle le retient
 //! jusqu'à ce que la boucle le relève ([`Feed::take_turn_end`]) : Capri sourit alors, si elle est
-//! libre (`capri_core::look::Look::cheer`). Rien d'autre n'en est gardé.
+//! libre (`capri_core::look::Look::cheer`). De même quand Claude Code attend une réponse de
+//! l'utilisateur (`Message::waits_for_the_user` : une permission, une question, une notification
+//! qui l'attend), relevé par [`Feed::take_awaiting`] : endormie, Capri se réveille. Rien d'autre
+//! n'en est gardé.
 
 use std::sync::mpsc::{Receiver, channel};
 use std::time::Instant;
@@ -28,6 +31,8 @@ pub struct Feed {
     waiting: Waiting,
     /// La session principale a fini son tour depuis la dernière fois qu'on l'a relevé.
     turn_end: bool,
+    /// Claude Code attend une réponse de l'utilisateur depuis la dernière fois qu'on l'a relevé.
+    awaits: bool,
     /// Origine de l'horloge du suivi.
     origin: Instant,
     endpoint: Endpoint,
@@ -95,6 +100,7 @@ impl Feed {
             tracker: Tracker::new(),
             waiting: Waiting::new(),
             turn_end: false,
+            awaits: false,
             origin: Instant::now(),
             endpoint,
         })
@@ -113,6 +119,7 @@ impl Feed {
             // identifiant de session, seulement des noms, des catégories, des durées et des longueurs
             log::debug!("Claude Code : {}", message.for_log());
             self.turn_end |= message.ends_main_turn();
+            self.awaits |= message.waits_for_the_user();
             match &mut message.event {
                 Event::TurnEnd { said } => {
                     if let Some(said) = said.take() {
@@ -139,6 +146,12 @@ impl Feed {
     /// La session principale a-t-elle fini son tour depuis le dernier appel ? Rendu une seule fois.
     pub fn take_turn_end(&mut self) -> bool {
         std::mem::take(&mut self.turn_end)
+    }
+
+    /// Claude Code attend-il une réponse de l'utilisateur, d'après un message arrivé depuis le
+    /// dernier appel (`Message::waits_for_the_user`) ? Rendu une seule fois.
+    pub fn take_awaiting(&mut self) -> bool {
+        std::mem::take(&mut self.awaits)
     }
 
     /// Oublie la ligne qui attendait : on a fait taire Capri (depuis son menu).
@@ -228,6 +241,13 @@ mod tests {
         assert!(feed.take_turn_end());
         deliver(&mut feed, &endpoint, Event::AgentEnd { agent_type: None, agent_id: None });
         assert!(!feed.take_turn_end());
+        // Claude Code attend l'utilisateur : une fois ; un outil ordinaire, non
+        assert!(!feed.take_awaiting());
+        deliver(&mut feed, &endpoint, Event::NeedsPermission { tool: "Bash".into(), summary: None });
+        assert!(feed.take_awaiting());
+        assert!(!feed.take_awaiting(), "une seule fois");
+        deliver(&mut feed, &endpoint, Event::ToolStart { tool: "Bash".into(), id: None, summary: None });
+        assert!(!feed.take_awaiting());
         drop(feed);
         assert!(!endpoint.path().exists(), "le canal est rangé");
         let _ = std::fs::remove_dir_all(endpoint.path().parent().unwrap());

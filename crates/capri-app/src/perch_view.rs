@@ -19,6 +19,10 @@
 //!
 //! Jamais pendant qu'on la tient ou qu'elle vole, jamais quand elle est cachée (la boucle ne
 //! l'appelle pas), jamais quand c'est désactivé. Le journal n'en dit que des nombres.
+//!
+//! **Pour s'allonger** : de la lecture qu'elle fait déjà posée (ou après un changement de taille),
+//! elle déduit aussi s'il y a la place pour elle allongée là où elle est
+//! (`capri_core::perch::fits` : [`PerchView::room_to_lie`]). Aucune lecture de plus.
 
 use capri_core::perch::{self, Seen, Stature, Watch};
 use capri_core::{Capri, Rect, Stance, Vec2};
@@ -28,6 +32,8 @@ use capri_platform::desk::{self, DeskError};
 pub struct PerchView {
     enabled: bool,
     watch: Watch,
+    /// D'après la dernière lecture faite posée : il y a la place pour elle allongée, là où elle est.
+    room_to_lie: bool,
     /// Au pas précédent, on la tenait ou elle volait.
     moving: bool,
     /// Ce système n'a pas de liste des fenêtres, et le journal l'a déjà dit.
@@ -53,6 +59,7 @@ impl PerchView {
         Self {
             enabled,
             watch: Watch::new(),
+            room_to_lie: false,
             moving: false,
             told_unavailable: false,
             #[cfg(debug_assertions)]
@@ -78,13 +85,33 @@ impl PerchView {
     /// À chaque pas de la boucle, après celui de Capri, à l'instant `now` (secondes) : si elle
     /// vient de s'arrêter (lâchée doucement, ou au bout d'un lancer), se pose-t-elle sur un bord ?
     /// Posée, elle suit sa fenêtre, ou la quitte. `period` : la durée d'un rafraîchissement de
-    /// l'écran, en secondes ; `stature` : ce qu'il lui faut sur un bord (`Look::stature`).
-    pub fn tick(&mut self, capri: &mut Capri, overlay: &Overlay, now: f64, period: f64, stature: Stature) {
+    /// l'écran, en secondes ; `stature` : ce qu'il lui faut sur un bord (`Look::stature`) ;
+    /// `lying` : pour s'y allonger (`Look::lying_stature`), si elle le peut.
+    pub fn tick(
+        &mut self,
+        capri: &mut Capri,
+        overlay: &Overlay,
+        now: f64,
+        period: f64,
+        stature: Stature,
+        lying: Option<Stature>,
+    ) {
         let moving = matches!(capri.stance(), Stance::Held { .. } | Stance::Thrown { .. });
         if std::mem::replace(&mut self.moving, moving) && capri.stance() == Stance::Floating {
             self.settle(capri, overlay, now, stature);
         }
-        self.ride(capri, overlay, now, period, stature);
+        self.ride(capri, overlay, now, period, stature, lying);
+    }
+
+    /// D'après la dernière lecture faite posée : y a-t-il la place pour elle allongée, là où elle
+    /// est (`perch::fits`) ? Jamais quand elle n'est pas posée.
+    pub fn room_to_lie(&self) -> bool {
+        self.room_to_lie
+    }
+
+    /// De cette lecture (`seen`), posée en `spot` : la place pour elle allongée (`lying`), ou non.
+    fn measure_room(&mut self, seen: &[Seen], overlay: &Overlay, spot: perch::Spot, lying: Option<Stature>) {
+        self.room_to_lie = lying.is_some_and(|lying| perch::fits(seen, screen(overlay), lying, spot));
     }
 
     /// Posée, est-elle pressée (un bouton de la souris enfoncé, ou sa fenêtre qui vient de
@@ -115,8 +142,16 @@ impl PerchView {
 
     /// Elle vient de changer de taille : posée, la place au-dessus de son bord lui suffit-elle
     /// encore ? Oui : elle y reste, ses pieds glissés s'il le faut pour tenir dans l'écran ; non
-    /// (ou la liste illisible) : elle repart flotter, là où elle est.
-    pub fn resized(&mut self, capri: &mut Capri, overlay: &Overlay, now: f64, stature: Stature) {
+    /// (ou la liste illisible) : elle repart flotter, là où elle est. Et allongée (`lying`) ?
+    pub fn resized(
+        &mut self,
+        capri: &mut Capri,
+        overlay: &Overlay,
+        now: f64,
+        stature: Stature,
+        lying: Option<Stature>,
+    ) {
+        self.room_to_lie = false;
         let Some(spot) = capri.perched() else { return };
         let Some(seen) = self.read(stature, overlay) else {
             log::debug!("quitte le bord : liste des fenêtres illisible");
@@ -126,6 +161,7 @@ impl PerchView {
             Ok(perch) => {
                 capri.ride(perch);
                 self.watch.saw(now, rect_of(&seen, spot.window));
+                self.measure_room(&seen, overlay, perch.spot, lying);
             }
             Err(why) => {
                 log::debug!("quitte le bord après avoir changé de taille : {}", why.describe());
@@ -144,6 +180,8 @@ impl PerchView {
     /// là, elle la suit ; partie, déplacée hors de sa portée, la liste illisible, ou si elle ne
     /// s'assoit plus sur les fenêtres : elle la quitte, et apparaîtra debout.
     pub fn arrived(&mut self, capri: &mut Capri, overlay: &Overlay, now: f64, stature: Stature) {
+        // la place pour s'allonger sera sue à la lecture suivante de sa veille posée
+        self.room_to_lie = false;
         let Some(spot) = capri.perched() else { return };
         if !self.enabled {
             return capri.take_off();
@@ -181,6 +219,7 @@ impl PerchView {
     /// Elle vient de s'arrêter, à l'instant `now`, debout : se pose-t-elle sur un bord ? Sur un
     /// bord près de ses pieds, qui lui laisse la place une fois posée (`stature`).
     fn settle(&mut self, capri: &mut Capri, overlay: &Overlay, now: f64, stature: Stature) {
+        self.room_to_lie = false;
         if !self.enabled || capri.stance() != Stance::Floating {
             return;
         }
@@ -207,10 +246,22 @@ impl PerchView {
         );
     }
 
-    /// Posée, elle suit sa fenêtre, ou la quitte.
-    fn ride(&mut self, capri: &mut Capri, overlay: &Overlay, now: f64, period: f64, stature: Stature) {
-        let Some(spot) = capri.perched() else { return };
+    /// Posée, elle suit sa fenêtre, ou la quitte ; et sait s'il y a la place pour elle allongée.
+    fn ride(
+        &mut self,
+        capri: &mut Capri,
+        overlay: &Overlay,
+        now: f64,
+        period: f64,
+        stature: Stature,
+        lying: Option<Stature>,
+    ) {
+        let Some(spot) = capri.perched() else {
+            self.room_to_lie = false;
+            return;
+        };
         if !self.enabled {
+            self.room_to_lie = false;
             return capri.take_off();
         }
         // la répétition « avant » : la cadence d'avant ce réglage, une lecture par image d'animation
@@ -229,6 +280,7 @@ impl PerchView {
         }
         let Some(seen) = self.read(stature, overlay) else {
             log::debug!("quitte le bord : liste des fenêtres illisible");
+            self.room_to_lie = false;
             return capri.take_off();
         };
         #[cfg(debug_assertions)]
@@ -239,9 +291,11 @@ impl PerchView {
             Ok(perch) => {
                 capri.ride(perch);
                 self.watch.saw(now, rect_of(&seen, spot.window));
+                self.measure_room(&seen, overlay, perch.spot, lying);
             }
             Err(why) => {
                 log::debug!("quitte le bord : {}", why.describe());
+                self.room_to_lie = false;
                 capri.take_off();
             }
         }

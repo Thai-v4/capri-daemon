@@ -12,19 +12,27 @@
 //! `look`) ; les quatre autres sont facultatives une à une ([`Strip::MOVES`]) : sans l'une, ce
 //! qu'elle porte ne se joue pas.
 //!
-//! **Une famille.** Toutes ses planches de ce dépôt hors de la boucle debout (celles-ci, et aussi,
-//! pas encore branchées : le sommeil, le réveil) sont des bandes horizontales de cases de
-//! [`CELL_WIDTH`] × 384 px, sur une même toile où, d'après le code du dépôt d'origine, une case de
-//! sa boucle debout (116 px de large) se pose à [`STAND_LEFT`] px du bord gauche, à la même
-//! hauteur et à la même échelle (vérifié ici sur les six planches branchées : le masque vert de
-//! ses yeux est au même endroit, à un pixel près, dans la dernière case de l'arrivée, du glitch et
-//! du sourire, et dans la première de la marche ; ses pieds sur la ligne 360 à 363 dans la marche,
-//! 363 dans le sourire). Pour en brancher une : une variante de [`Strip`] (son fichier, son nombre
-//! de cases, ses colonnes une fois remise en grille, sa tenue), sa feuille d'exposition, et la
-//! vérification de cet alignement sur la vraie image (les essais
-//! `the_real_life_sheets_match_their_measures_when_present` et
-//! `the_real_moves_match_their_measures_when_present` de `capri-app`). Le nombre de cases des
-//! autres, d'après la largeur de leur fichier : sommeil 16, réveil 13 (pas vérifié case par case).
+//! **Une famille.** Toutes ses planches de ce dépôt hors de la boucle debout sont des bandes
+//! horizontales de cases de [`CELL_WIDTH`] × 384 px, sur une même toile où, d'après le code du
+//! dépôt d'origine, une case de sa boucle debout (116 px de large) se pose à [`STAND_LEFT`] px du
+//! bord gauche, à la même hauteur et à la même échelle (vérifié ici : le masque vert de ses yeux
+//! est au même endroit, à un pixel près, dans la dernière case de l'arrivée, du glitch, du sourire
+//! et du réveil, et dans la première de la marche ; ses pieds sur la ligne 360 à 363 dans la
+//! marche, 363 dans le sourire). Pour en brancher une : une variante de [`Strip`] (son fichier, son
+//! nombre de cases, ses colonnes une fois remise en grille, sa tenue), sa feuille d'exposition, et
+//! la vérification de cet alignement sur la vraie image (les essais
+//! `the_real_life_sheets_match_their_measures_when_present`,
+//! `the_real_moves_match_their_measures_when_present` et
+//! `the_real_nap_matches_its_measures_when_present` de `capri-app`).
+//!
+//! **Dormir debout** ([`Strip::Sleep`], [`Strip::Wake`]) : roulée dans ses cheveux, elle flotte un
+//! peu plus haut que ses pieds (le plus bas de sa silhouette, ligne 354, contre 363 debout) ; 16
+//! dessins tenus en quatre (6 par seconde, sa cadence d'origine), en boucle. Elle se réveille dans
+//! un éclair blanc (sa première case, une silhouette blanche) et un glitch, et finit sur la fin de
+//! son arrivée (mesuré : ses yeux au même endroit, au dixième de pixel ; 1,6 % de pixels pleins
+//! différents), d'où sa boucle debout reprend par une coupe franche, comme après son arrivée. Ces
+//! deux planches ne sont jamais lues au lancement ([`Strip::AT_LAUNCH`]) : chargées à la demande
+//! ([`Strip::NAP`], voir `capri-app`).
 //!
 //! **D'où viennent les nombres.** Mesurés sur les images (canal alpha, couleurs), sauf la cadence
 //! d'origine de chaque planche et le décalage de la boucle debout sur leur toile, lus dans le code
@@ -128,6 +136,8 @@ pub const FACING: Facing = Facing::Left;
 /// (comme dans le projet d'origine), soit 96 images : 4 s.
 pub const GRIN_HOLD: u32 = 3;
 pub const GRIN_TOURS: u64 = 2;
+/// Son sommeil debout est tenu en quatre : 6 dessins par seconde, exactement sa cadence d'origine.
+pub const SLEEP_HOLD: u32 = 4;
 
 /// Un côté de l'écran.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -166,15 +176,34 @@ pub enum Strip {
     Glitch,
     /// Elle sourit de toutes ses dents : 16 dessins, sur la fin de son arrivée.
     Grin,
+    /// Debout, elle dort, roulée dans ses cheveux : 16 dessins, en boucle. Chargée à la demande.
+    Sleep,
+    /// Elle se réveille, dans un éclair blanc puis un glitch, et finit sur la fin de son arrivée :
+    /// 13 dessins, une fois. Chargée à la demande, avec son sommeil.
+    Wake,
 }
 
 impl Strip {
-    pub const ALL: [Strip; 6] =
-        [Strip::Arrive, Strip::Leave, Strip::Walk, Strip::Dangle, Strip::Glitch, Strip::Grin];
+    pub const ALL: [Strip; 8] = [
+        Strip::Arrive,
+        Strip::Leave,
+        Strip::Walk,
+        Strip::Dangle,
+        Strip::Glitch,
+        Strip::Grin,
+        Strip::Sleep,
+        Strip::Wake,
+    ];
     /// Apparaître et s'effacer : les deux ensemble, ou ni l'une ni l'autre.
     pub const APPEAR: [Strip; 2] = [Strip::Arrive, Strip::Leave];
     /// Ses gestes : chacune à part, facultative.
     pub const MOVES: [Strip; 4] = [Strip::Walk, Strip::Dangle, Strip::Glitch, Strip::Grin];
+    /// Celles qui sont lues au lancement : [`Strip::APPEAR`] et [`Strip::MOVES`].
+    pub const AT_LAUNCH: [Strip; 6] =
+        [Strip::Arrive, Strip::Leave, Strip::Walk, Strip::Dangle, Strip::Glitch, Strip::Grin];
+    /// Dormir debout et se réveiller : les deux ensemble, chargées à la demande (jamais au
+    /// lancement), ou elle ne s'endort pas debout.
+    pub const NAP: [Strip; 2] = [Strip::Sleep, Strip::Wake];
 
     /// Le nom du fichier, dans [`DIR`] (le même que dans le dépôt d'origine).
     pub fn file(self) -> &'static str {
@@ -185,6 +214,8 @@ impl Strip {
             Strip::Dangle => "dangle.png",
             Strip::Glitch => "glitch.png",
             Strip::Grin => "grin.png",
+            Strip::Sleep => "sleep.png",
+            Strip::Wake => "wake.png",
         }
     }
 
@@ -195,7 +226,8 @@ impl Strip {
             Strip::Leave | Strip::Walk => 12,
             Strip::Dangle => 24,
             Strip::Glitch => 10,
-            Strip::Grin => 16,
+            Strip::Grin | Strip::Sleep => 16,
+            Strip::Wake => 13,
         }
     }
 
@@ -204,6 +236,7 @@ impl Strip {
     pub fn hold(self) -> u32 {
         match self {
             Strip::Grin => GRIN_HOLD,
+            Strip::Sleep => SLEEP_HOLD,
             _ => HOLD,
         }
     }
@@ -219,12 +252,13 @@ impl Strip {
     }
 
     /// Combien de cases par ligne une fois remise en grille ([`repack`]) : des lignes pleines,
-    /// aucun côté au-delà de 2 304 px.
+    /// aucun côté au-delà de 2 304 px (sauf le réveil : 13 dessins, deux lignes de 7, la dernière
+    /// case vide ; 13 sur une ligne en feraient 3 120).
     pub fn columns(self) -> u32 {
         match self {
-            Strip::Arrive => 7,
+            Strip::Arrive | Strip::Wake => 7,
             Strip::Leave | Strip::Walk => 6,
-            Strip::Dangle | Strip::Grin => 8,
+            Strip::Dangle | Strip::Grin | Strip::Sleep => 8,
             Strip::Glitch => 5,
         }
     }
@@ -318,6 +352,16 @@ pub fn grin_frames() -> u64 {
     u64::from(Strip::Grin.count() * GRIN_HOLD) * GRIN_TOURS
 }
 
+/// Debout, elle dort, en boucle (64 images : 2,67 s ; 6 dessins par seconde, sa cadence d'origine).
+pub fn sleeping() -> Sheet<Cell> {
+    once(Strip::Sleep)
+}
+
+/// Elle se réveille (une fois, 26 images : 1,08 s).
+pub fn waking() -> Sheet<Cell> {
+    once(Strip::Wake)
+}
+
 /// Sa vitesse de marche, en pixels d'écran par seconde, pour une hauteur debout de `height`
 /// pixels : [`WALK_STEPS`] pas de [`WALK_STEP`] px de toile par tour de sa marche, à la même
 /// échelle que sa pose debout. 83 px de toile par seconde, soit 0,24 de sa hauteur par seconde
@@ -356,9 +400,25 @@ mod tests {
     #[test]
     fn strips_have_the_measured_sizes() {
         let sizes: Vec<(u32, u32)> = Strip::ALL.iter().map(|s| s.strip_size()).collect();
-        assert_eq!(sizes, [(3360, 384), (2880, 384), (2880, 384), (5760, 384), (2400, 384), (3840, 384)]);
+        assert_eq!(
+            sizes,
+            [
+                (3360, 384),
+                (2880, 384),
+                (2880, 384),
+                (5760, 384),
+                (2400, 384),
+                (3840, 384),
+                (3840, 384),
+                (3120, 384)
+            ]
+        );
         assert!(Strip::APPEAR.iter().all(|strip| !Strip::MOVES.contains(strip)));
-        assert_eq!(Strip::APPEAR.len() + Strip::MOVES.len(), Strip::ALL.len());
+        assert_eq!(Strip::APPEAR.len() + Strip::MOVES.len(), Strip::AT_LAUNCH.len());
+        // lues au lancement, ou à la demande : chacune d'un seul côté
+        assert!(Strip::AT_LAUNCH.iter().all(|strip| !Strip::NAP.contains(strip)));
+        assert_eq!(Strip::AT_LAUNCH.len() + Strip::NAP.len(), Strip::ALL.len());
+        assert!(Strip::APPEAR.iter().chain(&Strip::MOVES).all(|strip| Strip::AT_LAUNCH.contains(strip)));
     }
 
     #[test]
@@ -373,7 +433,9 @@ mod tests {
                 assert!(x + cw <= gw && y + ch <= gh, "{strip:?} {index}");
                 assert!(seen.insert((x, y)), "{strip:?} {index} : case déjà prise");
             }
-            assert_eq!(gw / cw * (gh / ch), strip.count(), "{strip:?} : aucune case vide");
+            // le réveil, 13 dessins : une case vide (13 sur une ligne dépasseraient 2 304 px)
+            let empty = u32::from(strip == Strip::Wake);
+            assert_eq!(gw / cw * (gh / ch), strip.count() + empty, "{strip:?} : aucune case vide");
             // tous les dessins montrés : la grille confiée à la carte graphique est la même
             assert_eq!(shown(strip).grid_size(), (gw, gh));
             assert_eq!(shown(strip).count(), strip.count());
@@ -443,8 +505,16 @@ mod tests {
                 assert_eq!(sheet.at(frame), sheet.at(frame + 1), "tenu deux images");
             }
         }
+        // debout, elle dort : 6 dessins par seconde, en quatre ; elle se réveille en deux
+        let (sleep, wake) = (sleeping(), waking());
+        assert_eq!((sleep.len(), wake.len()), (64, 26));
+        for frame in (0..64).step_by(4) {
+            assert!((frame..frame + 4).all(|f| sleep.at(f) == sleep.at(frame)), "tenu quatre images");
+            assert_ne!(sleep.at(frame), sleep.at(frame + 4));
+        }
+        assert_eq!(wake.at(25), Cell { strip: Strip::Wake, index: 12 });
         // chaque dessin de chaque suite existe, et est confié à la carte graphique
-        for sheet in [walking(), dangling(), rising(), grinning()] {
+        for sheet in [walking(), dangling(), rising(), grinning(), sleeping(), waking()] {
             for frame in 0..sheet.len() {
                 let cell = sheet.at(frame);
                 assert!(cell.index < cell.strip.count() && shown(cell.strip).origin(cell.index).is_some());

@@ -47,6 +47,9 @@ pub trait Canvas {
     fn paint(&mut self, id: Self::Id, premultiplied: &[u8]) -> Result<(), RenderError>;
     /// La toile lâchée.
     fn remove(&mut self, id: Self::Id);
+    /// Ce qui a été lâché est rendu tout de suite (voir `Renderer::settle`) ; rien à faire pour une
+    /// fausse carte graphique.
+    fn settle(&mut self) {}
 }
 
 impl Canvas for Renderer {
@@ -62,6 +65,10 @@ impl Canvas for Renderer {
 
     fn remove(&mut self, id: ImageId) {
         self.remove_image(id);
+    }
+
+    fn settle(&mut self) {
+        Renderer::settle(self);
     }
 }
 

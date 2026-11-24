@@ -34,6 +34,14 @@
 //!   cache, matérialisée à sa place si on lui parle, tenue si on l'attrape ; jouée jusqu'au bout,
 //!   elle est à sa place ; hors d'une intro, elle est toujours dans l'écran ; ce qui est dessiné
 //!   pendant une intro est l'intro en cours ;
+//! - son repos : de temps en temps, personne ne s'occupe d'elle pendant longtemps (le temps passe
+//!   alors à grandes enjambées) ; elle s'allonge, s'endort, se réveille par chaque moyen (on lui
+//!   parle, un clic, une prise, Claude Code qui attend, « Changer de place », cachée), son bord s'en
+//!   va sous elle, ses planches de repos arrivent tard, jamais, ou échouent, et sont reprises un
+//!   moment après qu'elle n'en veut plus (comme `on_demand` dans l'app). Elle ne dort jamais
+//!   pendant qu'on lui parle, n'est jamais allongée hors d'un bord (ni sans la place, ni sans ses
+//!   planches), n'est jamais dessinée dans une planche qui n'est pas là, et finit toujours par se
+//!   relever (allongée, jamais plus de `LIE_LONGEST`) et par se réveiller debout ;
 //! - la même graine donne la même vie.
 //!
 //! Rapide (quelques secondes en version de débogage), sans écran ni bruit.
@@ -43,12 +51,16 @@ use std::hash::{Hash, Hasher};
 
 use capri_core::input::{Hand, Let};
 use capri_core::intro::{self, Act, End, Entry, Play};
-use capri_core::look::{Drawing, Gesture, LONGEST_GESTURE, Look, Moves, PerchMasks, Wardrobe};
+use capri_core::look::{
+    Drawing, Gesture, LONGEST_GESTURE, LieMasks, Look, Moves, NapMasks, PerchMasks, Rest, Unsettled, Wants,
+    Wardrobe,
+};
 use capri_core::perch::{self, Seen, Stature};
 use capri_core::roam::{
-    AVOID, BY_HAND, Busy, Choice, Event, FLOOR, Hold, Rng, Roamer, SEATED, WALK_LONGEST, World,
+    AVOID, BY_HAND, Busy, Choice, Event, FLOOR, Hold, LIE_LONGEST, Rng, Roamer, SEATED, UP_ASLEEP,
+    WALK_LONGEST, World,
 };
-use capri_core::sheets::{self, life, stand};
+use capri_core::sheets::{self, lie, life, stand};
 use capri_core::{AlphaMask, Capri, Rect, Stance, Vec2};
 
 const SCREEN: Rect = Rect::new(Vec2::ZERO, Vec2::new(3024.0, 1964.0));
@@ -70,6 +82,103 @@ fn full(width: u32, height: u32) -> AlphaMask {
 /// Ses planches de gestes et de variantes, chacune là ou non : la marche, en l'air, se relever,
 /// sourire, l'éclat assise, ses clignements glitchés (un bit chacune, dans cet ordre).
 const ALL_MOVES: u8 = 0b11_1111;
+/// Ses planches de repos, offertes ou non : sa pose allongée, son sommeil debout (les deux bits
+/// suivants).
+const RESTS: u8 = 0b1100_0000;
+/// Ses planches de repos reprises tant de secondes après qu'elle n'en veut plus (`on_demand::KEEP`,
+/// en temps comme dans l'app : quand personne ne s'occupe d'elle, le temps passe vite, et elles sont
+/// reprises en quelques pas).
+const KEEP_SECONDS: f64 = 60.0;
+
+/// Quand ses planches de repos arrivent, une fois qu'elle en veut : après tant de pas, jamais, ou
+/// le chargement échoue.
+#[derive(Clone, Copy, Debug)]
+enum Arrival {
+    After(u64),
+    Never,
+    Fails,
+}
+
+/// Ce qu'un pas du chargement change.
+enum Load {
+    Nothing,
+    Dress,
+    Undress,
+    Fail,
+}
+
+/// Le chargement à la demande d'un jeu de planches, comme `on_demand` dans l'app : commencé quand
+/// elle en veut, fini à son heure (en pas) même si elle n'en veut plus, repris `KEEP_SECONDS` après
+/// qu'elle n'en veut plus.
+struct Loader {
+    arrival: Arrival,
+    started: Option<u64>,
+    ready: bool,
+    unwanted: Option<f64>,
+    failed: bool,
+}
+
+impl Loader {
+    fn new(arrival: Arrival) -> Self {
+        Self { arrival, started: None, ready: false, unwanted: None, failed: false }
+    }
+
+    fn step(&mut self, wanted: bool, step: u64, now: f64) -> Load {
+        if self.failed {
+            return Load::Nothing;
+        }
+        if !self.ready {
+            if wanted && self.started.is_none() {
+                self.started = Some(step);
+            }
+            let Some(started) = self.started else { return Load::Nothing };
+            return match self.arrival {
+                Arrival::After(delay) if step >= started + delay => {
+                    self.ready = true;
+                    self.unwanted = None;
+                    Load::Dress
+                }
+                Arrival::Fails if step >= started + 3 => {
+                    self.failed = true;
+                    Load::Fail
+                }
+                Arrival::After(_) | Arrival::Fails | Arrival::Never => Load::Nothing,
+            };
+        }
+        if wanted {
+            self.unwanted = None;
+            return Load::Nothing;
+        }
+        let since = *self.unwanted.get_or_insert(now);
+        if now >= since + KEEP_SECONDS {
+            self.ready = false;
+            self.started = None;
+            return Load::Undress;
+        }
+        Load::Nothing
+    }
+}
+
+fn lie_masks() -> LieMasks {
+    LieMasks { narrow: full(lie::NARROW, lie::CELL_HEIGHT), wide: full(lie::WIDE, lie::CELL_HEIGHT) }
+}
+
+fn nap_masks() -> NapMasks {
+    NapMasks {
+        sleep: full(life::CELL_WIDTH, sheets::CELL_HEIGHT),
+        wake: full(life::CELL_WIDTH, sheets::CELL_HEIGHT),
+    }
+}
+
+/// Posée, y a-t-il la place pour elle allongée là où elle est (ce que l'app sait de la lecture de
+/// sa veille posée) ?
+fn room_to_lie(look: &Look, capri: &Capri, desk: &Desk) -> bool {
+    desk.perch
+        && look
+            .lying_stature()
+            .zip(capri.perched())
+            .is_some_and(|(stature, spot)| perch::fits(&desk.windows, SCREEN, stature, spot))
+}
 
 fn wardrobe((stand_, perch_, life_, moves): (bool, bool, bool, u8)) -> Wardrobe {
     let on = |bit: u8| moves & (1 << bit) != 0;
@@ -289,6 +398,27 @@ struct Tally {
     gliding_outside: usize,
     outside: usize,
     walked_in: usize,
+    /// Son repos : des moments où personne ne s'occupe d'elle ; allongée, endormie (allongée,
+    /// debout), relevée d'elle-même, réveillée d'elle-même debout, réveillée par quelqu'un (dont
+    /// Claude Code) ; des pas allongée, endormie ; son bord parti sous elle allongée, cachée
+    /// allongée, attrapée allongée ou endormie, ses planches attendues, jamais venues, en échec.
+    calm: usize,
+    lay_downs: usize,
+    dozes_lying: usize,
+    dozes_standing: usize,
+    sit_ups: usize,
+    woke_alone: usize,
+    woken: usize,
+    woken_by_claude: usize,
+    lying_steps: usize,
+    asleep_steps: usize,
+    ledge_gone_lying: usize,
+    hidden_lying: usize,
+    grabbed_resting: usize,
+    waited_for_sheets: usize,
+    sheets_failed: usize,
+    /// Son repos allongée arrêté sans qu'on s'occupe d'elle (plus la place, plus posée).
+    unsettled: usize,
 }
 
 /// Une intro est-elle possible avec ses planches (ses intros en images le sont toujours ici : leurs
@@ -310,6 +440,23 @@ fn act_index(act: Act) -> usize {
 fn live(seed: u64, dressed: (bool, bool, bool, u8), tally: &mut Tally) -> Result<u64, String> {
     let mut dice = Dice(Rng::new(seed.wrapping_mul(0x2545_f491_4f6c_dd1d) ^ 0x5eed));
     let mut look = Look::new(wardrobe(dressed), HEIGHTS[2]);
+    let rests = dressed.3;
+    look.offer(Wants { lying: rests & (1 << 6) != 0, sleeping: rests & (1 << 7) != 0 });
+    // ses planches de repos : le plus souvent elles arrivent, plus ou moins vite ; parfois jamais,
+    // parfois le chargement échoue
+    let arrival = |n: u64| match n % 9 {
+        0 => Arrival::Never,
+        1 => Arrival::Fails,
+        n => Arrival::After(n * 3),
+    };
+    let mut lying_sheets = Loader::new(arrival(seed));
+    let mut sleeping_sheets = Loader::new(arrival(seed / 9 + 4));
+    let mut steps = 0u64;
+    // personne ne s'occupe d'elle pendant tant de pas encore (le temps passe alors vite)
+    let mut alone = 0u64;
+    // depuis quand elle est allongée, endormie debout (en secondes)
+    let mut lain_at: Option<f64> = None;
+    let mut dozing_at: Option<f64> = None;
     let mut capri = Capri::new(look.standing_size(), SCREEN, Vec2::new(2400.0, 1200.0));
     capri.set_feet(look.standing_feet());
     capri.set_leave_frames(look.leave_frames());
@@ -388,12 +535,28 @@ fn live(seed: u64, dressed: (bool, bool, bool, u8), tally: &mut Tally) -> Result
     };
 
     for _ in 0..STEPS {
+        steps += 1;
         // le temps passe, par à-coups
         frame += 1 + dice.below(3) as u64;
         if dice.chance(400) {
             frame += 24 * (30 + dice.below(400) as u64);
             story.push(format!("{frame} : le temps passe"));
             // ce qui se jouait est fini : ce qui suit est nouveau
+            away_since = None;
+        }
+        // de temps en temps, personne ne s'occupe d'elle pendant longtemps : on ne lui parle plus,
+        // la musique s'arrête, et le temps passe à grandes enjambées (5 à 55 s par pas)
+        if alone == 0 && !capri.is_held() && pressing.is_none() && !stuck && dice.chance(250) {
+            alone = 20 + dice.below(140) as u64;
+            talking = false;
+            music = false;
+            tally.calm += 1;
+            story.push(format!("{frame} : personne pendant {alone} pas"));
+        }
+        let quiet_stretch = alone > 0;
+        if quiet_stretch {
+            alone -= 1;
+            frame += 24 * (5 + dice.below(50) as u64);
             away_since = None;
         }
         let now = frame as f64 / 24.0;
@@ -423,8 +586,8 @@ fn live(seed: u64, dressed: (bool, bool, bool, u8), tally: &mut Tally) -> Result
             let raised = desk.windows.remove(index);
             desk.windows.insert(0, raised);
         }
-        // une vie calme : rien ne la dérange pendant qu'elle marche
-        let calm = calm_life && look.is_walking(&capri);
+        // une vie calme : rien ne la dérange pendant qu'elle marche ; ni quand personne n'est là
+        let calm = (calm_life && look.is_walking(&capri)) || quiet_stretch;
         if !calm && dice.chance(120) {
             talking = !talking;
             // on lui parle (`App::talk`, `Running::cut_intro`) : l'intro qu'elle joue s'arrête et
@@ -432,6 +595,16 @@ fn live(seed: u64, dressed: (bool, bool, bool, u8), tally: &mut Tally) -> Result
             if talking && look.is_performing() {
                 look.cut_performance(&mut capri, frame);
                 story.push(format!("{frame} : on lui parle pendant son intro"));
+                // relevé tout de suite, comme l'app (`Running::cut_intro`), avant qu'une prise au
+                // même passage ne la déplace
+                if let Some(end) = look.take_performed() {
+                    if let Err(what) = performed(end, &mut performing, &look, &capri, hidden, tally) {
+                        return fail(format!("image {frame} : {what}"), &story);
+                    }
+                    roamer.came_back(now, &capri);
+                    asked = false;
+                    away_since = None;
+                }
             }
             if talking && encore.is_some() && look.is_bowing_out() {
                 look.turn_back(&mut capri, frame);
@@ -440,12 +613,12 @@ fn live(seed: u64, dressed: (bool, bool, bool, u8), tally: &mut Tally) -> Result
                 story.push(format!("{frame} : on lui parle avant son intro"));
             }
         }
-        if dice.chance(150) {
+        if !calm && dice.chance(150) {
             music = !music;
         }
         // « S'asseoir sur les fenêtres » (`App::toggle_perch` : `perch_view::set_enabled`, puis
         // `roam_view::touched`)
-        if dice.chance(500) {
+        if !calm && dice.chance(500) {
             desk.perch = !desk.perch;
             let was = capri.perched().is_some();
             if !desk.perch && was {
@@ -463,7 +636,7 @@ fn live(seed: u64, dressed: (bool, bool, bool, u8), tally: &mut Tally) -> Result
             }
             story.push(format!("{frame} : s'asseoir sur les fenêtres {}", desk.perch));
         }
-        if dice.chance(600) {
+        if !calm && dice.chance(600) {
             roamer.set_enabled(!roamer.is_enabled(), now);
         }
         // cacher, montrer (`App::toggle_hidden`, `Running::vanish`, `Running::come_back`)
@@ -476,6 +649,9 @@ fn live(seed: u64, dressed: (bool, bool, bool, u8), tally: &mut Tally) -> Result
                 pressing = None;
                 if look.is_traveling() {
                     tally.hidden_on_the_way += 1;
+                }
+                if matches!(look.rest(), Rest::Lying | Rest::Asleep { lying: true }) {
+                    tally.hidden_lying += 1;
                 }
                 look.vanish(&mut capri, frame);
             } else {
@@ -504,6 +680,7 @@ fn live(seed: u64, dressed: (bool, bool, bool, u8), tally: &mut Tally) -> Result
             let stature = look.stature();
             let was = capri.perched().is_some();
             ride(&mut capri, &desk, stature);
+            look.set_room_to_lie(room_to_lie(&look, &capri, &desk));
             roamer.touched(now, &capri);
             if was && capri.perched().is_none() {
                 tally.touched_off += 1;
@@ -555,6 +732,18 @@ fn live(seed: u64, dressed: (bool, bool, bool, u8), tally: &mut Tally) -> Result
                         return fail(format!("image {frame} : « Voir une intro » refusé : {hold:?}"), &story);
                     }
                 }
+            }
+        }
+        // Claude Code attend une réponse (`Running::tick`, `BannerView::take_awaiting`) : endormie,
+        // elle se réveille ; plus souvent quand personne d'autre ne s'occupe d'elle
+        if dice.chance(if quiet_stretch { 40 } else { 300 }) {
+            let asleep = matches!(look.rest(), Rest::Asleep { .. });
+            if look.stir(&mut capri, frame) {
+                tally.woken_by_claude += 1;
+                if !asleep {
+                    return fail(format!("image {frame} : réveillée sans dormir"), &story);
+                }
+                story.push(format!("{frame} : Claude attend, elle se réveille"));
             }
         }
         // Claude Code finit son tour (`Running::tick`, `BannerView::take_turn_end`)
@@ -705,6 +894,50 @@ fn live(seed: u64, dressed: (bool, bool, bool, u8), tally: &mut Tally) -> Result
             away_since = None;
         }
 
+        // ses planches de repos, chargées quand elle en veut, reprises quand elle n'en veut plus
+        // (`Figure::sync_rests`, aussi quand elle est partie)
+        let wants = look.wants();
+        if (wants.lying && !look.dressed().lying) || (wants.sleeping && !look.dressed().sleeping) {
+            tally.waited_for_sheets += 1;
+        }
+        // reprises, jamais pendant qu'elle s'en sert : vu de ce qu'elle fait et de ce qui est
+        // dessiné, pas de ce qu'elle en veut (`Look::wants`, que cet essai doit aussi surveiller)
+        let shown = (!look.is_gone()).then(|| look.picture(&capri).drawing);
+        let uses_lying = matches!(look.rest(), Rest::Lying | Rest::Asleep { lying: true })
+            || matches!(shown, Some(Drawing::Lie(_)));
+        let uses_sleeping = matches!(look.rest(), Rest::Asleep { lying: false } | Rest::Waking)
+            || matches!(shown, Some(Drawing::Life(cell)) if life::Strip::NAP.contains(&cell.strip));
+        match lying_sheets.step(wants.lying, steps, now) {
+            Load::Nothing => {}
+            Load::Dress => look.dress_lying(Some(lie_masks())),
+            Load::Undress if uses_lying => {
+                return fail(
+                    format!("image {frame} : ses planches allongées reprises alors qu'elle s'en sert"),
+                    &story,
+                );
+            }
+            Load::Undress => look.dress_lying(None),
+            Load::Fail => {
+                tally.sheets_failed += 1;
+                look.offer(Wants { lying: false, ..look.offered() });
+            }
+        }
+        match sleeping_sheets.step(wants.sleeping, steps, now) {
+            Load::Nothing => {}
+            Load::Dress => look.dress_sleeping(Some(nap_masks())),
+            Load::Undress if uses_sleeping => {
+                return fail(
+                    format!("image {frame} : son sommeil debout repris alors qu'elle s'en sert"),
+                    &story,
+                );
+            }
+            Load::Undress => look.dress_sleeping(None),
+            Load::Fail => {
+                tally.sheets_failed += 1;
+                look.offer(Wants { sleeping: false, ..look.offered() });
+            }
+        }
+
         // --- le pas (`Running::tick`) : la boucle n'en fait pas quand elle est partie ---
         if look.is_gone() {
             continue;
@@ -717,6 +950,7 @@ fn live(seed: u64, dressed: (bool, bool, bool, u8), tally: &mut Tally) -> Result
             }
             tally.grabbed_in_gesture += usize::from(look.gesture().is_some());
             tally.grabbed_walking += usize::from(look.is_walking(&capri));
+            tally.grabbed_resting += usize::from(look.is_resting());
             stuck = false;
             let (seated, before) = (look.is_seated(&capri), capri.position());
             if look.hold(&mut capri, &grab) {
@@ -836,10 +1070,21 @@ fn live(seed: u64, dressed: (bool, bool, bool, u8), tally: &mut Tally) -> Result
         {
             capri.land(perch);
         }
+        let lying_before = matches!(look.rest(), Rest::Lying | Rest::Asleep { lying: true });
         ride(&mut capri, &desk, stature);
+        if lying_before && capri.perched().is_none() && !capri.is_held() {
+            tally.ledge_gone_lying += 1;
+            story.push(format!("{frame} : son bord parti sous elle allongée"));
+        }
+        // la place pour elle allongée, d'après cette lecture (`perch_view::room_to_lie`)
+        let room = room_to_lie(&look, &capri, &desk);
+        look.set_room_to_lie(room);
         let music_on = music && look.wants_music(&capri);
         let acting = look.gesture();
         look.update(&mut capri, frame, talking, music_on);
+        if talking && matches!(look.rest(), Rest::Asleep { .. }) {
+            return fail(format!("image {frame} : endormie pendant qu'on lui parle"), &story);
+        }
         if acting.is_some() && talking {
             tally.talked_in_gesture += 1;
             if look.gesture().is_some() {
@@ -892,6 +1137,7 @@ fn live(seed: u64, dressed: (bool, bool, bool, u8), tally: &mut Tally) -> Result
         let (here, grooving, held_back) = (look.is_here(), look.is_grooving(), carried(&capri));
         let walking_before = look.is_walking(&capri);
         let seated_before = look.is_seated(&capri) && capri.perched().is_some();
+        let rest_before = look.rest();
         tally.grooving += usize::from(grooving);
         tally.talking += usize::from(talking && here);
         tally.hovered += usize::from(hovered && here);
@@ -1053,6 +1299,71 @@ fn live(seed: u64, dressed: (bool, bool, bool, u8), tally: &mut Tally) -> Result
                         return fail(format!("image {frame} : un éclat qui ne se joue pas"), &story);
                     }
                 }
+                Event::LiesDown => {
+                    tally.lay_downs += 1;
+                    // assise, libre, sans musique, sa vie cochée, la place, ses planches là
+                    if !seated_before
+                        || rest_before != Rest::Awake
+                        || talking
+                        || music_on
+                        || !roamer.is_enabled()
+                        || !room
+                        || !look.dressed().lying
+                        || look.rest() != Rest::Lying
+                    {
+                        return fail(
+                            format!("image {frame} : allongée alors qu'elle ne pouvait pas"),
+                            &story,
+                        );
+                    }
+                }
+                Event::FallsAsleep { lying } => {
+                    if lying {
+                        tally.dozes_lying += 1
+                    } else {
+                        tally.dozes_standing += 1
+                    }
+                    if talking || music_on || !roamer.is_enabled() || look.rest() != (Rest::Asleep { lying })
+                    {
+                        return fail(
+                            format!("image {frame} : endormie alors qu'elle ne pouvait pas"),
+                            &story,
+                        );
+                    }
+                }
+                Event::WakesUp { lying, woken } => {
+                    if woken {
+                        tally.woken += 1
+                    } else {
+                        tally.woke_alone += 1
+                    }
+                    if matches!(look.rest(), Rest::Asleep { .. })
+                        || (!lying && !woken && look.rest() != Rest::Waking)
+                    {
+                        return fail(format!("image {frame} : réveillée, et toujours endormie"), &story);
+                    }
+                }
+                Event::Unsettled { why, .. } => {
+                    tally.unsettled += 1;
+                    // jamais pour rien : plus posée (pas cachée : c'est un geste), ou rassise sans la
+                    // place
+                    let fair = match why {
+                        Unsettled::LedgeGone => {
+                            !look.is_away() && (capri.perched().is_none() || !look.is_seated(&capri))
+                        }
+                        Unsettled::NoRoom => !room,
+                        Unsettled::Undressed => !look.dressed().lying,
+                    };
+                    if !fair || look.rest() != Rest::Awake {
+                        return fail(format!("image {frame} : {why:?} sans raison"), &story);
+                    }
+                }
+                Event::SitsUp { .. } => {
+                    tally.sit_ups += 1;
+                    if look.rest() != Rest::Awake || capri.perched().is_none() {
+                        return fail(format!("image {frame} : relevée, et {:?}", look.rest()), &story);
+                    }
+                }
                 Event::Refused(hold) => {
                     tally.refused += 1;
                     let fair = match hold {
@@ -1176,8 +1487,60 @@ fn live(seed: u64, dressed: (bool, bool, bool, u8), tally: &mut Tally) -> Result
         if hidden && !look.is_gone() && frame - toggled_at > SETTLED_WITHIN {
             return fail(format!("image {frame} : cachée, mais à moitié effacée"), &story);
         }
-        // là et debout, son tour avance (un geste l'arrête au plus le temps du plus long)
-        if !hidden && look.is_here() && capri.stance() == Stance::Floating {
+        // son repos : jamais endormie pendant qu'on lui parle ; allongée, toujours sur un bord où elle
+        // tient allongée, ses planches là ; endormie debout, immobile ; et elle finit toujours
+        let rest = look.rest();
+        if talking && matches!(rest, Rest::Asleep { .. }) {
+            return fail(format!("image {frame} : endormie pendant qu'on lui parle"), &story);
+        }
+        match rest {
+            Rest::Lying | Rest::Asleep { lying: true } => {
+                tally.lying_steps += 1;
+                tally.asleep_steps += usize::from(rest != Rest::Lying);
+                if capri.perched().is_none() || !look.dressed().lying || !room_to_lie(&look, &capri, &desk) {
+                    return fail(
+                        format!(
+                            "image {frame} : allongée hors d'un bord (posée {}, planches {}, place {})",
+                            capri.perched().is_some(),
+                            look.dressed().lying,
+                            room_to_lie(&look, &capri, &desk)
+                        ),
+                        &story,
+                    );
+                }
+                let since = *lain_at.get_or_insert(now);
+                if now - since > LIE_LONGEST + 180.0 {
+                    return fail(format!("image {frame} : allongée depuis {} s", now - since), &story);
+                }
+            }
+            _ => lain_at = None,
+        }
+        match rest {
+            Rest::Asleep { lying: false } | Rest::Waking => {
+                tally.asleep_steps += usize::from(rest != Rest::Waking);
+                if capri.stance() != Stance::Floating || capri.perched().is_some() || !look.dressed().sleeping
+                {
+                    return fail(format!("image {frame} : endormie debout, et {:?}", capri.stance()), &story);
+                }
+                let since = *dozing_at.get_or_insert(now);
+                if now - since > UP_ASLEEP.max + 180.0 {
+                    return fail(format!("image {frame} : endormie debout depuis {} s", now - since), &story);
+                }
+            }
+            _ => dozing_at = None,
+        }
+        // jamais dessinée dans une planche qui n'est pas là
+        match look.picture(&capri).drawing {
+            Drawing::Lie(_) if !look.dressed().lying => {
+                return fail(format!("image {frame} : allongée sans ses planches"), &story);
+            }
+            Drawing::Life(cell) if life::Strip::NAP.contains(&cell.strip) && !look.dressed().sleeping => {
+                return fail(format!("image {frame} : endormie debout sans ses planches"), &story);
+            }
+            _ => {}
+        }
+        // là et debout, éveillée, son tour avance (un geste l'arrête au plus le temps du plus long)
+        if !hidden && look.is_here() && capri.stance() == Stance::Floating && !look.is_resting() {
             let mut probe = capri.clone();
             probe.step(0.0, frame + LONGEST_GESTURE + 1);
             if probe.tour() == capri.tour() {
@@ -1191,9 +1554,13 @@ fn live(seed: u64, dressed: (bool, bool, bool, u8), tally: &mut Tally) -> Result
             && let Some(seat) = capri.seat()
         {
             let picture = look.picture(&capri);
-            match picture.drawing {
-                Drawing::Perch(cell) => {
-                    let uv = cell.strip.seat_uv();
+            let seat_uv = match picture.drawing {
+                Drawing::Perch(cell) => Some(cell.strip.seat_uv()),
+                Drawing::Lie(cell) => Some(cell.strip.seat_uv()),
+                _ => None,
+            };
+            match seat_uv {
+                Some(uv) => {
                     let line =
                         picture.rect.min + Vec2::new(picture.rect.size.x * uv.x, picture.rect.size.y * uv.y);
                     if (line - seat).length() > 2.0 {
@@ -1338,19 +1705,23 @@ fn under_cursor(cursor: Option<Vec2>, at: Vec2, reach: perch::Reach, height: f32
     })
 }
 
-/// Debout, assise, ses planches de vie, et ses gestes (bits de [`ALL_MOVES`]).
-const WARDROBES: [(bool, bool, bool, u8); 9] = [
-    (true, true, true, ALL_MOVES),
+/// Debout, assise, ses planches de vie, ses gestes (bits de [`ALL_MOVES`]) et son repos (bits de
+/// [`RESTS`]).
+const WARDROBES: [(bool, bool, bool, u8); 10] = [
+    (true, true, true, ALL_MOVES | RESTS),
     (true, true, true, 0),
-    (true, false, true, ALL_MOVES),
-    (false, true, true, ALL_MOVES),
-    (true, true, false, ALL_MOVES),
-    (false, false, false, 0),
+    // sans pose assise : pas allongée ; sans pose debout : pas de sommeil debout
+    (true, false, true, ALL_MOVES | RESTS),
+    (false, true, true, ALL_MOVES | RESTS),
+    (true, true, false, ALL_MOVES | RESTS),
+    (false, false, false, RESTS),
     // la marche et sa planche en l'air seulement ; ses gestes seulement
     (true, true, true, 0b00_0011),
-    (true, true, true, 0b11_1100),
+    (true, true, true, 0b11_1100 | RESTS),
     // sans sa planche en l'air ni se relever
     (true, true, true, 0b11_1001),
+    // allongée seulement, sans l'éclat de sa pose assise (elle se rassoit d'un coup)
+    (true, true, true, 0b0110_1111),
 ];
 
 #[test]
@@ -1396,6 +1767,16 @@ fn random_gestures_never_leave_her_stuck_hidden_or_off_her_edge() {
             "{tally:?}"
         );
         assert!(!perch_sheets || tally.grooving > 100, "{wardrobe:?} : {tally:?}");
+        // son repos, quand ses planches et la pose qui les porte sont là ; jamais sinon
+        let (lying, sleeping) = (perch_sheets && on(6), stand_sheets && on(7));
+        assert!(
+            !lying || (tally.lay_downs > 10 && tally.dozes_lying > 5 && tally.sit_ups > 3 && tally.woken > 3),
+            "{wardrobe:?} : {tally:?}"
+        );
+        assert!(lying || tally.lay_downs + tally.dozes_lying == 0, "{wardrobe:?} : {tally:?}");
+        assert!(!sleeping || tally.dozes_standing > 3, "{wardrobe:?} : {tally:?}");
+        assert!(sleeping || tally.dozes_standing == 0, "{wardrobe:?} : {tally:?}");
+        assert!(tally.calm > 100, "{wardrobe:?} : {tally:?}");
         total.to_ledge += tally.to_ledge;
         total.to_floor += tally.to_floor;
         total.stays += tally.stays;
@@ -1431,6 +1812,21 @@ fn random_gestures_never_leave_her_stuck_hidden_or_off_her_edge() {
         total.gliding_outside += tally.gliding_outside;
         total.outside += tally.outside;
         total.walked_in += tally.walked_in;
+        total.lay_downs += tally.lay_downs;
+        total.dozes_lying += tally.dozes_lying;
+        total.dozes_standing += tally.dozes_standing;
+        total.sit_ups += tally.sit_ups;
+        total.woke_alone += tally.woke_alone;
+        total.woken += tally.woken;
+        total.woken_by_claude += tally.woken_by_claude;
+        total.lying_steps += tally.lying_steps;
+        total.asleep_steps += tally.asleep_steps;
+        total.ledge_gone_lying += tally.ledge_gone_lying;
+        total.hidden_lying += tally.hidden_lying;
+        total.grabbed_resting += tally.grabbed_resting;
+        total.waited_for_sheets += tally.waited_for_sheets;
+        total.sheets_failed += tally.sheets_failed;
+        total.unsettled += tally.unsettled;
         // « Voir une intro », servi et refusé, dans chaque garde-robe
         assert!(tally.encores_started > 30 && tally.encores_refused > 10, "{wardrobe:?} : {tally:?}");
     }
@@ -1462,6 +1858,21 @@ fn random_gestures_never_leave_her_stuck_hidden_or_off_her_edge() {
         "{total:?}"
     );
     assert!(total.encores_turned_back > 3 && total.cut_resized > 3, "{total:?}");
+    // son repos, par chaque chemin : réveillée d'elle-même et par quelqu'un (dont Claude Code),
+    // relevée, son bord parti sous elle allongée, cachée allongée, attrapée au repos, ses planches
+    // attendues, et en échec
+    assert!(
+        total.woke_alone > 3
+            && total.woken_by_claude > 3
+            && total.sit_ups > 10
+            && total.ledge_gone_lying > 0
+            && total.hidden_lying > 0
+            && total.grabbed_resting > 0
+            && total.waited_for_sheets > 100
+            && total.sheets_failed > 0
+            && total.unsettled > 10,
+        "{total:?}"
+    );
     // prise en partie hors de l'écran sans saut, tenue dehors, revenue dedans ; entrée en marchant
     assert!(
         total.grabbed_outside > 10

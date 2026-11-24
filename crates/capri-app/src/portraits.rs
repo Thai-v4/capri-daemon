@@ -14,7 +14,11 @@
 //! ce qu'elles ont montré et ce qu'elles ont pesé. Celles qu'elle joue elle-même, et « rien »
 //! (`act_intro_portraits`), sur un faux écran de MacBook Pro, image par image. Ses gestes (`gesture_portraits`) : tenue en l'air, sa
 //! mèche et le curseur marqués ; lancée ; elle se relève ; elle sourit ; elle marche ; son éclat
-//! assise ; ses clignements glitchés.
+//! assise ; ses clignements glitchés. Son repos (`rest_portraits`) : elle s'allonge, allongée
+//! (clignement, parole), endormie, elle se rassoit, son départ allongée, la superposition de sa
+//! pose assise et de sa pose allongée sur le même bord ; debout, elle s'endort et se réveille.
+//! `rest_weighed_for_real` charge ses planches de repos comme l'app (son thread, la carte
+//! graphique) et dit ce qu'elles pèsent, avant, pendant, après.
 
 use std::path::{Path, PathBuf};
 use std::time::Instant;
@@ -736,6 +740,10 @@ impl crate::intro_view::Canvas for Offscreen {
     fn remove(&mut self, id: ImageId) {
         self.remove_image(id);
     }
+
+    fn settle(&mut self) {
+        Offscreen::settle(self);
+    }
 }
 
 /// Ses intros en images, posées sur un faux écran de chaque taille (un MacBook Pro 14", 3024 ×
@@ -1020,5 +1028,314 @@ fn act_intro_portraits() {
         );
         // une scène neuve pour la suivante : son dessin et son corps repartent de zéro
         scene = Scene::new(size, HEIGHT);
+    }
+}
+
+/// Charge pour de vrai (le thread de `on_demand`, la carte graphique de `scene`) les planches de
+/// repos que son dessin veut maintenant, au plus 60 s ; rend le temps mis.
+fn load_rests(scene: &mut Scene) -> std::time::Duration {
+    let started = Instant::now();
+    loop {
+        let wants = scene.figure.look.wants();
+        let dressed = scene.figure.look.dressed();
+        if (!wants.lying || dressed.lying) && (!wants.sleeping || dressed.sleeping) {
+            return started.elapsed();
+        }
+        scene.figure.sync_rests(&mut scene.offscreen, Instant::now());
+        assert!(started.elapsed().as_secs() < 60, "ses planches de repos n'arrivent pas");
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+}
+
+/// Son repos : sur un bord, elle s'allonge (son éclat, image par image), allongée (sa boucle, un
+/// clignement, sa parole), endormie, elle se rassoit, son départ allongée ; la superposition de
+/// sa pose assise et de sa pose allongée sur le même bord (la ligne du bord en rouge, sa hanche
+/// assise en bleu) ; debout, elle s'endort, puis se réveille (et la coupe vers sa boucle,
+/// superposée).
+#[test]
+#[ignore = "écrit des images PNG dans CAPRI_PORTRAITS_DIR, avec les vraies planches et la vraie carte graphique"]
+fn rest_portraits() {
+    use capri_core::look::{Gesture, Rest};
+    use capri_core::sheets::{lie, life};
+
+    let dir = directory();
+    let size = (900, 900);
+    let mut scene = Scene::new(size, HEIGHT);
+    scene.figure.offer_rests(crate::figure::Rests {
+        lying: assets::rest::lying(),
+        sleeping: assets::rest::sleeping(),
+    });
+    let offered = scene.figure.look.offered();
+    assert!(offered.lying && offered.sleeping, "il faut ses planches de repos");
+    scene.figure.look.set_room_to_lie(true);
+    // une fenêtre dont le haut est à 480 pixels ; assise vers la droite (elle s'allonge vers la gauche)
+    let window = Rect::new(Vec2::new(60.0, 480.0), Vec2::new(800.0, 420.0));
+    let seat = Vec2::new(640.0, window.min.y);
+    let mut c = perched(&mut scene, window, seat, 0);
+    let since = sheets::arriving().len() + 30;
+    let seated = step(&mut scene, &mut c, since);
+    // elle s'allonge : d'abord l'envie, ses planches chargées, puis son éclat
+    assert!(!scene.figure.look.lie_down(&mut c, since), "pas encore chargées");
+    let took = load_rests(&mut scene);
+    println!(
+        "pose allongée chargée en {} ms ; mémoire graphique : {:.1} Mo",
+        took.as_millis(),
+        scene.offscreen.image_bytes() as f64 / 1e6
+    );
+    assert!(scene.figure.look.lie_down(&mut c, since));
+    let mut frames = Vec::new();
+    for frame in (since..since + Gesture::LieGlitch.frames() + 4).step_by(2) {
+        let picture = step(&mut scene, &mut c, frame);
+        frames.push(scene.render(Some(window), &[picture]));
+    }
+    let (sheet, sheet_size) = contact(&frames, size, 6);
+    save(&dir, "repos-s-allonge.png", &sheet, sheet_size);
+    let lain = since + Gesture::LieGlitch.frames();
+    let lying = step(&mut scene, &mut c, lain + 1);
+    save(&dir, "repos-allongee.png", &scene.render(Some(window), &[lying]), size);
+    // allongée : sa boucle, un clignement (tour 0, dessins 28 à 35), sa parole
+    let mut poses = Vec::new();
+    for (frame, talking) in
+        [(lain + 1, false), (lain + 30, false), (lain + 32, false), (lain + 64, true), (lain + 70, true)]
+    {
+        c.step(0.0, frame);
+        scene.figure.look.update(&mut c, frame, talking, false);
+        poses.push(scene.render(Some(window), &[scene.figure.look.picture(&c)]));
+    }
+    let (sheet, sheet_size) = contact(&poses, size, 5);
+    save(&dir, "repos-allongee-planche.png", &sheet, sheet_size);
+    // la superposition : assise et allongée, sur le même bord
+    let cut = lying_over_seated(&mut scene, window, seated, lying);
+    save(&dir, "repos-superposition-assise-allongee.png", &cut.0, cut.1);
+    // endormie
+    let asleep_at = lain + 120;
+    step(&mut scene, &mut c, asleep_at);
+    assert!(scene.figure.look.doze(&mut c, asleep_at));
+    let mut sleeping = Vec::new();
+    for frame in (asleep_at..asleep_at + 60).step_by(6) {
+        let picture = step(&mut scene, &mut c, frame);
+        sleeping.push(scene.render(Some(window), &[picture]));
+    }
+    let (sheet, sheet_size) = contact(&sleeping, size, 5);
+    save(&dir, "repos-endormie.png", &sheet, sheet_size);
+    // elle se rassoit : réveillée, l'éclat de sa pose assise, puis sa boucle
+    let up = asleep_at + 100;
+    step(&mut scene, &mut c, up);
+    assert!(scene.figure.look.rouse(&mut c, up) && scene.figure.look.sit_up(&mut c, up));
+    let mut frames = Vec::new();
+    for frame in (up..up + Gesture::PerchGlitch.frames() + 4).step_by(2) {
+        let picture = step(&mut scene, &mut c, frame);
+        frames.push(scene.render(Some(window), &[picture]));
+    }
+    let (sheet, sheet_size) = contact(&frames, size, 6);
+    save(&dir, "repos-se-rassoit.png", &sheet, sheet_size);
+    assert_eq!(scene.figure.look.rest(), Rest::Awake);
+    // allongée de nouveau, sa fenêtre se ferme : elle s'efface allongée
+    let again = up + 200;
+    step(&mut scene, &mut c, again);
+    assert!(scene.figure.look.lie_down(&mut c, again));
+    let gone = again + Gesture::LieGlitch.frames() + 10;
+    step(&mut scene, &mut c, gone);
+    c.take_off();
+    let mut frames = Vec::new();
+    for frame in (gone..gone + lie::leaving().len() + 2).step_by(2) {
+        let picture = step(&mut scene, &mut c, frame);
+        frames.push(scene.render(None, &[picture]));
+    }
+    let (sheet, sheet_size) = contact(&frames, size, 7);
+    save(&dir, "repos-depart-allongee.png", &sheet, sheet_size);
+
+    // debout : elle s'endort, puis se réveille
+    let mut scene = Scene::new(size, HEIGHT);
+    scene.figure.offer_rests(crate::figure::Rests { lying: None, sleeping: assets::rest::sleeping() });
+    let feet = Vec2::new(450.0, 820.0);
+    let mut c = capri(&scene.figure, size, feet);
+    let awake = step(&mut scene, &mut c, 10);
+    assert!(!scene.figure.look.doze(&mut c, 10), "pas encore chargées");
+    let took = load_rests(&mut scene);
+    println!("sommeil debout chargé en {} ms", took.as_millis());
+    assert!(scene.figure.look.doze(&mut c, 10));
+    let mut frames = Vec::new();
+    for frame in (10..10 + life::sleeping().len()).step_by(4) {
+        let picture = step(&mut scene, &mut c, frame);
+        frames.push(scene.render(None, &[picture]));
+    }
+    let (sheet, sheet_size) = contact(&frames, size, 8);
+    save(&dir, "repos-endormie-debout.png", &sheet, sheet_size);
+    let dozing = step(&mut scene, &mut c, 80);
+    let cut = superposition(&mut scene, dozing, awake);
+    save(&dir, "repos-endormie-debout-superposition.png", &cut.0, cut.1);
+    assert!(scene.figure.look.rouse(&mut c, 100));
+    let mut frames = Vec::new();
+    let mut last = None;
+    for frame in (100..100 + life::waking().len()).step_by(2) {
+        let picture = step(&mut scene, &mut c, frame);
+        last = Some(picture);
+        frames.push(scene.render(None, &[picture]));
+    }
+    let (sheet, sheet_size) = contact(&frames, size, 7);
+    save(&dir, "repos-reveil-debout.png", &sheet, sheet_size);
+    let after = step(&mut scene, &mut c, 100 + life::waking().len());
+    assert!(matches!(after.drawing, Drawing::Stand(_)), "{after:?}");
+    let cut = superposition(&mut scene, last.expect("ses dessins"), after);
+    save(&dir, "repos-reveil-debout-superposition.png", &cut.0, cut.1);
+}
+
+/// `lying` (allongée) et `seated` (assise) sur le même bord de `window` : trois cases côte à côte,
+/// assise seule, allongée seule, puis assise à moitié transparente par-dessus allongée ; sur
+/// chacune, la ligne du bord (en rouge) et sa hanche assise (en bleu, `lie::PERCH_HIP`). Recadrée
+/// autour d'elles.
+fn lying_over_seated(
+    scene: &mut Scene,
+    window: Rect,
+    seated: Picture,
+    lying: Picture,
+) -> (Vec<u8>, (u32, u32)) {
+    use capri_core::sheets::lie;
+
+    let k = seated.rect.size.y / sheets::CELL_HEIGHT as f32;
+    let hip_x = (seated.rect.min.x + lie::PERCH_HIP * k).round();
+    let width = scene.size.0 as f32;
+    let mut panels = Vec::new();
+    for pictures in [vec![(seated, 1.0)], vec![(lying, 1.0)], vec![(lying, 1.0), (seated, 0.5)]] {
+        let (w, h) = scene.size;
+        let screen = Rect::new(Vec2::ZERO, Vec2::new(w as f32, h as f32));
+        let mut layers = vec![
+            Scene::rect(scene.desk, screen),
+            Scene::rect(scene.window, window),
+            Scene::rect(scene.title, Rect::new(window.min, Vec2::new(window.size.x, 56.0))),
+        ];
+        for (picture, opacity) in pictures {
+            layers.extend(
+                scene
+                    .figure
+                    .layers(&picture, screen)
+                    .into_iter()
+                    .map(|(id, draw)| (id, SpriteDraw { opacity, ..draw })),
+            );
+        }
+        layers.push(Scene::rect(
+            scene.feet_mark,
+            Rect::new(Vec2::new(0.0, window.min.y - 1.0), Vec2::new(width, 2.0)),
+        ));
+        layers.push(Scene::rect(
+            scene.top_mark,
+            Rect::new(Vec2::new(hip_x - 1.0, window.min.y - 80.0), Vec2::new(2.0, 160.0)),
+        ));
+        panels.push(scene.offscreen.render(&layers, None).expect("rendue"));
+    }
+    // recadrée : ses deux cases entières, et un peu de marge
+    let (a, b) = (lying.rect, seated.rect);
+    let min = Vec2::new(a.min.x.min(b.min.x), a.min.y.min(b.min.y));
+    let max = Vec2::new(a.max().x.max(b.max().x), a.max().y.max(b.max().y));
+    let at = ((min.x - 20.0).max(0.0) as u32, (min.y - 20.0).max(0.0) as u32);
+    let crop_size = (
+        ((max.x - min.x + 40.0) as u32).min(scene.size.0 - at.0),
+        ((max.y - min.y + 40.0) as u32).min(scene.size.1 - at.1),
+    );
+    let cropped: Vec<Vec<u8>> = panels.iter().map(|panel| crop(panel, scene.size.0, at, crop_size)).collect();
+    contact(&cropped, crop_size, 3)
+}
+
+/// Ses planches de repos chargées pour de vrai, comme dans l'app (le thread de `on_demand`, la vraie
+/// carte graphique), puis lâchées une fois `on_demand::KEEP` passé : la mémoire graphique comptée
+/// (`image_bytes`) et l'empreinte mémoire du processus (`phys_footprint`, lue par
+/// `/usr/bin/footprint`, mémoire graphique comprise sur un Mac à puce Apple), au repos (avant), au
+/// plus haut pendant le chargement, une fois chargées, et après les avoir lâchées.
+#[cfg(target_os = "macos")]
+#[test]
+#[ignore = "charge ses planches de repos sur la vraie carte graphique, et lit son empreinte mémoire"]
+fn rest_weighed_for_real() {
+    let total = || -> u64 {
+        let output = std::process::Command::new("/usr/bin/footprint")
+            .args(["-p", &std::process::id().to_string(), "-f", "bytes"])
+            .output()
+            .expect("footprint");
+        String::from_utf8_lossy(&output.stdout)
+            .split("Footprint: ")
+            .nth(1)
+            .and_then(|rest| rest.split(' ').next())
+            .and_then(|n| n.parse().ok())
+            .unwrap_or(0)
+    };
+    for (name, lying) in [("pose allongée", true), ("sommeil debout", false)] {
+        // une scène neuve pour chacune : son dessin repart de zéro
+        let mut scene = Scene::new((64, 64), HEIGHT);
+        scene.figure.offer_rests(crate::figure::Rests {
+            lying: assets::rest::lying(),
+            sleeping: assets::rest::sleeping(),
+        });
+        let _ = scene.offscreen.render(&[], None).expect("rendue");
+        // l'allocateur garde en réserve le dernier grand bloc lâché : un premier, avant de mesurer
+        // (l'app en a lâché de bien plus grands au lancement, ses planches une fois confiées)
+        drop(std::hint::black_box(vec![7u8; 22320 * 250 * 4]));
+        scene.offscreen.settle();
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        let at_rest = scene.offscreen.image_bytes();
+        println!("au repos : {:.1} Mo de mémoire graphique comptée", at_rest as f64 / 1e6);
+        // elle en a envie
+        let mut c = capri(&scene.figure, scene.size, Vec2::new(32.0, 60.0));
+        if lying {
+            let window = Rect::new(Vec2::new(0.0, 40.0), Vec2::new(64.0, 24.0));
+            c = perched(&mut scene, window, Vec2::new(40.0, 40.0), 0);
+            scene.figure.look.set_room_to_lie(true);
+            step(&mut scene, &mut c, 100);
+            scene.figure.look.lie_down(&mut c, 100);
+        } else {
+            step(&mut scene, &mut c, 10);
+            scene.figure.look.doze(&mut c, 10);
+        }
+        let before = total();
+        let (stop, stopped) = std::sync::mpsc::channel::<()>();
+        let sampler = std::thread::spawn(move || {
+            let mut highest = 0;
+            while stopped.try_recv().is_err() {
+                highest = highest.max(total());
+            }
+            highest
+        });
+        let took = load_rests(&mut scene);
+        // chargées : elle s'allonge, ou s'endort, pour de bon
+        let rested =
+            if lying { scene.figure.look.lie_down(&mut c, 100) } else { scene.figure.look.doze(&mut c, 10) };
+        assert!(rested, "{name}");
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        let loaded = total();
+        let bytes = scene.offscreen.image_bytes();
+        // relevée (ou réveillée) : plus voulues, lâchées une fois KEEP passé, et rendues
+        if lying {
+            scene.figure.look.sit_up(&mut c, 101);
+            step(&mut scene, &mut c, 101 + capri_core::look::LONGEST_GESTURE);
+        } else {
+            scene.figure.look.rouse(&mut c, 20);
+            step(&mut scene, &mut c, 200);
+        }
+        assert_eq!(scene.figure.look.wants(), capri_core::look::Wants::default());
+        let now = Instant::now();
+        scene.figure.sync_rests(&mut scene.offscreen, now);
+        scene.figure.sync_rests(
+            &mut scene.offscreen,
+            now + crate::on_demand::KEEP + std::time::Duration::from_secs(1),
+        );
+        assert_eq!(scene.offscreen.image_bytes(), at_rest, "{name} : tout est lâché");
+        let _ = scene.offscreen.render(&[], None).expect("rendue");
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        let _ = stop.send(());
+        let highest = sampler.join().expect("les mesures");
+        let after = total();
+        println!(
+            "{name} : chargée en {} ms ; mémoire graphique comptée {:.1} Mo (+{:.1}) ; empreinte {:.1} Mo avant, \
+             {:.1} au plus haut (+{:.1}), {:.1} chargée (+{:.1}), {:.1} après l'avoir lâchée ({:+.1})",
+            took.as_millis(),
+            bytes as f64 / 1e6,
+            (bytes - at_rest) as f64 / 1e6,
+            before as f64 / 1e6,
+            highest as f64 / 1e6,
+            highest.saturating_sub(before) as f64 / 1e6,
+            loaded as f64 / 1e6,
+            loaded as f64 / 1e6 - before as f64 / 1e6,
+            after as f64 / 1e6,
+            (after as f64 - before as f64) / 1e6
+        );
     }
 }

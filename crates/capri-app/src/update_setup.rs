@@ -231,14 +231,15 @@ mod tests {
             "capri/stand/idle_mouth.png",
         ];
         /// Au format 2, ses planches de vie en plus (elle apparaît, elle s'efface ; elle marche,
-        /// elle pend, elle se relève, elle sourit), ses planches facultatives assises et debout (un
-        /// éclat, ses clignements glitchés), et ses intros en images (« Up close » et le coucou).
+        /// elle pend, elle se relève, elle sourit ; elle dort debout, elle se réveille), ses
+        /// planches facultatives assises et debout (un éclat, ses clignements glitchés), sa pose
+        /// allongée, et ses intros en images (« Up close » et le coucou).
         /// Cette liste a pu changer sans
         /// que le numéro change : aucune version n'a été publiée au format 2 (la 0.2.0, la dernière
         /// publiée, le 23 novembre 2026, est au format 1), et aucune app installée ne l'attend
         /// encore. Une fois une version publiée à ce format, elle ne change plus : toute nouvelle
         /// image demande le format 3.
-        const FORMAT_2: [&str; 50] = [
+        const FORMAT_2: [&str; 58] = [
             "capri/capri-cutout.png",
             "capri/perch/perch.png",
             "capri/perch/perch_blink.png",
@@ -258,6 +259,14 @@ mod tests {
             "capri/life/dangle.png",
             "capri/life/glitch.png",
             "capri/life/grin.png",
+            "capri/life/sleep.png",
+            "capri/life/wake.png",
+            "capri/laydown/laydown.png",
+            "capri/laydown/laydown_blink.png",
+            "capri/laydown/laydown_talk.png",
+            "capri/laydown/laydown_sleep.png",
+            "capri/laydown/laydown_glitch.png",
+            "capri/laydown/laydown_leave.png",
             "capri/intro/01.png",
             "capri/intro/02.png",
             "capri/intro/03.png",

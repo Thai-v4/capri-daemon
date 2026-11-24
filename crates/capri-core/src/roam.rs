@@ -55,11 +55,31 @@
 //! jamais pendant une répétition). Un geste en cours retient ses départs le temps qu'il finisse
 //! (4 s au plus, [`crate::look::LONGEST_GESTURE`]), sans les reculer : elle part juste après.
 //!
+//! **Elle se repose** ([`Look::lie_down`], [`Look::doze`], [`Look::sit_up`], [`Look::rouse`]) :
+//! tranquille depuis un moment ([`LIE_AFTER`] : personne ne lui parle, ne clique sur elle, ne la
+//! tient ; posée, pas de musique ; ses propres trajets ne comptent pas), assise depuis au moins
+//! [`PATIENCE`] et s'il y a la place, elle s'allonge sur son bord ; toujours tranquille, allongée
+//! depuis [`DOZE_AFTER`], elle s'endort. Debout et immobile, tranquille depuis [`STAND_DOZE_AFTER`],
+//! elle s'endort debout : là, la musique ne change rien (elle ne la guette que pour se balancer
+//! assise, et l'app ne la lui dit que posée). Elle se rassoit d'elle-même après [`UP_AWAKE`]
+//! allongée éveillée, ou [`UP_ASLEEP`] de sommeil (elle se réveille alors, puis se rassoit, dans le
+//! même pas), et jamais plus de [`LIE_LONGEST`] après s'être allongée ; debout, elle se réveille
+//! après [`UP_ASLEEP`]. Réveillée par quelqu'un, elle reste allongée, et se relève [`UP_AWAKE`]
+//! plus tard au plus. Rassise d'elle-même (ou parce que la place n'y est plus), ou réveillée
+//! debout, elle reste là une attente ordinaire ([`SEATED`], [`STANDING`]) avant de reprendre sa
+//! vie. Son repos allongée arrêté sans qu'on s'occupe d'elle (plus la place, plus posée) se dit
+//! comme tel ([`Event::Unsettled`]), jamais comme un réveil.
+//! Tant qu'elle se repose, elle ne change pas de place d'elle-même ; « Changer de place » la
+//! réveille et la fait partir. Elle ne commence à se reposer que si elle vit sa vie (la case
+//! cochée, jamais pendant une répétition) ; elle finit toujours. Un hasard à part ([`NAP_SEED`]),
+//! de la même graine. Ses planches de repos sont chargées à la demande : tant qu'elles ne sont pas
+//! prêtes, elle attend comme elle est, et redit son envie à chaque pas.
+//!
 //! Les distances sont en fractions de sa hauteur debout, comme dans `body.rs` et `perch.rs`.
 
 use crate::body::{Capri, Stance};
 use crate::geom::{Rect, Vec2};
-use crate::look::Look;
+use crate::look::{Look, Rest, Unsettled};
 use crate::perch::{self, Bench, Perch, Reach, Seen, Stature};
 use crate::sheets::life;
 
@@ -110,6 +130,23 @@ pub const WALK_LONGEST: f64 = 10.0;
 /// Le hasard de ses éclats : sa graine, mêlée à ce nombre (« fidget »), pour ne rien changer au
 /// hasard de ses départs.
 const FIDGET_SEED: u64 = 0x6669_6467_6574;
+/// Tranquille depuis tant, assise, elle s'allonge : de 6 à 12 minutes.
+pub const LIE_AFTER: Span = Span::new(360.0, 720.0);
+/// Allongée et tranquille depuis tant, elle s'endort : de 3 à 6 minutes.
+pub const DOZE_AFTER: Span = Span::new(180.0, 360.0);
+/// Allongée éveillée depuis tant (depuis qu'elle s'est allongée, ou qu'on l'a réveillée), elle se
+/// rassoit : de 10 à 20 minutes.
+pub const UP_AWAKE: Span = Span::new(600.0, 1200.0);
+/// Endormie depuis tant, elle se réveille (allongée, et se rassoit) : de 20 à 40 minutes.
+pub const UP_ASLEEP: Span = Span::new(1200.0, 2400.0);
+/// Debout, immobile et tranquille depuis tant, elle s'endort : de 10 à 20 minutes.
+pub const STAND_DOZE_AFTER: Span = Span::new(600.0, 1200.0);
+/// Jamais allongée (endormie comprise) plus longtemps d'affilée : une heure, réveillée par
+/// quelqu'un ou non.
+pub const LIE_LONGEST: f64 = 3600.0;
+/// Le hasard de son repos : sa graine, mêlée à ce nombre (« repos »), pour ne rien changer au
+/// hasard de ses départs ni de ses éclats.
+pub const NAP_SEED: u64 = 0x0072_6570_6f73;
 
 /// Elle n'apparaît pas sous la main de l'utilisateur : le curseur reste à plus de cette marge
 /// (0,5 de sa hauteur debout) de la place qu'elle occupera.
@@ -474,6 +511,16 @@ pub enum Event {
     Fidgeted,
     /// « Changer de place » demandé, et quelque chose l'en empêche.
     Refused(Hold),
+    /// Assise et tranquille depuis un moment, elle s'allonge sur son bord.
+    LiesDown,
+    /// Tranquille, elle s'endort, allongée ou debout.
+    FallsAsleep { lying: bool },
+    /// Elle se réveille : d'elle-même (`woken` faux), ou parce qu'on s'est occupé d'elle.
+    WakesUp { lying: bool, woken: bool },
+    /// Allongée depuis un moment, elle se rassoit d'elle-même (`asleep` : elle dormait).
+    SitsUp { asleep: bool },
+    /// Son repos allongée s'arrête sans qu'on s'occupe d'elle (`why` ; `asleep` : elle dormait).
+    Unsettled { why: Unsettled, asleep: bool },
 }
 
 /// Elle vit sa vie : à chaque pas de la boucle, partir, ou apparaître là où elle allait. Le seul
@@ -498,6 +545,49 @@ pub struct Roamer {
     walk: Option<Vec2>,
     /// Ses éclats, assise.
     fidget: Fidget,
+    /// Son repos.
+    nap: Nap,
+}
+
+/// Quand elle se repose (voir le module) : un hasard à part ([`NAP_SEED`]), depuis quand elle est
+/// tranquille, assise, allongée ou endormie debout, et son repos au pas précédent.
+#[derive(Clone, Debug)]
+struct Nap {
+    rng: Rng,
+    /// Tranquille depuis un moment : quand elle s'allongera (assise), quand elle s'endormira
+    /// (debout). `None` : on vient de s'occuper d'elle.
+    quiet: Option<Quiet>,
+    /// Assise (là, posée, dessinée sur son bord, éveillée) depuis cette heure.
+    seated_since: Option<f64>,
+    /// Allongée : quand elle s'endort (une fois tranquille), quand elle se rassoit, et jamais
+    /// après `cap`.
+    lain: Option<Lain>,
+    /// Endormie debout : quand elle se réveille.
+    dozing_until: Option<f64>,
+    /// Son repos au pas précédent.
+    last: Rest,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct Quiet {
+    lie: f64,
+    doze: f64,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct Lain {
+    sleep_at: Option<f64>,
+    up_at: f64,
+    cap: f64,
+}
+
+impl Nap {
+    /// Tranquille à partir de l'instant `now` : ses seuils tirés.
+    fn quiet_from(&mut self, now: f64) {
+        let lie = now + LIE_AFTER.pick(&mut self.rng);
+        let doze = now + STAND_DOZE_AFTER.pick(&mut self.rng);
+        self.quiet = Some(Quiet { lie, doze });
+    }
 }
 
 /// Quand elle a un éclat, assise : un hasard à part ([`FIDGET_SEED`]), l'heure du prochain, et si
@@ -523,6 +613,14 @@ impl Roamer {
             was_perched: false,
             walk: None,
             fidget: Fidget { rng: Rng::new(seed ^ FIDGET_SEED), next: now, seated: false },
+            nap: Nap {
+                rng: Rng::new(seed ^ NAP_SEED),
+                quiet: None,
+                seated_since: None,
+                lain: None,
+                dozing_until: None,
+                last: Rest::Awake,
+            },
         }
     }
 
@@ -539,9 +637,11 @@ impl Roamer {
         self.enabled = enabled;
     }
 
-    /// « Changer de place » : au prochain pas, elle part si rien ne l'en empêche.
+    /// « Changer de place » : au prochain pas, elle part si rien ne l'en empêche (endormie ou
+    /// allongée, elle se réveille et part). On s'occupe d'elle : elle n'est plus tranquille.
     pub fn ask(&mut self) {
         self.asked = true;
+        self.nap.quiet = None;
     }
 
     /// On vient de la montrer, à l'instant `now` : elle reste un moment là où elle réapparaît,
@@ -550,6 +650,8 @@ impl Roamer {
     /// pendant qu'elle était cachée est oublié.
     pub fn came_back(&mut self, now: f64, capri: &Capri) {
         self.asked = false;
+        // on vient de la montrer : elle n'est plus tranquille
+        self.nap.quiet = None;
         // cachée en marchant : sa marche s'est arrêtée là, ce n'est pas une arrivée
         self.walk = None;
         let why = if capri.perched().is_some() { Stay::Seated } else { Stay::Standing };
@@ -593,7 +695,168 @@ impl Roamer {
         if events.is_empty() && self.fidgets(look, capri, busy, now, frame) {
             events.push(Event::Fidgeted);
         }
+        // son repos est suivi à chaque pas ; il ne commence ni ne finit que si rien d'autre ne
+        // s'est passé à ce pas
+        let quiet = events.is_empty();
+        events.extend(self.rests(look, capri, busy, now, frame, quiet));
         events
+    }
+
+    /// Son repos, à ce pas (voir le module) : depuis quand elle est tranquille, et, si `act` (rien
+    /// d'autre ne s'est passé à ce pas), s'allonger, s'endormir, se rasseoir, se réveiller.
+    fn rests(
+        &mut self,
+        look: &mut Look,
+        capri: &mut Capri,
+        busy: Busy,
+        now: f64,
+        frame: u64,
+        act: bool,
+    ) -> Option<Event> {
+        // un instant qui n'est pas un nombre ne fait rien
+        if now.is_nan() {
+            return None;
+        }
+        let carried = matches!(capri.stance(), Stance::Held { .. } | Stance::Thrown { .. });
+        // ce qui compte comme s'occuper d'elle : ses propres trajets et ses éclats, non ; la musique
+        // n'est dite que posée (debout, elle ne change rien)
+        let attended =
+            look.take_attention() || busy.talking || carried || look.hears_music() || look.is_grooving();
+        let unsettled = look.take_unsettled();
+        if attended {
+            self.nap.quiet = None;
+        } else if self.nap.quiet.is_none() {
+            self.nap.quiet_from(now);
+        }
+        let rest = look.rest();
+        let was = std::mem::replace(&mut self.nap.last, rest);
+        let seated =
+            rest == Rest::Awake && look.is_here() && capri.perched().is_some() && look.is_seated(capri);
+        if !seated {
+            self.nap.seated_since = None;
+        } else if self.nap.seated_since.is_none() {
+            self.nap.seated_since = Some(now);
+        }
+        // réveillée par quelqu'un (quand c'est sa vie qui la réveille, elle le retient tout de suite ;
+        // la place partie, ou plus posée, ce n'est pas un réveil : `Look::take_unsettled`)
+        let woken =
+            unsettled.is_none() && matches!(was, Rest::Asleep { .. }) && !matches!(rest, Rest::Asleep { .. });
+        match rest {
+            Rest::Lying | Rest::Asleep { lying: true } => {
+                self.nap.dozing_until = None;
+                let asleep = rest != Rest::Lying;
+                let mut lain = match self.nap.lain {
+                    Some(lain) => lain,
+                    None => {
+                        let up_at = now + UP_AWAKE.pick(&mut self.nap.rng);
+                        Lain { sleep_at: None, up_at, cap: now + LIE_LONGEST }
+                    }
+                };
+                let mut event = None;
+                if woken {
+                    lain.up_at = (now + UP_AWAKE.pick(&mut self.nap.rng)).min(lain.cap);
+                    lain.sleep_at = None;
+                    event = Some(Event::WakesUp { lying: true, woken: true });
+                }
+                // le moment de se rasseoir (endormie, elle se réveille d'abord)
+                if act && event.is_none() && now >= lain.up_at.min(lain.cap) {
+                    if asleep {
+                        look.rouse(capri, frame);
+                    }
+                    if look.sit_up(capri, frame) {
+                        self.nap.lain = None;
+                        self.nap.last = look.rest();
+                        self.nap.quiet_from(now);
+                        // rassise, elle reste là une attente ordinaire avant de reprendre sa vie
+                        self.roam.stay(now, Stay::Seated);
+                        return Some(Event::SitsUp { asleep });
+                    }
+                }
+                if !asleep && look.rest() == Rest::Lying {
+                    if attended {
+                        lain.sleep_at = None;
+                    } else if lain.sleep_at.is_none() {
+                        lain.sleep_at = Some(now + DOZE_AFTER.pick(&mut self.nap.rng));
+                    }
+                    let due = lain.sleep_at.is_some_and(|at| now >= at);
+                    if act && event.is_none() && self.enabled && due && look.doze(capri, frame) {
+                        lain.up_at = (now + UP_ASLEEP.pick(&mut self.nap.rng)).min(lain.cap);
+                        self.nap.last = look.rest();
+                        event = Some(Event::FallsAsleep { lying: true });
+                    }
+                }
+                self.nap.lain = Some(lain);
+                event
+            }
+            Rest::Asleep { lying: false } => {
+                self.nap.lain = None;
+                let until = match self.nap.dozing_until {
+                    Some(until) => until,
+                    None => now + UP_ASLEEP.pick(&mut self.nap.rng),
+                };
+                self.nap.dozing_until = Some(until);
+                if act && now >= until && look.rouse(capri, frame) {
+                    self.nap.dozing_until = None;
+                    self.nap.last = look.rest();
+                    self.nap.quiet_from(now);
+                    return Some(Event::WakesUp { lying: false, woken: false });
+                }
+                None
+            }
+            Rest::Waking => {
+                self.nap.lain = None;
+                self.nap.dozing_until = None;
+                woken.then_some(Event::WakesUp { lying: false, woken: true })
+            }
+            Rest::Awake => {
+                self.nap.lain = None;
+                self.nap.dozing_until = None;
+                // son repos allongée s'est arrêté de lui-même : sans la place, elle s'est rassise, et
+                // reste là une attente ordinaire ; plus posée, `decide` a compté un bord perdu
+                if let Some((why, asleep)) = unsettled {
+                    if why != Unsettled::LedgeGone {
+                        self.roam.stay(now, Stay::Seated);
+                    }
+                    return Some(Event::Unsettled { why, asleep });
+                }
+                // réveillée debout (d'elle-même ou non), là : une attente ordinaire, debout ; tenue,
+                // en chemin, ce qui suit en décide
+                let here = look.is_here() && !look.is_traveling() && self.trip.is_none();
+                if matches!(was, Rest::Asleep { lying: false } | Rest::Waking) && !carried && here {
+                    self.roam.stay(now, Stay::Standing);
+                }
+                if woken {
+                    return Some(Event::WakesUp { lying: was == Rest::Asleep { lying: true }, woken: true });
+                }
+                if !act || !self.enabled || self.trip.is_some() || self.walk.is_some() {
+                    return None;
+                }
+                let quiet = self.nap.quiet?;
+                if !look.is_here() || look.gesture().is_some() {
+                    return None;
+                }
+                // assise depuis un moment, tranquille : elle s'allonge (ses planches pas encore
+                // là, elle en a envie, et attend assise)
+                if self.nap.seated_since.is_some_and(|since| now >= since + PATIENCE) && now >= quiet.lie {
+                    if look.lie_down(capri, frame) {
+                        self.nap.last = look.rest();
+                        return Some(Event::LiesDown);
+                    }
+                    return None;
+                }
+                // debout, immobile et tranquille : elle s'endort debout
+                if !seated
+                    && capri.stance() == Stance::Floating
+                    && now >= quiet.doze
+                    && look.doze(capri, frame)
+                {
+                    self.nap.dozing_until = Some(now + UP_ASLEEP.pick(&mut self.nap.rng));
+                    self.nap.last = look.rest();
+                    return Some(Event::FallsAsleep { lying: false });
+                }
+                None
+            }
+        }
     }
 
     /// Assise et libre, un éclat s'il est temps ; voir le module.
@@ -709,7 +972,8 @@ impl Roamer {
         if !self.enabled {
             return Vec::new();
         }
-        let free = hold.is_none() && !busy.hovered;
+        // allongée, endormie, ou en train de se réveiller : elle ne part pas d'elle-même
+        let free = hold.is_none() && !busy.hovered && !look.is_resting();
         if self.roam.due(now, free) { self.leave(look, capri, world, now, frame, false) } else { Vec::new() }
     }
 
@@ -719,6 +983,7 @@ impl Roamer {
     /// comme posée à la main ([`BY_HAND`]). Seul un bord parti sous elle (sa fenêtre fermée,
     /// déplacée hors de portée, recouverte) vaut [`LOST`].
     pub fn touched(&mut self, now: f64, capri: &Capri) {
+        self.nap.quiet = None;
         let perched = capri.perched().is_some();
         if std::mem::replace(&mut self.was_perched, perched) && !perched {
             self.roam.stay(now, Stay::ByHand);
@@ -1888,5 +2153,446 @@ mod tests {
             "partie à {at}, prévu à {next}, le geste fini à {ends}"
         );
         assert!((at - ends).abs() <= 1.0 / 24.0, "juste après son sourire : {at} contre {ends}");
+    }
+
+    // --- son repos ---
+
+    use crate::look::{LieMasks, NapMasks, Rest, Wants};
+    use crate::sheets::lie;
+
+    /// Lancée à l'image 0, là, ses planches de repos offertes et chargées (sauf `undressed`).
+    fn resting(seed: u64, enabled: bool, undressed: bool) -> (Roamer, Look, Capri) {
+        let mut look = dressed();
+        look.offer(Wants { lying: true, sleeping: true });
+        if !undressed {
+            look.dress_lying(Some(LieMasks {
+                narrow: full(lie::NARROW, lie::CELL_HEIGHT),
+                wide: full(lie::WIDE, lie::CELL_HEIGHT),
+            }));
+            look.dress_sleeping(Some(NapMasks {
+                sleep: full(life::CELL_WIDTH, sheets::CELL_HEIGHT),
+                wake: full(life::CELL_WIDTH, sheets::CELL_HEIGHT),
+            }));
+        }
+        let mut capri = body(&look);
+        capri.step(0.0, 0);
+        look.enter(&mut capri, 0);
+        (Roamer::new(seed, 0.0, enabled), look, capri)
+    }
+
+    /// La boucle, comme `timed`, une image sur `every` : posée, elle suit sa fenêtre (`World::recheck`,
+    /// comme la veille posée de l'app) et sait s'il y a la place pour s'allonger ; `poke` : à ces
+    /// heures-là (en secondes), on s'occupe d'elle (`Look::stir`).
+    #[allow(clippy::too_many_arguments)]
+    fn lived(
+        roamer: &mut Roamer,
+        look: &mut Look,
+        capri: &mut Capri,
+        desk: &mut Desk,
+        busy: Busy,
+        music: bool,
+        frames: std::ops::Range<u64>,
+        every: u64,
+        poke: &dyn Fn(f64) -> bool,
+    ) -> Vec<(f64, Event)> {
+        let mut events = Vec::new();
+        for frame in frames.step_by(every as usize) {
+            let now = frame as f64 / 24.0;
+            capri.step(every as f32 / 24.0, frame);
+            desk.recheck(capri, look.stature());
+            let room = look
+                .lying_stature()
+                .zip(capri.perched())
+                .is_some_and(|(stature, spot)| perch::fits(&desk.windows, SCREEN, stature, spot));
+            look.set_room_to_lie(room);
+            look.set_conversing(busy.talking);
+            let music = music && look.wants_music(capri);
+            look.update(capri, frame, busy.talking, music);
+            if poke(now) {
+                look.stir(capri, frame);
+            }
+            events.extend(
+                roamer.step(look, capri, desk, busy, now, frame).into_iter().map(|event| (now, event)),
+            );
+            // allongée, toujours posée, sur son bord, avec la place
+            if matches!(look.rest(), Rest::Lying | Rest::Asleep { lying: true }) {
+                assert!(capri.perched().is_some() && room, "image {frame} : allongée hors d'un bord");
+                assert!(look.wants().lying);
+            }
+            assert!(
+                !(busy.talking && matches!(look.rest(), Rest::Asleep { .. })),
+                "image {frame} : endormie pendant qu'on lui parle"
+            );
+        }
+        events
+    }
+
+    /// L'heure du premier événement qui convient, après `after`.
+    fn first(events: &[(f64, Event)], after: f64, which: impl Fn(&Event) -> bool) -> Option<f64> {
+        events.iter().find(|(at, event)| *at >= after && which(event)).map(|&(at, _)| at)
+    }
+
+    /// Une longue fenêtre seule : un bord où elle tient allongée presque partout.
+    fn long_desk() -> Desk {
+        Desk { windows: vec![seen(1, rect(100.0, 1000.0, 2800.0, 800.0))], ..world() }
+    }
+
+    #[test]
+    fn quiet_she_lies_down_on_her_edge_falls_asleep_then_sits_up_by_herself() {
+        let (mut roamer, mut look, mut capri) = resting(4, true, false);
+        let mut desk = long_desk();
+        let never = |_: f64| false;
+        let events = lived(
+            &mut roamer,
+            &mut look,
+            &mut capri,
+            &mut desk,
+            Busy::default(),
+            false,
+            1..24 * 7200,
+            4,
+            &never,
+        );
+        let lay = first(&events, 0.0, |event| *event == Event::LiesDown).expect("elle s'allonge");
+        assert!((LIE_AFTER.min..LIE_AFTER.max + SEATED.max).contains(&lay), "{lay}");
+        let slept =
+            first(&events, lay, |event| *event == Event::FallsAsleep { lying: true }).expect("elle s'endort");
+        assert!(slept - lay >= DOZE_AFTER.min && slept - lay <= DOZE_AFTER.max + 1.0, "{lay} → {slept}");
+        let up =
+            first(&events, slept, |event| matches!(event, Event::SitsUp { .. })).expect("elle se rassoit");
+        assert_eq!(first(&events, slept, |event| *event == Event::SitsUp { asleep: true }), Some(up));
+        assert!(up - slept >= UP_ASLEEP.min && up - slept <= UP_ASLEEP.max + 1.0, "{slept} → {up}");
+        // allongée ou endormie, elle ne change pas de place d'elle-même ; ensuite, sa vie reprend
+        let left = |event: &Event| matches!(event, Event::Leaves { .. });
+        assert!(first(&events, lay, left).is_none_or(|at| at > up), "{events:?}");
+        // puis elle repart, après une attente ordinaire, assise
+        let next = first(&events, up, left).expect("puis elle repart");
+        assert!(next - up >= SEATED.min, "rassise à {up}, repartie à {next}");
+    }
+
+    #[test]
+    fn woken_by_herself_standing_she_stays_an_ordinary_while_before_going_on() {
+        let (mut roamer, mut look, mut capri) = resting(6, true, false);
+        let mut desk = Desk { windows: Vec::new(), perch: false, ..world() };
+        let never = |_: f64| false;
+        let events = lived(
+            &mut roamer,
+            &mut look,
+            &mut capri,
+            &mut desk,
+            Busy::default(),
+            false,
+            1..24 * 7200,
+            4,
+            &never,
+        );
+        let woke = first(&events, 0.0, |event| *event == Event::WakesUp { lying: false, woken: false })
+            .expect("elle se réveille d'elle-même");
+        let next =
+            first(&events, woke, |event| matches!(event, Event::Leaves { .. })).expect("puis elle repart");
+        assert!(next - woke >= STANDING.min, "réveillée à {woke}, repartie à {next}");
+    }
+
+    #[test]
+    fn her_room_or_her_edge_gone_while_she_rests_is_said_as_such_not_as_being_woken() {
+        for (gone, asleep) in [("place", true), ("bord", true), ("place", false), ("bord", false)] {
+            let (mut roamer, mut look, mut capri) = resting(4, true, false);
+            let mut desk = long_desk();
+            let never = |_: f64| false;
+            let want = if asleep { Rest::Asleep { lying: true } } else { Rest::Lying };
+            let mut frame = 1;
+            while look.rest() != want {
+                lived(
+                    &mut roamer,
+                    &mut look,
+                    &mut capri,
+                    &mut desk,
+                    Busy::default(),
+                    false,
+                    frame..frame + 4,
+                    4,
+                    &never,
+                );
+                frame += 4;
+                assert!(frame < 24 * 3600, "jamais {want:?}");
+            }
+            // allongée éveillée : après son éclat
+            if !asleep {
+                let to = frame + 4 * 12;
+                lived(
+                    &mut roamer,
+                    &mut look,
+                    &mut capri,
+                    &mut desk,
+                    Busy::default(),
+                    false,
+                    frame..to,
+                    4,
+                    &never,
+                );
+                frame = to;
+            }
+            let seat = capri.seat().expect("posée");
+            if gone == "place" {
+                // une fenêtre devant, sur ce qui repose à sa gauche allongée, pas assise
+                desk.windows.insert(0, seen(9, rect(seat.x - 245.0, 900.0, 125.0, 200.0)));
+            } else {
+                desk.windows.clear();
+            }
+            let events = lived(
+                &mut roamer,
+                &mut look,
+                &mut capri,
+                &mut desk,
+                Busy::default(),
+                false,
+                frame..frame + 24,
+                4,
+                &never,
+            );
+            let woken = events.iter().any(|(_, event)| matches!(event, Event::WakesUp { woken: true, .. }));
+            assert!(!woken, "{gone} : {events:?}");
+            // la vraie raison, une fois, endormie ou non
+            let why = if gone == "place" { Unsettled::NoRoom } else { Unsettled::LedgeGone };
+            let said: Vec<Event> = events
+                .iter()
+                .map(|&(_, event)| event)
+                .filter(|event| matches!(event, Event::Unsettled { .. }))
+                .collect();
+            assert_eq!(said, [Event::Unsettled { why, asleep }], "{gone} : {events:?}");
+            assert_eq!(look.rest(), Rest::Awake, "{gone}");
+            assert_eq!(capri.perched().is_some(), gone == "place", "{gone}");
+        }
+    }
+
+    #[test]
+    fn talking_music_a_turned_off_life_or_no_sheets_keep_her_from_resting() {
+        let never = |_: f64| false;
+        let rests = |events: &[(f64, Event)]| {
+            events.iter().any(|(_, event)| matches!(event, Event::LiesDown | Event::FallsAsleep { .. }))
+        };
+        // on se parle tout du long
+        let (mut roamer, mut look, mut capri) = resting(4, true, false);
+        let talking = Busy { talking: true, hovered: false };
+        let events = lived(
+            &mut roamer,
+            &mut look,
+            &mut capri,
+            &mut long_desk(),
+            talking,
+            false,
+            1..24 * 2400,
+            4,
+            &never,
+        );
+        assert!(!rests(&events), "{events:?}");
+        // de la musique tout du long
+        let (mut roamer, mut look, mut capri) = resting(4, true, false);
+        let events = lived(
+            &mut roamer,
+            &mut look,
+            &mut capri,
+            &mut long_desk(),
+            Busy::default(),
+            true,
+            1..24 * 2400,
+            4,
+            &never,
+        );
+        assert!(!rests(&events), "{events:?}");
+        // « Vivre sa vie » décochée : elle ne commence pas à se reposer
+        let (mut roamer, mut look, mut capri) = resting(4, false, false);
+        let events = lived(
+            &mut roamer,
+            &mut look,
+            &mut capri,
+            &mut long_desk(),
+            Busy::default(),
+            false,
+            1..24 * 2400,
+            4,
+            &never,
+        );
+        assert!(!rests(&events), "{events:?}");
+        // ses planches pas offertes : jamais, et elle n'en veut pas
+        let (mut roamer, mut look, mut capri) = resting(4, true, false);
+        look.offer(Wants::default());
+        let events = lived(
+            &mut roamer,
+            &mut look,
+            &mut capri,
+            &mut long_desk(),
+            Busy::default(),
+            false,
+            1..24 * 2400,
+            4,
+            &never,
+        );
+        assert!(!rests(&events) && look.wants() == Wants::default(), "{events:?}");
+    }
+
+    #[test]
+    fn her_sheets_not_ready_yet_she_waits_seated_and_lies_down_once_they_come() {
+        let (mut roamer, mut look, mut capri) = resting(4, true, true);
+        let mut desk = long_desk();
+        let never = |_: f64| false;
+        let mut wished = None;
+        let mut frame = 1;
+        while wished.is_none() {
+            let events = lived(
+                &mut roamer,
+                &mut look,
+                &mut capri,
+                &mut desk,
+                Busy::default(),
+                false,
+                frame..frame + 4,
+                4,
+                &never,
+            );
+            assert!(!events.iter().any(|(_, event)| *event == Event::LiesDown), "pas encore");
+            if look.wants().lying {
+                wished = Some(frame);
+            }
+            frame += 4;
+            assert!(frame < 24 * 1800, "elle n'en a jamais envie");
+        }
+        // assise en attendant, elle en a envie à chaque pas
+        let events = lived(
+            &mut roamer,
+            &mut look,
+            &mut capri,
+            &mut desk,
+            Busy::default(),
+            false,
+            frame..frame + 240,
+            4,
+            &never,
+        );
+        assert!(events.is_empty() && look.wants().lying && look.rest() == Rest::Awake, "{events:?}");
+        assert!(look.is_seated(&capri));
+        // elles arrivent : elle s'allonge au pas suivant
+        look.dress_lying(Some(LieMasks {
+            narrow: full(lie::NARROW, lie::CELL_HEIGHT),
+            wide: full(lie::WIDE, lie::CELL_HEIGHT),
+        }));
+        let events = lived(
+            &mut roamer,
+            &mut look,
+            &mut capri,
+            &mut desk,
+            Busy::default(),
+            false,
+            frame + 240..frame + 248,
+            4,
+            &never,
+        );
+        assert_eq!(events.first().map(|(_, event)| *event), Some(Event::LiesDown), "{events:?}");
+    }
+
+    #[test]
+    fn woken_again_and_again_she_still_sits_up_before_the_longest() {
+        let (mut roamer, mut look, mut capri) = resting(4, true, false);
+        let mut desk = long_desk();
+        let never = |_: f64| false;
+        let events = lived(
+            &mut roamer,
+            &mut look,
+            &mut capri,
+            &mut desk,
+            Busy::default(),
+            false,
+            1..24 * 900,
+            4,
+            &never,
+        );
+        let lay = first(&events, 0.0, |event| *event == Event::LiesDown).expect("elle s'allonge");
+        // on la réveille toutes les 7 minutes : elle se rendort, mais se rassoit avant l'heure
+        let poke = |now: f64| now > lay && ((now - lay) % 420.0) < 4.0 / 24.0;
+        let events = lived(
+            &mut roamer,
+            &mut look,
+            &mut capri,
+            &mut desk,
+            Busy::default(),
+            false,
+            24 * 900..24 * 7200,
+            4,
+            &poke,
+        );
+        let woken =
+            events.iter().filter(|(_, event)| *event == Event::WakesUp { lying: true, woken: true }).count();
+        assert!(woken >= 2, "{events:?}");
+        let up = first(&events, 0.0, |event| matches!(event, Event::SitsUp { .. })).expect("elle se rassoit");
+        assert!(up <= lay + LIE_LONGEST + 1.0, "{lay} → {up}");
+    }
+
+    #[test]
+    fn standing_with_no_edge_she_dozes_then_wakes_by_herself_or_when_asked_to_move() {
+        let (mut roamer, mut look, mut capri) = resting(6, true, false);
+        let mut desk = Desk { windows: Vec::new(), perch: false, ..world() };
+        let never = |_: f64| false;
+        let events = lived(
+            &mut roamer,
+            &mut look,
+            &mut capri,
+            &mut desk,
+            Busy::default(),
+            false,
+            1..24 * 4800,
+            4,
+            &never,
+        );
+        let slept = first(&events, 0.0, |event| *event == Event::FallsAsleep { lying: false })
+            .expect("elle s'endort");
+        assert!((STAND_DOZE_AFTER.min..STAND_DOZE_AFTER.max + 60.0).contains(&slept), "{slept}");
+        let woke =
+            first(&events, slept, |event| matches!(event, Event::WakesUp { .. })).expect("elle se réveille");
+        assert_eq!(
+            first(&events, slept, |event| *event == Event::WakesUp { lying: false, woken: false }),
+            Some(woke)
+        );
+        assert!(woke - slept >= UP_ASLEEP.min && woke - slept <= UP_ASLEEP.max + 1.0, "{slept} → {woke}");
+        let left = |event: &Event| matches!(event, Event::Leaves { .. });
+        assert!(first(&events, slept, left).is_none_or(|at| at > woke), "endormie, elle ne part pas");
+        // endormie, on lui demande de changer de place : elle se réveille et part
+        let (mut roamer, mut look, mut capri) = resting(6, true, false);
+        let mut desk = Desk { windows: Vec::new(), perch: false, ..world() };
+        let mut frame = 1;
+        while look.rest() != (Rest::Asleep { lying: false }) {
+            lived(
+                &mut roamer,
+                &mut look,
+                &mut capri,
+                &mut desk,
+                Busy::default(),
+                false,
+                frame..frame + 4,
+                4,
+                &never,
+            );
+            frame += 4;
+            assert!(frame < 24 * 2400, "elle ne s'endort jamais");
+        }
+        roamer.ask();
+        let events = lived(
+            &mut roamer,
+            &mut look,
+            &mut capri,
+            &mut desk,
+            Busy::default(),
+            false,
+            frame..frame + 4,
+            4,
+            &never,
+        );
+        assert!(
+            matches!(
+                events[..],
+                [(_, Event::Leaves { asked: true, .. }), (_, Event::WakesUp { woken: true, .. })]
+            ),
+            "{events:?}"
+        );
+        assert!(look.is_traveling() && look.rest() == Rest::Awake);
     }
 }

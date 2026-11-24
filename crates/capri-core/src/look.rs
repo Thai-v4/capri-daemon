@@ -101,9 +101,40 @@
 //! ne se joue ; sans les variantes, ses clignements d'avant. Ses planches de vie de 240 px
 //! s'alignent sur sa pose debout : sans elle, aucune ne sert.
 //!
+//! **Elle se repose** ([`Rest`] ; quand, c'est `roam` qui le décide) : assise, elle s'allonge sur
+//! son bord ([`Look::lie_down`] : l'éclat de sa pose allongée, [`lie::glitching`], par une coupe
+//! franche depuis sa boucle assise, puis sa boucle allongée, la hanche à la même place, voir
+//! [`lie`]), seulement s'il y a la place pour elle allongée ([`Look::set_room_to_lie`], que l'app
+//! sait de la lecture des fenêtres qu'elle fait déjà) ; allongée, elle cligne, parle avec sa
+//! bouche allongée, a un éclat quand on clique sur elle ([`Gesture::LieGlitch`]), et s'endort
+//! ([`Look::doze`] : sa boucle de sommeil, par une coupe franche). Debout et immobile, elle s'endort
+//! aussi ([`life::sleeping`], son tour arrêté : elle ne flotte plus). Elle se réveille
+//! ([`Look::rouse`], [`Look::stir`]) quand on lui parle, qu'on clique sur elle, ou que Claude Code
+//! attend une réponse : allongée, elle redevient allongée éveillée (coupe franche) ; debout, elle
+//! se réveille ([`life::waking`]), puis sa boucle par une coupe franche. Attrapée, elle est debout
+//! tout de suite, comme assise. Elle se rassoit ([`Look::sit_up`] : l'éclat de sa pose assise,
+//! [`sheets::glitching`], qui finit sur sa boucle ; sans lui, une coupe franche), et, s'il n'y a
+//! plus la place pour elle allongée, d'elle-même. Son bord parti sous elle, elle s'en efface
+//! allongée ([`lie::leaving`]) et flotte, comme assise ; cachée ou en chemin, de même. Assise, la
+//! musique l'empêche de s'allonger, et allongée, de s'endormir ; allongée, elle ne se balance pas.
+//! Debout, la musique ne change rien : l'app ne la lui dit que posée (`wants_music`), pour se
+//! balancer ; elle peut donc s'endormir debout pendant qu'une musique joue. Quand son repos
+//! allongée s'arrête sans qu'on s'occupe d'elle (plus la place, plus posée), elle le dit
+//! ([`Look::take_unsettled`]) ; sans la place, elle ne se rassoit qu'une fois là (en train de
+//! réapparaître allongée, elle finit d'abord).
+//!
+//! **Ses planches de repos sont chargées à la demande** (elles pèsent lourd, et elle se repose peu)
+//! : ce qu'elle en veut ([`Look::wants`]), dès qu'elle voudrait s'allonger ou s'endormir et tant
+//! qu'elle les montre ; l'app les charge hors du thread principal et les lui donne
+//! ([`Look::dress_lying`], [`Look::dress_sleeping`]), ou les reprend. Tant qu'elles ne sont pas là,
+//! elle ne s'allonge pas ni ne s'endort debout (elle reste comme elle est, et attend) ; reprises,
+//! elle se rassoit ou se réveille d'un coup. Celles qui manquent dès le lancement
+//! ([`Look::offer`]) : elle ne le fait jamais.
+//!
 //! **Le temps** : l'image d'animation à 24 i/s ; ses dessins sont tenus deux images (12 par
-//! seconde), son sourire trois (8 par seconde, sa cadence d'origine). Rien n'est tiré au hasard :
-//! la même image donne toujours le même dessin.
+//! seconde), son sourire trois (8 par seconde, sa cadence d'origine), son sommeil allongée trois (8
+//! par seconde), son sommeil debout quatre (6 par seconde, sa cadence d'origine). Rien n'est tiré
+//! au hasard : la même image donne toujours le même dessin.
 
 use crate::anim::Sheet;
 use crate::body::{Capri, Stance};
@@ -113,7 +144,7 @@ use crate::intro::{self, Act, End, act};
 use crate::mask::AlphaMask;
 use crate::perch::{FOOT, Reach, Stature};
 use crate::roam::Hold;
-use crate::sheets::{self, life, stand};
+use crate::sheets::{self, lie, life, stand};
 
 /// Un tour de sa boucle, debout comme assise : 60 images, 2,5 s.
 pub const TOUR: u64 = 60;
@@ -148,12 +179,14 @@ pub enum Gesture {
     Rise,
     /// Debout : elle sourit ([`life::grinning`], deux tours).
     Grin,
-    /// Assise : un éclat ([`sheets::glitching`]).
+    /// Assise : un éclat ([`sheets::glitching`]). Aussi celui avec lequel elle se rassoit.
     PerchGlitch,
+    /// Allongée : un éclat ([`lie::glitching`]). Aussi celui avec lequel elle s'allonge.
+    LieGlitch,
 }
 
 impl Gesture {
-    pub const ALL: [Gesture; 3] = [Gesture::Rise, Gesture::Grin, Gesture::PerchGlitch];
+    pub const ALL: [Gesture; 4] = [Gesture::Rise, Gesture::Grin, Gesture::PerchGlitch, Gesture::LieGlitch];
 
     /// Combien d'images il dure, joué jusqu'au bout.
     pub fn frames(self) -> u64 {
@@ -161,12 +194,13 @@ impl Gesture {
             Gesture::Rise => u64::from(life::Strip::Glitch.count() * life::Strip::Glitch.hold()),
             Gesture::Grin => life::grin_frames(),
             Gesture::PerchGlitch => u64::from(sheets::Strip::PerchGlitch.count() * sheets::HOLD),
+            Gesture::LieGlitch => u64::from(lie::Strip::LieGlitch.count() * sheets::HOLD),
         }
     }
 
-    /// Se joue-t-il assise ?
+    /// Se joue-t-il sur son bord (assise ou allongée) ? Son tour ne s'arrête pas alors.
     pub fn seated(self) -> bool {
-        matches!(self, Gesture::PerchGlitch)
+        matches!(self, Gesture::PerchGlitch | Gesture::LieGlitch)
     }
 
     /// Pour le journal.
@@ -175,8 +209,97 @@ impl Gesture {
             Gesture::Rise => "elle se relève",
             Gesture::Grin => "elle sourit",
             Gesture::PerchGlitch => "un éclat, assise",
+            Gesture::LieGlitch => "un éclat, allongée",
         }
     }
+}
+
+/// Une envie de se reposer, ses planches pas encore là, reste une envie pendant tant d'images
+/// (2 s) : `roam` la redit à chaque pas tant qu'elle tient ; ensuite, l'app peut reprendre ses
+/// planches.
+pub const WISH: u64 = 48;
+
+/// Son repos, vu du dehors (voir le module).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Rest {
+    /// Éveillée, ni allongée ni endormie.
+    Awake,
+    /// Allongée sur son bord, éveillée (en train de s'allonger compris).
+    Lying,
+    /// Endormie, allongée ou debout.
+    Asleep { lying: bool },
+    /// Debout, elle se réveille.
+    Waking,
+}
+
+/// Pourquoi son repos allongée s'est arrêté sans que personne ne s'occupe d'elle
+/// ([`Look::take_unsettled`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Unsettled {
+    /// Plus la place pour elle allongée là où elle est (son bord raccourci ou recouvert, l'écran) :
+    /// elle se rassoit.
+    NoRoom,
+    /// Elle n'est plus posée sur son bord (sa fenêtre partie, recouverte, « S'asseoir sur les
+    /// fenêtres » décochée) : elle s'en efface allongée, puis flotte.
+    LedgeGone,
+    /// Ses planches allongées reprises (ce que l'app ne fait pas tant qu'elle en veut) : elle se
+    /// rassoit.
+    Undressed,
+}
+
+impl Unsettled {
+    /// Pour le journal.
+    pub fn describe(self) -> &'static str {
+        match self {
+            Unsettled::NoRoom => "plus la place pour elle allongée",
+            Unsettled::LedgeGone => "elle n'est plus posée sur son bord",
+            Unsettled::Undressed => "ses planches allongées reprises",
+        }
+    }
+}
+
+/// Les jeux de planches qu'elle charge à la demande : sa pose allongée ([`lie`]), son sommeil et
+/// son réveil debout ([`life::Strip::NAP`]).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Wants {
+    pub lying: bool,
+    pub sleeping: bool,
+}
+
+/// Les masques de clic de sa pose allongée, chargée à la demande : l'union de ses boucles et de son
+/// clignement (cases étroites), et celle de son éclat et de son départ (cases larges).
+pub struct LieMasks {
+    pub narrow: AlphaMask,
+    pub wide: AlphaMask,
+}
+
+/// Les masques de clic de son sommeil debout et de son réveil, chargés à la demande.
+pub struct NapMasks {
+    pub sleep: AlphaMask,
+    pub wake: AlphaMask,
+}
+
+/// Où en est son repos.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Repose {
+    Awake,
+    /// Allongée sur son bord, éveillée : sa boucle allongée, au dessin 0 à l'image `since` (son
+    /// éclat d'abord, s'il se joue : [`Gesture::LieGlitch`]).
+    Lying {
+        since: u64,
+    },
+    /// Allongée, endormie : sa boucle de sommeil, au dessin 0 à l'image `since`.
+    Sleeping {
+        since: u64,
+    },
+    /// Debout, endormie depuis l'image `since`, son tour arrêté.
+    Dozing {
+        since: u64,
+    },
+    /// Debout, elle se réveille depuis l'image `since` ; son tour reprend à la fin.
+    Waking {
+        since: u64,
+    },
 }
 
 /// Le plus long de ses gestes, en images : son sourire, 4 s. Aucun ne dure plus.
@@ -191,6 +314,8 @@ pub enum Drawing {
     Stand(stand::Cell),
     /// Une case de sa pose assise.
     Perch(sheets::Cell),
+    /// Une case de sa pose allongée (chargée à la demande).
+    Lie(lie::Cell),
     /// Une case de ses planches de vie (elle apparaît, elle s'efface), sur la toile de sa boucle
     /// debout.
     Life(life::Cell),
@@ -260,8 +385,17 @@ pub struct Moves {
 enum Clip {
     Arrive,
     Leave,
-    PerchArrive { at: Vec2 },
-    PerchLeave { at: Vec2 },
+    PerchArrive {
+        at: Vec2,
+    },
+    PerchLeave {
+        at: Vec2,
+    },
+    /// Elle s'efface de son bord allongée ([`lie::leaving`]) ; à l'envers, elle y réapparaît
+    /// allongée.
+    LieLeave {
+        at: Vec2,
+    },
 }
 
 /// Une suite jouée une fois, dans un sens ou dans l'autre : à l'image d'animation `since`, elle en
@@ -310,9 +444,14 @@ impl Run {
     /// Assise : là où elle est posée.
     fn seat(self) -> Option<Vec2> {
         match self.clip {
-            Clip::PerchArrive { at } | Clip::PerchLeave { at } => Some(at),
+            Clip::PerchArrive { at } | Clip::PerchLeave { at } | Clip::LieLeave { at } => Some(at),
             Clip::Arrive | Clip::Leave => None,
         }
+    }
+
+    /// Allongée.
+    fn lying(self) -> bool {
+        matches!(self.clip, Clip::LieLeave { .. })
     }
 }
 
@@ -379,8 +518,8 @@ enum Seat {
     Arriving { since: u64 },
     /// Assise ; sa boucle est au dessin 0 à l'image `since`.
     Sitting { since: u64 },
-    /// Elle s'efface depuis l'image `since`, là où elle était assise.
-    Leaving { since: u64, at: Vec2 },
+    /// Elle s'efface depuis l'image `since`, là où elle était assise (`lying` : allongée).
+    Leaving { since: u64, at: Vec2, lying: bool },
 }
 
 /// Ses feuilles d'exposition, faites une fois.
@@ -403,6 +542,14 @@ struct Sheets {
     dangle: Sheet<life::Cell>,
     rise: Sheet<life::Cell>,
     grin: Sheet<life::Cell>,
+    lying: Sheet<lie::Cell>,
+    lying_blink: Sheet<lie::Cell>,
+    lying_talk: Sheet<lie::Cell>,
+    lying_asleep: Sheet<lie::Cell>,
+    lying_glitch: Sheet<lie::Cell>,
+    lying_leave: Sheet<lie::Cell>,
+    nap: Sheet<life::Cell>,
+    wake: Sheet<life::Cell>,
 }
 
 pub struct Look {
@@ -435,6 +582,24 @@ pub struct Look {
     performed: Option<End>,
     /// Son bonjour attend d'être dit : pas de geste d'elle-même ([`Look::set_greeting_due`]).
     greeting_due: bool,
+    /// Les jeux de planches de repos qui existent (leurs en-têtes lus au lancement : [`Look::offer`]).
+    offered: Wants,
+    /// Ses planches de repos, chargées (avec leurs masques de clic), ou non.
+    lie: Option<LieMasks>,
+    nap: Option<NapMasks>,
+    /// Il y a la place pour elle allongée, là où elle est posée ([`Look::set_room_to_lie`]).
+    room_to_lie: bool,
+    /// Son repos.
+    repose: Repose,
+    /// Elle voudrait s'allonger, ou s'endormir debout, ses planches pas encore là : depuis l'image.
+    lie_wish: Option<u64>,
+    nap_wish: Option<u64>,
+    /// On s'est occupé d'elle (un clic, un réveil) depuis que `roam` l'a demandé
+    /// ([`Look::take_attention`]).
+    attended: bool,
+    /// Son repos allongée s'est arrêté sans qu'on s'occupe d'elle, et endormie ou non, depuis que
+    /// `roam` l'a demandé ([`Look::take_unsettled`]).
+    unsettled: Option<(Unsettled, bool)>,
     sheets: Sheets,
 }
 
@@ -459,6 +624,15 @@ impl Look {
             cheered: None,
             performed: None,
             greeting_due: false,
+            offered: Wants::default(),
+            lie: None,
+            nap: None,
+            room_to_lie: false,
+            repose: Repose::Awake,
+            lie_wish: None,
+            nap_wish: None,
+            attended: false,
+            unsettled: None,
             sheets: Sheets {
                 standing: stand::standing(false),
                 standing_blink: stand::standing(true),
@@ -478,6 +652,14 @@ impl Look {
                 dangle: life::dangling(),
                 rise: life::rising(),
                 grin: life::grinning(),
+                lying: lie::lying(false),
+                lying_blink: lie::lying(true),
+                lying_talk: lie::talking(),
+                lying_asleep: lie::sleeping(),
+                lying_glitch: lie::glitching(),
+                lying_leave: lie::leaving(),
+                nap: life::sleeping(),
+                wake: life::waking(),
             },
         }
     }
@@ -535,6 +717,10 @@ impl Look {
             Presence::Vanishing(run, _) => {
                 let run = run.turned(frame);
                 self.resume_after(capri, run, frame);
+                // elle s'effaçait allongée : elle y réapparaît allongée, et le reste
+                if run.lying() && self.lie.is_some() {
+                    self.repose = Repose::Lying { since: frame + run.left(frame) };
+                }
                 Presence::Appearing(run)
             }
         };
@@ -578,6 +764,7 @@ impl Look {
     pub fn hide_unseen(&mut self, capri: &mut Capri, frame: u64) {
         self.frame = self.frame.max(frame);
         self.act = None;
+        self.wake_up(capri);
         if let Presence::Entering(entrance) = self.presence {
             self.finish(entrance, Some(intro::Cut::Hidden), frame);
             self.leave_stage(capri);
@@ -615,6 +802,7 @@ impl Look {
         self.frame = self.frame.max(frame);
         self.act = None;
         self.walking = None;
+        self.wake_up(capri);
         // ce qu'elle faisait là où elle était ne compte plus : ni un départ de son bord à finir,
         // ni une boucle assise à reprendre
         match capri.seat().filter(|_| self.has_perch()) {
@@ -748,6 +936,7 @@ impl Look {
         self.frame = self.frame.max(frame);
         self.act = None;
         self.walking = None;
+        self.wake_up(capri);
         self.seat = Seat::Standing;
         // debout là où sont ses pieds : sa place, dans l'écran
         capri.set_at(capri.feet());
@@ -919,6 +1108,19 @@ impl Look {
         if standing || walked {
             capri.unstill();
         }
+        // son repos aussi : elle s'efface de là où elle est dessinée (allongée : de son bord)
+        self.wake_up(capri);
+    }
+
+    /// Son repos s'arrête là, d'un coup : ni allongée, ni endormie, ni envie de l'être. Endormie
+    /// debout, son tour reprend (une suite qui commence l'arrête de nouveau).
+    fn wake_up(&mut self, capri: &mut Capri) {
+        if matches!(self.repose, Repose::Dozing { .. } | Repose::Waking { .. }) {
+            capri.unstill();
+        }
+        self.repose = Repose::Awake;
+        self.lie_wish = None;
+        self.nap_wish = None;
     }
 
     /// Comment elle apparaît : assise sur son bord si elle y est posée (avec ses planches
@@ -926,6 +1128,7 @@ impl Look {
     /// planches de vie.
     fn entrance(&mut self, capri: &mut Capri, frame: u64) -> Presence {
         self.act = None;
+        self.wake_up(capri);
         if !self.has_life() {
             return Presence::Here;
         }
@@ -967,11 +1170,17 @@ impl Look {
     /// debout, ses planches de vie, son tour arrêté.
     fn exit(&self, capri: &mut Capri, drawing: Drawing, frame: u64) -> Run {
         let (arrive, leave) = (self.sheets.arriving.len(), self.sheets.leaving.len());
+        let lain = self.sheets.lying_leave.len();
         match (drawing, self.seat, self.seated_at(capri)) {
+            // allongée : de son bord, allongée ; en train d'en repartir, elle continue
+            (Drawing::Lie(_), Seat::Leaving { since, at, .. }, _) => {
+                Run::new(Clip::LieLeave { at }, since, lain)
+            }
+            (Drawing::Lie(_), _, Some(at)) => Run::new(Clip::LieLeave { at }, frame, lain),
             (Drawing::Perch(_), Seat::Arriving { since }, Some(at)) => {
                 Run::new(Clip::PerchArrive { at }, since, arrive).turned(frame)
             }
-            (Drawing::Perch(_), Seat::Leaving { since, at }, _) => {
+            (Drawing::Perch(_), Seat::Leaving { since, at, .. }, _) => {
                 Run::new(Clip::PerchLeave { at }, since, leave)
             }
             (Drawing::Perch(_), _, Some(at)) => Run::new(Clip::PerchLeave { at }, frame, leave),
@@ -1011,6 +1220,8 @@ impl Look {
             life::Strip::Dangle => moves.dangle.as_ref(),
             life::Strip::Glitch => moves.glitch.as_ref(),
             life::Strip::Grin => moves.grin.as_ref(),
+            life::Strip::Sleep => self.nap.as_ref().map(|masks| &masks.sleep),
+            life::Strip::Wake => self.nap.as_ref().map(|masks| &masks.wake),
         }
     }
 
@@ -1020,6 +1231,7 @@ impl Look {
             Gesture::Rise => self.has_move(life::Strip::Glitch),
             Gesture::Grin => self.has_move(life::Strip::Grin),
             Gesture::PerchGlitch => self.has_perch() && self.wardrobe.moves.perch_glitch,
+            Gesture::LieGlitch => self.has_perch() && self.lie.is_some(),
         }
     }
 
@@ -1058,14 +1270,28 @@ impl Look {
             && !capri.is_walking()
     }
 
-    /// Assise (avec ses planches), sa boucle en cours : ni en train d'arriver ni de repartir.
+    /// Assise (avec ses planches), sa boucle en cours : ni en train d'arriver ni de repartir, ni
+    /// allongée.
     fn is_sitting(&self, capri: &Capri) -> bool {
-        matches!(self.seat, Seat::Sitting { .. }) && self.has_perch() && capri.seat().is_some()
+        matches!(self.seat, Seat::Sitting { .. })
+            && self.has_perch()
+            && capri.seat().is_some()
+            && self.repose == Repose::Awake
     }
 
-    /// Debout et immobile : elle flotte, ou se tient debout sur un bord faute de pose assise.
+    /// Allongée sur son bord, éveillée (ses planches là).
+    fn is_lying(&self, capri: &Capri) -> bool {
+        matches!(self.seat, Seat::Sitting { .. })
+            && capri.seat().is_some()
+            && self.lie.is_some()
+            && matches!(self.repose, Repose::Lying { .. })
+    }
+
+    /// Debout et immobile, éveillée : elle flotte, ou se tient debout sur un bord faute de pose
+    /// assise.
     fn standing_still(&self, capri: &Capri) -> bool {
         matches!(self.seat, Seat::Standing)
+            && self.repose == Repose::Awake
             && match capri.stance() {
                 Stance::Floating => true,
                 Stance::Perched { .. } => !self.has_perch(),
@@ -1079,7 +1305,11 @@ impl Look {
     /// Le geste `gesture` commence à l'image `frame`, si sa planche est là et qu'elle est libre ;
     /// debout, son tour s'arrête le temps du geste.
     fn begin(&mut self, capri: &mut Capri, gesture: Gesture, frame: u64) -> bool {
-        let posed = if gesture.seated() { self.is_sitting(capri) } else { self.standing_still(capri) };
+        let posed = match gesture {
+            Gesture::PerchGlitch => self.is_sitting(capri),
+            Gesture::LieGlitch => self.is_lying(capri),
+            Gesture::Rise | Gesture::Grin => self.standing_still(capri),
+        };
         if !posed || !self.can(gesture) || !self.free(capri) {
             return false;
         }
@@ -1092,11 +1322,214 @@ impl Look {
     }
 
     /// Un clic sur elle (un appui bref, relâché sans la déplacer), à l'image `frame` : assise, un
-    /// éclat ; debout, elle sourit. Seulement si elle est libre et que la planche est là. Rend le
-    /// geste joué.
+    /// éclat ; allongée, un éclat allongée ; debout, elle sourit. Seulement si elle est libre et
+    /// que la planche est là. Endormie, elle se réveille, sans geste. Rend le geste joué.
     pub fn poke(&mut self, capri: &mut Capri, frame: u64) -> Option<Gesture> {
-        let gesture = if self.is_sitting(capri) { Gesture::PerchGlitch } else { Gesture::Grin };
+        if self.stir(capri, frame) {
+            return None;
+        }
+        let gesture = if self.is_lying(capri) {
+            Gesture::LieGlitch
+        } else if self.is_sitting(capri) {
+            Gesture::PerchGlitch
+        } else {
+            Gesture::Grin
+        };
         self.begin(capri, gesture, frame).then_some(gesture)
+    }
+
+    /// On s'occupe d'elle à l'image `frame` (un clic, ou Claude Code qui attend une réponse) :
+    /// endormie, elle se réveille ([`Look::rouse`]). Compte comme une attention
+    /// ([`Look::take_attention`]). Rend `true` si elle dormait.
+    pub fn stir(&mut self, capri: &mut Capri, frame: u64) -> bool {
+        self.attended = true;
+        self.rouse(capri, frame)
+    }
+
+    /// Endormie, elle se réveille à l'image `frame` : allongée, elle est allongée éveillée (une
+    /// coupe franche) ; debout, elle se réveille ([`life::waking`]), puis sa boucle. Rend `true` si
+    /// elle dormait.
+    pub fn rouse(&mut self, capri: &mut Capri, frame: u64) -> bool {
+        self.frame = self.frame.max(frame);
+        match self.repose {
+            Repose::Sleeping { .. } => self.repose = Repose::Lying { since: frame },
+            Repose::Dozing { .. } => {
+                capri.still(Some(frame + self.sheets.wake.len()));
+                self.repose = Repose::Waking { since: frame };
+            }
+            Repose::Awake | Repose::Lying { .. } | Repose::Waking { .. } => return false,
+        }
+        true
+    }
+
+    /// A-t-on fait attention à elle (un clic, un réveil) depuis le dernier appel ? Rendu une
+    /// seule fois. `roam` en tient compte pour savoir depuis quand elle est tranquille.
+    pub fn take_attention(&mut self) -> bool {
+        std::mem::take(&mut self.attended)
+    }
+
+    /// Son repos allongée s'est-il arrêté sans qu'on s'occupe d'elle depuis le dernier appel : pourquoi,
+    /// et dormait-elle ? Rendu une seule fois. `roam` le dit au journal, plutôt qu'un réveil.
+    pub fn take_unsettled(&mut self) -> Option<(Unsettled, bool)> {
+        self.unsettled.take()
+    }
+
+    /// Les jeux de planches de repos qui existent (leurs en-têtes lus au lancement, et la pose qui
+    /// les porte : assise pour s'allonger, debout pour dormir debout). Sans eux, elle ne s'allonge
+    /// ni ne s'endort debout. Sans effet sur ce qu'elle fait déjà.
+    pub fn offer(&mut self, wants: Wants) {
+        self.offered =
+            Wants { lying: wants.lying && self.has_perch(), sleeping: wants.sleeping && self.has_stand() };
+    }
+
+    /// Les jeux de planches de repos qui existent ([`Look::offer`]).
+    pub fn offered(&self) -> Wants {
+        self.offered
+    }
+
+    /// Ses planches allongées sont là (leurs masques de clic), ou plus : reprises pendant qu'elle
+    /// est allongée, elle se rassoit d'un coup, au pas suivant.
+    pub fn dress_lying(&mut self, masks: Option<LieMasks>) {
+        self.lie = masks;
+    }
+
+    /// Ses planches pour dormir debout sont là, ou plus : reprises pendant qu'elle dort debout, elle
+    /// est éveillée d'un coup, au pas suivant.
+    pub fn dress_sleeping(&mut self, masks: Option<NapMasks>) {
+        self.nap = masks;
+    }
+
+    /// Ses planches allongées, son sommeil debout : sont-elles là ?
+    pub fn dressed(&self) -> Wants {
+        Wants { lying: self.lie.is_some(), sleeping: self.nap.is_some() }
+    }
+
+    /// Ce qu'elle veut de ses planches de repos maintenant : celles qu'elle montre (allongée,
+    /// endormie, en train de s'effacer ou de réapparaître allongée ; endormie ou se réveillant
+    /// debout), et celles qu'elle voudrait, pour s'allonger ou s'endormir ([`WISH`]). L'app les
+    /// charge, ou les garde ; les autres, elle peut les reprendre.
+    pub fn wants(&self) -> Wants {
+        let wished = |wish: Option<u64>| wish.is_some_and(|at| self.frame < at.saturating_add(WISH));
+        let run_lying = match self.presence {
+            Presence::Appearing(run) | Presence::Vanishing(run, _) => run.lying(),
+            _ => false,
+        };
+        let lying = matches!(self.repose, Repose::Lying { .. } | Repose::Sleeping { .. })
+            || matches!(self.seat, Seat::Leaving { lying: true, .. })
+            || run_lying
+            || wished(self.lie_wish);
+        let sleeping =
+            matches!(self.repose, Repose::Dozing { .. } | Repose::Waking { .. }) || wished(self.nap_wish);
+        Wants { lying, sleeping }
+    }
+
+    /// Là où elle est posée, il y a la place pour elle allongée, ou plus (son bord, l'écran) : l'app
+    /// le sait de sa dernière lecture des fenêtres, à dire avant chaque pas. Allongée, sans la
+    /// place, elle se rassoit.
+    pub fn set_room_to_lie(&mut self, room: bool) {
+        self.room_to_lie = room;
+    }
+
+    /// Ce qu'il lui faut sur son bord pour s'y allonger (`perch::fits`), si elle peut s'allonger.
+    pub fn lying_stature(&self) -> Option<Stature> {
+        self.offered.lying.then(|| lying_stature(self.height))
+    }
+
+    /// Son repos (voir le module).
+    pub fn rest(&self) -> Rest {
+        match self.repose {
+            Repose::Awake => Rest::Awake,
+            Repose::Lying { .. } => Rest::Lying,
+            Repose::Sleeping { .. } => Rest::Asleep { lying: true },
+            Repose::Dozing { .. } => Rest::Asleep { lying: false },
+            Repose::Waking { .. } => Rest::Waking,
+        }
+    }
+
+    /// Allongée, endormie, ou en train de se réveiller : elle ne change pas de place d'elle-même.
+    pub fn is_resting(&self) -> bool {
+        self.repose != Repose::Awake
+    }
+
+    /// De la musique joue-t-elle (ce qu'a dit le dernier pas) ? L'app ne le dit que posée
+    /// (`wants_music`) : debout, toujours faux.
+    pub fn hears_music(&self) -> bool {
+        self.music
+    }
+
+    /// Assise, libre, sans musique, et la place pour elle allongée : elle s'allonge sur son bord à
+    /// l'image `frame` ([`Gesture::LieGlitch`], puis sa boucle allongée). Ses planches pas encore
+    /// là, elle en a envie ([`Look::wants`]) et reste assise : rend `false`, comme quand elle ne
+    /// le peut pas. Rend `true` si elle s'allonge.
+    pub fn lie_down(&mut self, capri: &mut Capri, frame: u64) -> bool {
+        if !self.offered.lying
+            || !self.room_to_lie
+            || !self.is_sitting(capri)
+            || !self.free(capri)
+            || self.music
+            || self.grooving
+        {
+            return false;
+        }
+        self.frame = self.frame.max(frame);
+        if self.lie.is_none() {
+            self.lie_wish = Some(frame);
+            return false;
+        }
+        self.lie_wish = None;
+        self.repose = Repose::Lying { since: frame + Gesture::LieGlitch.frames() };
+        self.act = Some((Gesture::LieGlitch, frame));
+        true
+    }
+
+    /// Elle s'endort à l'image `frame` : allongée et libre (sa boucle de sommeil, par une coupe
+    /// franche), ou debout, immobile et libre (son sommeil debout, son tour arrêté ; ses planches
+    /// pas encore là, elle en a envie et reste éveillée). Jamais pendant qu'on se parle ; allongée,
+    /// jamais sur la musique (debout, la musique ne change rien : l'app ne la lui dit que posée).
+    /// Rend `true` si elle s'endort.
+    pub fn doze(&mut self, capri: &mut Capri, frame: u64) -> bool {
+        if !self.free(capri) || self.music {
+            return false;
+        }
+        self.frame = self.frame.max(frame);
+        if self.is_lying(capri) {
+            self.repose = Repose::Sleeping { since: frame };
+            return true;
+        }
+        if !self.offered.sleeping || !self.standing_still(capri) || capri.stance() != Stance::Floating {
+            return false;
+        }
+        if self.nap.is_none() {
+            self.nap_wish = Some(frame);
+            return false;
+        }
+        self.nap_wish = None;
+        capri.still(None);
+        self.repose = Repose::Dozing { since: frame };
+        true
+    }
+
+    /// Allongée (endormie : elle se réveille dans le même pas), elle se rassoit à l'image `frame`,
+    /// là où elle était assise : l'éclat de sa pose assise s'il est là, sinon une coupe franche.
+    /// Seulement si elle est là, et pendant aucun autre geste que son éclat allongée. Rend `true`
+    /// si elle se rassoit.
+    pub fn sit_up(&mut self, capri: &mut Capri, frame: u64) -> bool {
+        let lying = matches!(self.repose, Repose::Lying { .. } | Repose::Sleeping { .. });
+        let busy = self.act.is_some_and(|(gesture, _)| gesture != Gesture::LieGlitch);
+        if !lying || busy || !self.is_here() || capri.seat().is_none() {
+            return false;
+        }
+        self.frame = self.frame.max(frame);
+        self.seated_again(frame);
+        true
+    }
+
+    /// Elle est assise de nouveau, à l'image `frame`, sa boucle au dessin 0 (l'éclat de sa pose
+    /// assise d'abord, s'il est là : il finit sur ce dessin).
+    fn seated_again(&mut self, frame: u64) {
+        self.repose = Repose::Awake;
+        self.seat = Seat::Sitting { since: frame };
+        self.act = self.can(Gesture::PerchGlitch).then_some((Gesture::PerchGlitch, frame));
     }
 
     /// Claude Code vient de finir son tour (dans la session principale), à l'image `frame` :
@@ -1129,7 +1562,11 @@ impl Look {
     /// la marche. Rend `false` sinon, et rien ne change.
     pub fn walk(&mut self, capri: &mut Capri, frame: u64, to: f32) -> bool {
         let Some(speed) = self.walk_speed() else { return false };
-        if !self.free(capri) || capri.stance() != Stance::Floating || !matches!(self.seat, Seat::Standing) {
+        if !self.free(capri)
+            || capri.stance() != Stance::Floating
+            || !matches!(self.seat, Seat::Standing)
+            || self.repose != Repose::Awake
+        {
             return false;
         }
         if !capri.walk_to(to, speed) {
@@ -1228,6 +1665,7 @@ impl Look {
             && !self.talking
             && self.is_here()
             && self.act.is_none()
+            && self.repose == Repose::Awake
     }
 
     /// À chaque pas, après celui de Capri et le suivi de sa fenêtre : l'image d'animation
@@ -1239,6 +1677,9 @@ impl Look {
         self.music = music;
         let seat = capri.seat().filter(|_| self.has_perch());
         let (arrive, leave) = (self.sheets.arriving.len(), self.sheets.leaving.len());
+        // allongée (ses planches là), elle s'efface de son bord allongée
+        let lying =
+            matches!(self.repose, Repose::Lying { .. } | Repose::Sleeping { .. }) && self.lie.is_some();
         self.seat = match (self.seat, seat) {
             // on l'attrape : debout tout de suite, sans s'effacer
             (_, None) if capri.is_held() => Seat::Standing,
@@ -1247,7 +1688,7 @@ impl Look {
                 Seat::Sitting { since: since + arrive }
             }
             (Seat::Arriving { .. } | Seat::Sitting { .. }, None) => match self.last_seat {
-                Some(at) => Seat::Leaving { since: frame, at },
+                Some(at) => Seat::Leaving { since: frame, at, lying },
                 None => Seat::Standing,
             },
             (Seat::Leaving { since, .. }, None) if frame >= since + leave => Seat::Standing,
@@ -1266,11 +1707,12 @@ impl Look {
             Presence::Entering(entrance) => self.on_stage(capri, entrance, frame),
             unchanged => unchanged,
         };
+        self.resting(capri, frame, talking);
         self.gestures(capri, frame, talking);
         // la musique se prend et se quitte au début d'un tour de sa boucle ; en parlant, elle ne
-        // se balance pas, et n'y revient qu'au tour suivant
+        // se balance pas, et n'y revient qu'au tour suivant ; allongée, elle ne se balance pas
         match self.seat {
-            Seat::Sitting { .. } if talking => self.grooving = false,
+            Seat::Sitting { .. } if talking || self.repose != Repose::Awake => self.grooving = false,
             Seat::Sitting { since } => {
                 let tour = |f: u64| f.saturating_sub(since) / TOUR;
                 if previous < since || tour(frame) != tour(previous) {
@@ -1278,6 +1720,62 @@ impl Look {
                 }
             }
             _ => self.grooving = false,
+        }
+    }
+
+    /// Un pas de son repos, dans `update` : ce qui la réveille, ou la fait se rasseoir.
+    fn resting(&mut self, capri: &mut Capri, frame: u64, talking: bool) {
+        let disturbed = talking || self.conversing;
+        let carried = carried(capri);
+        // en train de réapparaître allongée (elle revient sur ses pas), elle l'est encore ; assise
+        // (`self.seat`, revu plus haut dans `update`), elle est posée, et donc ni tenue ni lancée
+        let on_ledge = matches!(self.seat, Seat::Sitting { .. }) && !self.is_away();
+        let standing = matches!(self.seat, Seat::Standing)
+            && capri.stance() == Stance::Floating
+            && !self.is_away()
+            && !carried;
+        let asleep = matches!(self.repose, Repose::Sleeping { .. });
+        match self.repose {
+            Repose::Awake => {}
+            // attrapée (on s'occupe d'elle : `roam` le voit), cachée de nouveau pendant qu'elle
+            // réapparaissait allongée (un geste aussi), ou plus posée sur son bord (elle s'en efface
+            // allongée, `Seat::Leaving`) : elle n'est plus allongée
+            Repose::Lying { .. } | Repose::Sleeping { .. } if !on_ledge => {
+                if !carried && !self.is_away() {
+                    self.unsettled = Some((Unsettled::LedgeGone, asleep));
+                }
+                self.repose = Repose::Awake;
+            }
+            // ses planches reprises, ou plus la place pour elle allongée : elle se rassoit, une fois
+            // là (en train de réapparaître allongée, elle finit d'abord : sa boucle assise repart
+            // alors de son début)
+            Repose::Lying { .. } | Repose::Sleeping { .. }
+                if (self.lie.is_none() || !self.room_to_lie) && self.is_here() =>
+            {
+                let why = if self.lie.is_none() { Unsettled::Undressed } else { Unsettled::NoRoom };
+                self.unsettled = Some((why, asleep));
+                self.seated_again(frame);
+            }
+            // on lui parle : elle se réveille, allongée
+            Repose::Sleeping { .. } if disturbed => self.repose = Repose::Lying { since: frame },
+            // attrapée (son tour a déjà repris), plus debout immobile, ou ses planches reprises
+            Repose::Dozing { .. } | Repose::Waking { .. } if !standing || self.nap.is_none() => {
+                if !carried {
+                    capri.unstill();
+                }
+                self.repose = Repose::Awake;
+            }
+            // on lui parle : elle se réveille, debout
+            Repose::Dozing { .. } if disturbed => {
+                self.rouse(capri, frame);
+            }
+            Repose::Waking { since } if frame >= since + self.sheets.wake.len() => {
+                self.repose = Repose::Awake
+            }
+            Repose::Lying { .. }
+            | Repose::Sleeping { .. }
+            | Repose::Dozing { .. }
+            | Repose::Waking { .. } => {}
         }
     }
 
@@ -1307,11 +1805,19 @@ impl Look {
         if let Some((gesture, since)) = self.act {
             let end = since.saturating_add(gesture.frames());
             let sitting = matches!(self.seat, Seat::Sitting { .. });
-            let posed = if gesture.seated() { sitting } else { matches!(self.seat, Seat::Standing) };
+            let lying = sitting && matches!(self.repose, Repose::Lying { .. });
+            let posed = match gesture {
+                Gesture::PerchGlitch => sitting && self.repose == Repose::Awake,
+                Gesture::LieGlitch => lying,
+                Gesture::Rise | Gesture::Grin => matches!(self.seat, Seat::Standing),
+            };
             let cut = carried || talking || self.conversing || !self.is_here() || !posed;
             if cut || frame >= end {
                 self.act = None;
-                if gesture.seated() && sitting {
+                if gesture == Gesture::LieGlitch && lying {
+                    // sa boucle allongée repart de son dessin 0, sur lequel l'éclat finit
+                    self.repose = Repose::Lying { since: end.min(frame) };
+                } else if gesture.seated() && sitting && self.repose == Repose::Awake {
                     // sa boucle repart de son dessin 0, sur lequel l'éclat finit
                     self.seat = Seat::Sitting { since: end.min(frame) };
                 } else if !gesture.seated() && cut && !carried && self.is_here() {
@@ -1351,6 +1857,9 @@ impl Look {
                     return self.seated(at, cell);
                 }
                 (Seat::Sitting { since }, Some(at)) => {
+                    if let Some(picture) = self.lying_picture(at) {
+                        return picture;
+                    }
                     if let Some((Gesture::PerchGlitch, start)) = self.act {
                         let cell = at_most(&self.sheets.perch_glitch, frame.saturating_sub(start));
                         return self.seated(at, cell);
@@ -1370,7 +1879,10 @@ impl Look {
                     };
                     return self.seated(at, sheet.at(f));
                 }
-                (Seat::Leaving { since, at }, _) => {
+                (Seat::Leaving { since, at, lying: true }, _) if self.lie.is_some() => {
+                    return self.lain(at, at_most(&self.sheets.lying_leave, frame.saturating_sub(since)));
+                }
+                (Seat::Leaving { since, at, .. }, _) => {
                     return self.seated(at, at_most(&self.sheets.leaving, frame.saturating_sub(since)));
                 }
                 _ => {}
@@ -1379,9 +1891,38 @@ impl Look {
         self.standing(capri)
     }
 
-    /// Est-elle dessinée assise (en train d'arriver, assise, ou de s'effacer) ?
+    /// Allongée sur son bord en `at` (ses planches là) : son éclat, sa boucle (parlante, ou ses
+    /// clignements aux tours de [`BLINKS`]), ou son sommeil. `None` si elle n'est pas allongée.
+    fn lying_picture(&self, at: Vec2) -> Option<Picture> {
+        let frame = self.frame;
+        self.lie.as_ref()?;
+        match self.repose {
+            Repose::Lying { since } => {
+                if let Some((Gesture::LieGlitch, start)) = self.act {
+                    return Some(
+                        self.lain(at, at_most(&self.sheets.lying_glitch, frame.saturating_sub(start))),
+                    );
+                }
+                let f = frame.saturating_sub(since);
+                let sheet = if self.talking {
+                    &self.sheets.lying_talk
+                } else if blinks(f / TOUR) {
+                    &self.sheets.lying_blink
+                } else {
+                    &self.sheets.lying
+                };
+                Some(self.lain(at, sheet.at(f)))
+            }
+            Repose::Sleeping { since } => {
+                Some(self.lain(at, self.sheets.lying_asleep.at(frame.saturating_sub(since))))
+            }
+            Repose::Awake | Repose::Dozing { .. } | Repose::Waking { .. } => None,
+        }
+    }
+
+    /// Est-elle dessinée sur son bord (en train d'y arriver, assise, allongée, ou de s'effacer) ?
     pub fn is_seated(&self, capri: &Capri) -> bool {
-        matches!(self.picture(capri).drawing, Drawing::Perch(_))
+        matches!(self.picture(capri).drawing, Drawing::Perch(_) | Drawing::Lie(_))
     }
 
     /// Le curseur est-il sur elle ? Au pixel près, d'après le masque de la pose dessinée (avec
@@ -1400,6 +1941,11 @@ impl Look {
                 Some(masks) => &masks.narrow,
                 None => cutout,
             },
+            Drawing::Lie(cell) => match &self.lie {
+                Some(masks) if cell.strip.cell().0 == lie::WIDE => &masks.wide,
+                Some(masks) => &masks.narrow,
+                None => return false,
+            },
             Drawing::Life(cell) => match self.life_mask(cell.strip) {
                 Some(mask) => mask,
                 None => return false,
@@ -1413,7 +1959,16 @@ impl Look {
     /// Ce qu'elle occupe à l'écran, sans son flottement ni ses gestes : de quoi placer son
     /// bandeau au-dessus d'elle et le champ de saisie sous ses pieds.
     pub fn shown(&self, capri: &Capri) -> Rect {
-        if let (Drawing::Perch(_), Some(at)) = (self.picture(capri).drawing, self.seated_at(capri)) {
+        let drawing = self.picture(capri).drawing;
+        if let (Drawing::Lie(_), Some(at)) = (drawing, self.seated_at(capri)) {
+            let k = lie::scale(self.height);
+            let left = (lie::SEAT_X - lie::SPAN.0 as f32) * k;
+            return Rect::new(
+                Vec2::new(at.x - left, at.y - (lie::SEAT_Y - lie::TOP) as f32 * k),
+                Vec2::new((lie::SPAN.1 - lie::SPAN.0) as f32 * k, (lie::BOTTOM - lie::TOP) as f32 * k),
+            );
+        }
+        if let (Drawing::Perch(_), Some(at)) = (drawing, self.seated_at(capri)) {
             let k = stand::perch_scale(self.height);
             let left = (sheets::SEAT_X - sheets::SPAN.0) as f32 * k;
             return Rect::new(
@@ -1509,7 +2064,19 @@ impl Look {
             match gesture {
                 Gesture::Rise => return self.alive(capri, at_most(&self.sheets.rise, f)),
                 Gesture::Grin => return self.alive(capri, self.sheets.grin.at(f)),
-                Gesture::PerchGlitch => {}
+                Gesture::PerchGlitch | Gesture::LieGlitch => {}
+            }
+        }
+        // endormie debout, ou en train de se réveiller (ses planches là)
+        if self.nap.is_some() {
+            match self.repose {
+                Repose::Dozing { since } => {
+                    return self.alive(capri, self.sheets.nap.at(self.frame.saturating_sub(since)));
+                }
+                Repose::Waking { since } => {
+                    return self.alive(capri, at_most(&self.sheets.wake, self.frame.saturating_sub(since)));
+                }
+                Repose::Awake | Repose::Lying { .. } | Repose::Sleeping { .. } => {}
             }
         }
         // la boucle suit son tour, que partage son flottement (il s'arrête quand elle apparaît ou
@@ -1541,6 +2108,29 @@ impl Look {
             Clip::Leave => self.alive(capri, self.sheets.life_leaving.at(at)),
             Clip::PerchArrive { at: was } => self.seated(seat(was), self.sheets.arriving.at(at)),
             Clip::PerchLeave { at: was } => self.seated(seat(was), self.sheets.leaving.at(at)),
+            // ses planches allongées reprises entre-temps (ce que l'app ne fait pas tant qu'elle les
+            // veut) : son départ assis, au même endroit, plutôt que rien
+            Clip::LieLeave { at: was } if self.lie.is_some() => {
+                self.lain(seat(was), self.sheets.lying_leave.at(at))
+            }
+            Clip::LieLeave { at: was } => self.seated(seat(was), self.sheets.leaving.at(at)),
+        }
+    }
+
+    /// Allongée, la case `cell` posée sur le bord en `at` : sa hanche là où elle était assise,
+    /// la ligne du bord de ses planches sur le bord ([`lie::Strip::seat`]).
+    fn lain(&self, at: Vec2, cell: lie::Cell) -> Picture {
+        let k = lie::scale(self.height);
+        let ((w, h), (x, y)) = (cell.strip.cell(), cell.strip.seat());
+        Picture {
+            drawing: Drawing::Lie(cell),
+            rect: Rect::new(
+                Vec2::new((at.x - x * k).round(), (at.y - y as f32 * k).round()),
+                Vec2::new((w as f32 * k).round(), (h as f32 * k).round()),
+            ),
+            mouth: None,
+            boil_seed: 0,
+            ghost: Vec2::ZERO,
         }
     }
 
@@ -1590,6 +2180,26 @@ pub fn seated_stature(height: f32) -> Stature {
             down: px(sheets::HANG),
         },
         rest: (px(sheets::SEAT_X - sheets::REST.0).max(foot), px(sheets::REST.1 - sheets::SEAT_X).max(foot)),
+    }
+}
+
+/// Ce qu'il lui faut sur un bord pour s'y allonger, là où elle est assise, pour une hauteur debout
+/// de `height` pixels : la place de ses cheveux au-dessus ([`lie::TOP`]) et de ses jambes et ses
+/// cheveux en dessous ([`lie::BOTTOM`]), sa largeur ([`lie::SPAN`], surtout à gauche du point
+/// posé), et ce qui repose sur le bord, de son épaule ([`lie::SHOULDER`]) au point posé, jamais
+/// moins que pour ses pieds debout.
+pub fn lying_stature(height: f32) -> Stature {
+    let k = lie::scale(height);
+    let foot = FOOT * height;
+    Stature {
+        height,
+        reach: Reach {
+            left: (lie::SEAT_X - lie::SPAN.0 as f32) * k,
+            up: (lie::SEAT_Y - lie::TOP) as f32 * k,
+            right: (lie::SPAN.1 as f32 - lie::SEAT_X) * k,
+            down: (lie::BOTTOM - lie::SEAT_Y) as f32 * k,
+        },
+        rest: (((lie::SEAT_X - lie::SHOULDER as f32) * k).max(foot), foot),
     }
 }
 
@@ -3496,6 +4106,493 @@ mod tests {
         assert_eq!(longest, Some(LONGEST_GESTURE));
         assert_eq!(Gesture::Rise.frames(), life::rising().len());
         assert_eq!(Gesture::PerchGlitch.frames(), sheets::glitching().len());
+        assert_eq!(Gesture::LieGlitch.frames(), lie::glitching().len());
         assert_eq!(Gesture::Grin.frames(), life::grinning().len() * life::GRIN_TOURS);
+    }
+
+    // --- son repos ---
+
+    fn lie_masks() -> LieMasks {
+        LieMasks { narrow: full(lie::NARROW, lie::CELL_HEIGHT), wide: full(lie::WIDE, lie::CELL_HEIGHT) }
+    }
+
+    fn nap_masks() -> NapMasks {
+        NapMasks {
+            sleep: full(life::CELL_WIDTH, sheets::CELL_HEIGHT),
+            wake: full(life::CELL_WIDTH, sheets::CELL_HEIGHT),
+        }
+    }
+
+    /// Assise sur `EDGE`, sa boucle en cours (à l'image rendue), ses planches de repos offertes
+    /// (pas encore chargées), l'éclat de sa pose assise là, et la place pour s'allonger.
+    fn seated_to_rest() -> (Look, Capri, u64) {
+        let mut look = dressed(true, true);
+        look.wardrobe.moves.perch_glitch = true;
+        look.offer(Wants { lying: true, sleeping: true });
+        look.set_room_to_lie(true);
+        let mut c = capri(&look);
+        land(&mut look, &mut c, 0);
+        let frame = sheets::arriving().len() + 10;
+        at(&mut look, &mut c, frame, false, false);
+        assert!(look.is_sitting(&c));
+        (look, c, frame)
+    }
+
+    /// Le point de son dessin qui est sur la ligne du bord, à l'écran.
+    fn ledge_point(picture: &Picture) -> Vec2 {
+        let uv = match picture.drawing {
+            Drawing::Perch(cell) => cell.strip.seat_uv(),
+            Drawing::Lie(cell) => cell.strip.seat_uv(),
+            other => panic!("pas sur un bord : {other:?}"),
+        };
+        picture.rect.min + Vec2::new(picture.rect.size.x * uv.x, picture.rect.size.y * uv.y)
+    }
+
+    #[test]
+    fn seated_she_lies_down_once_her_sheets_are_there_her_hip_where_it_was() {
+        let (mut look, mut c, frame) = seated_to_rest();
+        let sitting = look.picture(&c);
+        // pas encore chargées : elle en a envie, et reste assise
+        assert!(!look.lie_down(&mut c, frame));
+        assert_eq!(look.wants(), Wants { lying: true, sleeping: false });
+        assert!(matches!(at(&mut look, &mut c, frame + 1, false, false).drawing, Drawing::Perch(_)));
+        // une envie qui n'est pas redite passe
+        at(&mut look, &mut c, frame + WISH + 1, false, false);
+        assert_eq!(look.wants(), Wants::default());
+        // ce qui l'en empêche : pas la place, la musique, on se parle
+        look.dress_lying(Some(lie_masks()));
+        let start = frame + WISH + 2;
+        at(&mut look, &mut c, start, false, false);
+        look.set_room_to_lie(false);
+        assert!(!look.lie_down(&mut c, start));
+        look.set_room_to_lie(true);
+        look.set_conversing(true);
+        assert!(!look.lie_down(&mut c, start));
+        look.set_conversing(false);
+        at(&mut look, &mut c, start, false, true);
+        assert!(!look.lie_down(&mut c, start), "la musique");
+        at(&mut look, &mut c, start, false, false);
+        // elle s'allonge : son éclat, en deux, puis sa boucle allongée, du dessin 0
+        assert!(look.lie_down(&mut c, start));
+        assert_eq!((look.rest(), look.gesture()), (Rest::Lying, Some(Gesture::LieGlitch)));
+        for frame in start..start + Gesture::LieGlitch.frames() {
+            let picture = at(&mut look, &mut c, frame, false, false);
+            let Drawing::Lie(cell) = picture.drawing else { panic!("{picture:?}") };
+            assert_eq!(cell, lie::Cell { strip: lie::Strip::LieGlitch, index: ((frame - start) / 2) as u32 });
+            assert!((ledge_point(&picture) - EDGE).length() <= 1.0, "sur son bord : {picture:?}");
+        }
+        let lying = at(&mut look, &mut c, start + Gesture::LieGlitch.frames(), false, false);
+        assert_eq!(lying.drawing, Drawing::Lie(lie::Cell { strip: lie::Strip::Lie, index: 0 }));
+        assert_eq!(look.gesture(), None);
+        // la ligne du bord de ses planches sur son bord, sa hanche là où elle était assise
+        assert!((ledge_point(&lying) - EDGE).length() <= 1.0);
+        let k = (stand::perch_scale(HEIGHT), lie::scale(HEIGHT));
+        let seated_hip = sitting.rect.min.x + lie::PERCH_HIP * k.0;
+        let lying_hip = lying.rect.min.x + lie::HIP * k.1;
+        assert!((seated_hip - lying_hip).abs() <= 1.5, "{seated_hip} contre {lying_hip}");
+        assert!(look.is_seated(&c) && look.wants().lying && look.is_resting());
+        // ce qu'il lui faut sur un bord pour s'y asseoir ne change pas
+        assert_eq!(look.stature(), seated_stature(HEIGHT));
+        // elle se balance pas allongée, même sur la musique
+        for frame in start + 40..start + 200 {
+            at(&mut look, &mut c, frame, false, true);
+            assert!(!look.is_grooving() && look.rest() == Rest::Lying);
+        }
+    }
+
+    /// Allongée sur `EDGE`, sa boucle en cours, à l'image rendue.
+    fn lying() -> (Look, Capri, u64) {
+        let (mut look, mut c, frame) = seated_to_rest();
+        look.dress_lying(Some(lie_masks()));
+        assert!(look.lie_down(&mut c, frame));
+        let frame = frame + Gesture::LieGlitch.frames();
+        at(&mut look, &mut c, frame, false, false);
+        assert_eq!(look.rest(), Rest::Lying);
+        (look, c, frame)
+    }
+
+    #[test]
+    fn lying_she_blinks_talks_falls_asleep_and_wakes_when_talked_to_or_clicked() {
+        let (mut look, mut c, since) = lying();
+        // ses clignements, aux tours de BLINKS
+        for tour in 0..8 {
+            let frame = since + tour * TOUR + u64::from(lie::BLINK_FROM) + 2;
+            let Drawing::Lie(cell) = at(&mut look, &mut c, frame, false, false).drawing else { panic!() };
+            assert_eq!(cell.strip == lie::Strip::LieBlink, blinks(tour), "tour {tour}");
+        }
+        // elle parle allongée : sa bouche allongée, dessin pour dessin
+        let frame = since + 8 * TOUR + 10;
+        let Drawing::Lie(cell) = at(&mut look, &mut c, frame, true, false).drawing else { panic!() };
+        assert_eq!(cell, lie::Cell { strip: lie::Strip::LieTalk, index: 10 });
+        // elle ne s'endort pas pendant qu'on se parle
+        look.set_conversing(true);
+        assert!(!look.doze(&mut c, frame));
+        look.set_conversing(false);
+        let frame = frame + 1;
+        at(&mut look, &mut c, frame, false, false);
+        assert!(look.doze(&mut c, frame));
+        assert_eq!(look.rest(), Rest::Asleep { lying: true });
+        // endormie : son sommeil, un dessin sur trois, tenu trois images ; sur son bord
+        let mut drawings = Vec::new();
+        for f in frame..frame + 60 {
+            let picture = at(&mut look, &mut c, f, false, false);
+            let Drawing::Lie(cell) = picture.drawing else { panic!() };
+            assert_eq!(cell.strip, lie::Strip::LieSleep);
+            assert!((ledge_point(&picture) - EDGE).length() <= 1.0);
+            drawings.push(cell.index);
+        }
+        assert!(drawings.chunks(3).all(|held| held.iter().all(|&index| index == held[0])), "{drawings:?}");
+        assert_eq!(drawings.iter().collect::<std::collections::HashSet<_>>().len(), 20);
+        // on lui parle : elle se réveille, allongée, et parle
+        let frame = frame + 60;
+        let Drawing::Lie(cell) = at(&mut look, &mut c, frame, true, false).drawing else { panic!() };
+        assert_eq!((look.rest(), cell.strip), (Rest::Lying, lie::Strip::LieTalk));
+        // endormie de nouveau, un clic la réveille, sans geste ; le suivant, un éclat allongée
+        let frame = frame + 1;
+        at(&mut look, &mut c, frame, false, false);
+        assert!(look.doze(&mut c, frame));
+        look.take_attention();
+        assert_eq!(look.poke(&mut c, frame), None);
+        assert_eq!(look.rest(), Rest::Lying);
+        assert!(look.take_attention(), "un clic compte");
+        assert!(!look.take_attention(), "une seule fois");
+        assert_eq!(look.poke(&mut c, frame), Some(Gesture::LieGlitch));
+        let Drawing::Lie(cell) = at(&mut look, &mut c, frame + 1, false, false).drawing else { panic!() };
+        assert_eq!(cell.strip, lie::Strip::LieGlitch);
+        // Claude Code attend une réponse : endormie, elle se réveille
+        let frame = frame + Gesture::LieGlitch.frames() + 1;
+        at(&mut look, &mut c, frame, false, false);
+        assert!(look.doze(&mut c, frame));
+        assert!(look.stir(&mut c, frame));
+        assert_eq!(look.rest(), Rest::Lying);
+        assert!(!look.stir(&mut c, frame), "réveillée, rien");
+    }
+
+    #[test]
+    fn she_sits_up_with_her_seated_glitch_or_at_once_and_when_room_or_sheets_go() {
+        let (mut look, mut c, frame) = lying();
+        assert!(look.sit_up(&mut c, frame));
+        assert_eq!((look.rest(), look.gesture()), (Rest::Awake, Some(Gesture::PerchGlitch)));
+        let picture = at(&mut look, &mut c, frame, false, false);
+        assert_eq!(picture.drawing, Drawing::Perch(sheets::Cell { strip: Strip::PerchGlitch, index: 0 }));
+        let end = frame + Gesture::PerchGlitch.frames();
+        let picture = at(&mut look, &mut c, end, false, false);
+        assert_eq!(picture.drawing, Drawing::Perch(sheets::Cell { strip: Strip::Perch, index: 0 }));
+        assert!(!look.sit_up(&mut c, end), "assise, rien");
+        // sans l'éclat de sa pose assise : une coupe franche
+        let (mut look, mut c, frame) = lying();
+        look.wardrobe.moves.perch_glitch = false;
+        assert!(look.sit_up(&mut c, frame));
+        assert_eq!(look.gesture(), None);
+        assert_eq!(
+            at(&mut look, &mut c, frame, false, false).drawing,
+            Drawing::Perch(sheets::Cell { strip: Strip::Perch, index: 0 })
+        );
+        // endormie, elle se rassoit aussi
+        let (mut look, mut c, frame) = lying();
+        assert!(look.doze(&mut c, frame));
+        assert!(look.sit_up(&mut c, frame + 1));
+        assert_eq!(look.rest(), Rest::Awake);
+        // plus la place pour elle allongée : elle se rassoit d'elle-même, au pas suivant
+        let (mut look, mut c, frame) = lying();
+        look.set_room_to_lie(false);
+        at(&mut look, &mut c, frame + 1, false, false);
+        assert_eq!((look.rest(), look.gesture()), (Rest::Awake, Some(Gesture::PerchGlitch)));
+        assert_eq!(look.take_unsettled(), Some((Unsettled::NoRoom, false)), "elle dit pourquoi");
+        assert_eq!(look.take_unsettled(), None, "une seule fois");
+        // ses planches reprises (ce que l'app ne fait pas tant qu'elle les veut) : de même
+        let (mut look, mut c, frame) = lying();
+        look.dress_lying(None);
+        let picture = at(&mut look, &mut c, frame + 1, false, false);
+        assert!(matches!(picture.drawing, Drawing::Perch(_)), "{picture:?}");
+        assert_eq!(look.rest(), Rest::Awake);
+        assert_eq!(look.take_unsettled(), Some((Unsettled::Undressed, false)));
+    }
+
+    #[test]
+    fn her_edge_gone_under_her_she_fades_out_lying_then_floats() {
+        let (mut look, mut c, frame) = lying();
+        c.take_off();
+        look.update(&mut c, frame, false, false);
+        assert_eq!(look.rest(), Rest::Awake, "elle n'est plus allongée");
+        assert_eq!(look.take_unsettled(), Some((Unsettled::LedgeGone, false)), "elle dit pourquoi");
+        let leave = lie::leaving().len();
+        for f in frame..frame + leave {
+            let picture = at(&mut look, &mut c, f, false, false);
+            let Drawing::Lie(cell) = picture.drawing else { panic!("image {f} : {picture:?}") };
+            assert_eq!(cell, lie::Cell { strip: lie::Strip::LieLeave, index: ((f - frame) / 2) as u32 });
+            assert!((ledge_point(&picture) - EDGE).length() <= 1.0, "là où elle était");
+            assert!(look.wants().lying, "ses planches gardées le temps de s'effacer");
+        }
+        let after = at(&mut look, &mut c, frame + leave, false, false);
+        assert!(matches!(after.drawing, Drawing::Stand(_)), "{after:?}");
+        assert_eq!(look.wants(), Wants::default());
+        assert!((c.feet() - EDGE).length() < 0.5);
+    }
+
+    #[test]
+    fn grabbed_lying_or_asleep_she_stands_at_once_under_the_cursor() {
+        for asleep in [false, true] {
+            let (mut look, mut c, frame) = lying();
+            if asleep {
+                assert!(look.doze(&mut c, frame));
+            }
+            let shown = look.shown(&c);
+            // son rectangle allongé : bien plus large que haut
+            assert!(shown.size.x > 1.4 * shown.size.y, "{shown:?}");
+            let cursor = shown.min + shown.size * 0.5;
+            let grab = Grab { at: cursor, since: 0.0, trail: Vec::new() };
+            assert!(look.hold(&mut c, &grab));
+            let held = at(&mut look, &mut c, frame + 1, false, false);
+            assert!(matches!(held.drawing, Drawing::Stand(_)), "{held:?}");
+            assert_eq!(look.rest(), Rest::Awake);
+            assert!(c.is_held());
+            assert_eq!(look.take_unsettled(), None, "on s'occupe d'elle : pas un repos arrêté de lui-même");
+        }
+    }
+
+    #[test]
+    fn hidden_lying_she_fades_out_lying_and_shown_halfway_she_lies_again() {
+        let (mut look, mut c, frame) = lying();
+        look.vanish(&mut c, frame);
+        assert_eq!(look.rest(), Rest::Awake);
+        let leave = lie::leaving().len();
+        for f in frame..frame + 10 {
+            let Drawing::Lie(cell) = at(&mut look, &mut c, f, false, false).drawing else { panic!() };
+            assert_eq!(cell.strip, lie::Strip::LieLeave);
+            assert!(look.wants().lying);
+        }
+        // montrée au milieu : elle revient sur ses pas, allongée, et le reste
+        look.appear(&mut c, frame + 10);
+        let mut f = frame + 10;
+        loop {
+            let picture = at(&mut look, &mut c, f, false, false);
+            let Drawing::Lie(cell) = picture.drawing else { panic!("image {f} : {picture:?}") };
+            if look.is_here() {
+                assert_eq!(cell, lie::Cell { strip: lie::Strip::Lie, index: 0 }, "puis sa boucle allongée");
+                break;
+            }
+            assert_eq!(cell.strip, lie::Strip::LieLeave);
+            assert!(look.wants().lying);
+            f += 1;
+            assert!(f < frame + 40);
+        }
+        assert_eq!(look.rest(), Rest::Lying);
+        // cachée jusqu'au bout : partie ; montrée bien plus tard, elle apparaît assise
+        look.vanish(&mut c, f + 2);
+        at(&mut look, &mut c, f + 2 + leave, false, false);
+        assert!(look.is_gone());
+        assert_eq!(look.wants(), Wants::default());
+        c.step(0.0, 5000);
+        look.appear(&mut c, 5000);
+        let shown = at(&mut look, &mut c, 5000, false, false);
+        assert!(
+            matches!(shown.drawing, Drawing::Perch(cell) if cell.strip == Strip::PerchArrive),
+            "{shown:?}"
+        );
+        assert_eq!(look.rest(), Rest::Awake);
+    }
+
+    #[test]
+    fn hidden_again_while_she_appears_lying_she_fades_out_lying_and_rests_no_more() {
+        let (mut look, mut c, frame) = lying();
+        assert_eq!(look.take_unsettled(), None);
+        look.vanish(&mut c, frame);
+        for f in frame..frame + 10 {
+            at(&mut look, &mut c, f, false, false);
+        }
+        // montrée au milieu : elle revient sur ses pas, allongée…
+        look.appear(&mut c, frame + 10);
+        for f in frame + 10..frame + 14 {
+            at(&mut look, &mut c, f, false, false);
+        }
+        assert!(!look.is_here() && !look.is_away(), "elle réapparaît encore");
+        assert_eq!(look.rest(), Rest::Lying);
+        // … et cachée de nouveau avant d'être revenue : elle s'efface allongée, et ne se repose plus
+        look.vanish(&mut c, frame + 14);
+        let leave = lie::leaving().len();
+        let mut f = frame + 14;
+        while !look.is_gone() {
+            let picture = at(&mut look, &mut c, f, false, false);
+            let Drawing::Lie(cell) = picture.drawing else { panic!("image {f} : {picture:?}") };
+            assert_eq!(cell.strip, lie::Strip::LieLeave);
+            assert_eq!(look.rest(), Rest::Awake, "image {f} : cachée, elle ne se repose plus");
+            f += 1;
+            assert!(f <= frame + 14 + leave, "image {f} : toujours pas partie");
+        }
+        assert_eq!(look.wants(), Wants::default(), "partie : ses planches peuvent être reprises");
+        assert_eq!(look.take_unsettled(), None, "cachée : ce n'est pas son bord parti");
+    }
+
+    #[test]
+    fn standing_she_dozes_without_floating_and_wakes_with_her_wake_sheet() {
+        let mut look = dressed(true, true);
+        look.wardrobe.moves = Moves {
+            walk: Some(full(life::CELL_WIDTH, sheets::CELL_HEIGHT)),
+            grin: Some(full(life::CELL_WIDTH, sheets::CELL_HEIGHT)),
+            ..Moves::default()
+        };
+        look.offer(Wants { lying: true, sleeping: true });
+        let mut c = capri(&look);
+        at(&mut look, &mut c, 10, false, false);
+        // pas encore chargées : elle en a envie, et reste éveillée
+        assert!(!look.doze(&mut c, 10));
+        assert_eq!(look.wants(), Wants { lying: false, sleeping: true });
+        look.dress_sleeping(Some(nap_masks()));
+        assert!(look.doze(&mut c, 10));
+        assert_eq!(look.rest(), Rest::Asleep { lying: false });
+        let tour = c.tour();
+        let rect = at(&mut look, &mut c, 11, false, false).rect;
+        let mut drawings = Vec::new();
+        for f in 14..14 + 128 {
+            let picture = at(&mut look, &mut c, f, false, false);
+            let Drawing::Life(cell) = picture.drawing else { panic!("{picture:?}") };
+            assert_eq!(cell.strip, life::Strip::Sleep);
+            assert_eq!(picture.rect, rect, "elle ne flotte pas en dormant");
+            drawings.push(cell.index);
+        }
+        assert_eq!(c.tour(), tour, "son tour arrêté");
+        assert!(drawings.chunks(4).all(|held| held.iter().all(|&index| index == held[0])));
+        // endormie : ni sourire, ni marche
+        assert!(!look.cheer(&mut c, 140));
+        let to = c.feet().x - 200.0;
+        assert!(!look.walk(&mut c, 140, to));
+        // on lui parle : elle se réveille, sa planche de réveil, puis sa boucle, son tour repris
+        let wake = life::waking().len();
+        at(&mut look, &mut c, 140, true, false);
+        assert_eq!(look.rest(), Rest::Waking);
+        for f in 140..140 + wake {
+            let Drawing::Life(cell) = at(&mut look, &mut c, f, false, false).drawing else { panic!() };
+            assert_eq!(cell, life::Cell { strip: life::Strip::Wake, index: ((f - 140) / 2) as u32 });
+        }
+        let after = at(&mut look, &mut c, 140 + wake, false, false);
+        assert!(matches!(after.drawing, Drawing::Stand(_)), "{after:?}");
+        assert_eq!(look.rest(), Rest::Awake);
+        at(&mut look, &mut c, 140 + wake + 30, false, false);
+        assert!(c.tour() > tour, "son tour reprend");
+        // endormie, un clic la réveille ; attrapée, elle est réveillée tout de suite
+        assert!(look.doze(&mut c, 300));
+        assert_eq!(look.poke(&mut c, 301), None);
+        assert_eq!(look.rest(), Rest::Waking);
+        at(&mut look, &mut c, 400, false, false);
+        assert!(look.doze(&mut c, 400));
+        c.grab(c.position() + Vec2::new(20.0, 20.0), 0.0);
+        let held = at(&mut look, &mut c, 401, false, false);
+        assert_eq!(look.rest(), Rest::Awake);
+        assert!(matches!(held.drawing, Drawing::Stand(_)), "{held:?}");
+    }
+
+    #[test]
+    fn without_her_rest_sheets_she_never_rests() {
+        let (mut look, mut c, frame) = seated_to_rest();
+        look.offer(Wants::default());
+        look.dress_lying(Some(lie_masks()));
+        assert!(!look.lie_down(&mut c, frame));
+        assert_eq!(look.wants(), Wants::default());
+        // sa pose assise absente : elle ne peut pas s'allonger, même offerte
+        let mut look = dressed(true, false);
+        look.offer(Wants { lying: true, sleeping: true });
+        assert_eq!(look.offered(), Wants { lying: false, sleeping: true });
+        assert!(look.lying_stature().is_none());
+        // sa pose debout absente : pas de sommeil debout
+        let mut look = dressed(false, true);
+        look.offer(Wants { lying: true, sleeping: true });
+        assert_eq!(look.offered(), Wants { lying: true, sleeping: false });
+        let mut c = capri(&look);
+        at(&mut look, &mut c, 1, false, false);
+        assert!(!look.doze(&mut c, 1));
+        assert_eq!(look.wants(), Wants::default());
+    }
+
+    /// Combien de fois son dessin change en `frames` images, à partir de l'image `from` (ce que la
+    /// boucle redessine, son bandeau à part).
+    fn changes(look: &mut Look, c: &mut Capri, from: u64, frames: u64, talking: bool) -> usize {
+        let mut last = None;
+        let mut changes = 0;
+        for frame in from..from + frames {
+            let picture = at(look, c, frame, talking, false);
+            if last.is_some_and(|last| last != picture) {
+                changes += 1;
+            }
+            last = Some(picture);
+        }
+        changes
+    }
+
+    #[test]
+    fn asleep_she_is_redrawn_less_often_than_awake() {
+        // allongée : éveillée, 12 dessins par seconde ; endormie, 8
+        let (mut look, mut c, frame) = lying();
+        let awake = changes(&mut look, &mut c, frame, 240, false);
+        assert!(look.doze(&mut c, frame + 240));
+        let asleep = changes(&mut look, &mut c, frame + 240, 240, false);
+        assert_eq!((awake, asleep), (119, 79));
+        // debout : éveillée, sa boucle et son flottement ; endormie, 6 dessins par seconde, sans flotter
+        let mut look = dressed(true, true);
+        look.offer(Wants { lying: false, sleeping: true });
+        look.dress_sleeping(Some(nap_masks()));
+        let mut c = capri(&look);
+        let awake = changes(&mut look, &mut c, 0, 240, false);
+        assert!(look.doze(&mut c, 240));
+        let asleep = changes(&mut look, &mut c, 240, 240, false);
+        assert_eq!((awake, asleep), (119, 59));
+    }
+
+    #[test]
+    fn lying_she_never_falls_asleep_to_music() {
+        let (mut look, mut c, frame) = lying();
+        at(&mut look, &mut c, frame + 1, false, true);
+        assert!(look.hears_music());
+        assert!(!look.doze(&mut c, frame + 1), "la musique la tient éveillée");
+        assert_eq!(look.rest(), Rest::Lying);
+        assert!(!look.is_grooving(), "allongée, elle ne se balance pas");
+        at(&mut look, &mut c, frame + 2, false, false);
+        assert!(look.doze(&mut c, frame + 2));
+        assert_eq!(look.rest(), Rest::Asleep { lying: true });
+    }
+
+    #[test]
+    fn shown_again_lying_without_room_she_appears_lying_then_sits_up_from_the_start() {
+        let (mut look, mut c, frame) = lying();
+        look.vanish(&mut c, frame);
+        for f in frame..frame + 10 {
+            at(&mut look, &mut c, f, false, false);
+        }
+        // montrée au milieu de son départ allongée, et la place partie entre-temps
+        look.appear(&mut c, frame + 10);
+        look.set_room_to_lie(false);
+        let mut f = frame + 10;
+        loop {
+            let picture = at(&mut look, &mut c, f, false, false);
+            if look.is_here() {
+                // elle ne se rassoit qu'une fois là : l'éclat de sa pose assise, de son début
+                let glitch = sheets::Cell { strip: Strip::PerchGlitch, index: 0 };
+                assert_eq!(picture.drawing, Drawing::Perch(glitch), "image {f}");
+                break;
+            }
+            let Drawing::Lie(cell) = picture.drawing else { panic!("image {f} : {picture:?}") };
+            assert_eq!(cell.strip, lie::Strip::LieLeave, "elle réapparaît allongée");
+            f += 1;
+            assert!(f < frame + 40);
+        }
+        // puis sa boucle assise, de son dessin 0 : pas de saut au milieu d'un tour
+        let picture = at(&mut look, &mut c, f + Gesture::PerchGlitch.frames(), false, false);
+        assert_eq!(picture.drawing, Drawing::Perch(sheets::Cell { strip: Strip::Perch, index: 0 }));
+        assert_eq!(look.rest(), Rest::Awake);
+    }
+
+    #[test]
+    fn lying_she_needs_room_to_her_left_on_her_edge() {
+        let stature = lying_stature(HEIGHT);
+        let seated = seated_stature(HEIGHT);
+        let k = lie::scale(HEIGHT);
+        // surtout à gauche du point posé : sa tête et ses cheveux
+        assert!(stature.reach.left > 3.0 * seated.reach.left, "{stature:?}");
+        assert!(stature.reach.right < seated.reach.right);
+        assert!((stature.reach.up - 140.0 * k).abs() < 1e-3 && stature.reach.up < seated.reach.up);
+        // ce qui repose sur le bord : de son épaule au point posé
+        assert!((stature.rest.0 - (lie::SEAT_X - lie::SHOULDER as f32) * k).abs() < 1e-3);
+        assert!((stature.rest.1 - FOOT * HEIGHT).abs() < 1e-3);
+        assert_eq!(stature.height, HEIGHT);
     }
 }

@@ -87,7 +87,12 @@ tour, marche vers la gauche, et varie par des éclats et des clignements à glit
 testé sans écran le même jour ; pas encore regardé en mouvement. Le sixième, ajouté à la
 demande de l'utilisateur (plusieurs intros tirées au sort, comme dans le projet Capri : six, dont
 le coucou de mochiiwuff et trois écrites par nous ; « Voir une intro » dans son menu), est écrit
-et testé sans écran le même jour ; pas regardé en mouvement non plus. Des dessins
+et testé sans écran le même jour ; les six intros vues par l'utilisateur le 24 novembre : le
+coucou ne lui plaît pas du tout, il sera retiré, et « de tout près » sera jouée à chaque
+lancement, avec un effet de glitch calculé, suivie d'une des autres tirée au sort (lot 8). Le
+cinquième (elle s'allonge sur son bord, s'endort, se réveille ; ses planches de repos chargées
+à la demande) est écrit et testé sans écran le 24 novembre 2026 ; pas regardé en mouvement.
+Resteront : le lot 8, et se tourner des deux côtés (lot 7). Des dessins
 générés par un outil d'images ont été essayés le même jour pour un coucou de la main, trois
 fois, et écartés : aucun ne se mêlait à ses dessins.
 
@@ -117,7 +122,12 @@ fois, et écartés : aucun ne se mêlait à ses dessins.
   en miroir), et la tenue de chaque planche (`hold` : deux images, trois pour son sourire).
   Une planche de plus s'y ajoute sans rien refaire (sa doc dit comment). Les variantes de son
   nouveau dessin sont avec leurs jeux : `sheets` (`PerchGlitch`, `PerchBlinkGlitch`) et
-  `sheets::stand` (`StandBlinkGlitch`).
+  `sheets::stand` (`StandBlinkGlitch`). Et dans `sheets::lie` sa pose allongée, de son artiste :
+  six planches (cases de 372 px, et de 440 px pour son éclat et son départ), à 0,85 fois
+  l'échelle de sa pose assise, sa hanche sur le point où elle était assise (`SEAT_X`, `SEAT_Y`),
+  sa boucle montrée un dessin sur deux et son sommeil un sur trois ; `Shown::pack_strip` serre
+  une grille directement depuis la bande. `sheets::life` porte aussi `sleep` et `wake`, son
+  sommeil debout (`NAP`, lues à la demande, à part de `AT_LAUNCH`).
   Et `look` : **son dessin**, quelle case montrer à chaque image (debout, la boucle et ses
   clignements aux tours de `BLINKS`, sa bouche posée par-dessus quand elle parle ; posée,
   l'arrivée, sa boucle assise, parlante ou en musique, le départ), où (sa ligne d'assise sur le
@@ -148,9 +158,19 @@ fois, et écartés : aucun ne se mêlait à ses dessins.
   `CLICK_SLOP`, `CLICK_LONGEST`), décidé en code pur que la boucle et l'essai de gestes au hasard
   appellent tous deux ; le curseur relevé pendant l'attente est rejoué à la prise, pour qu'un
   lancer garde exactement la vitesse qu'il avait avant que le clic existe.
+  Et son **repos** (`look` : `Rest`, `lie_down`, `doze`, `rouse`, `stir`, `sit_up`) : assise,
+  elle s'allonge (une coupe franche vers son éclat allongé, puis sa boucle), cligne, parle
+  allongée ; elle s'endort, allongée ou debout (debout, elle ne flotte plus) ; elle se rassoit
+  par l'éclat de sa pose assise ; `laydown_leave` est un effacement, pour quand elle quitte son
+  bord allongée. Elle ne se repose qu'avec ses planches prêtes (`Wants`, `offer`,
+  `dress_lying`, `dress_sleeping`) et la place pour elle allongée (`perch::fits`,
+  `set_room_to_lie`) ; l'une ou l'autre manquant, elle reste ou redevient assise, jamais
+  allongée dans le vide.
   Et `roam` : **sa vie**, elle change seule de place. Un générateur pseudo-aléatoire à graine,
   écrit sur place (`Rng`, SplitMix64 : la même graine donne la même vie) ; ses durées, en
-  constantes nommées (`FIRST`, `SEATED`, `STANDING`, `BY_HAND`, `LOST`, `NOWHERE`, `PATIENCE`) ;
+  constantes nommées (`FIRST`, `SEATED`, `STANDING`, `BY_HAND`, `LOST`, `NOWHERE`, `PATIENCE` ;
+  et celles de son repos, `LIE_AFTER`, `DOZE_AFTER`, `UP_AWAKE`, `UP_ASLEEP`, `STAND_DOZE_AFTER`,
+  `LIE_LONGEST`, tirées d'un générateur à part, `NAP_SEED`) ;
   le choix (`choose` : un morceau de bord où elle tient, `perch::Bench`, tiré au sort avec des
   poids, jamais le même deux fois de suite quand un autre existe, de préférence sur une autre
   fenêtre, loin du curseur ; debout en bas de l'écran seulement si elle part debout et qu'aucun
@@ -221,7 +241,9 @@ fois, et écartés : aucun ne se mêlait à ses dessins.
   celle de son sourire en fin de tour (`hook_input::in_an_agent` : un événement sans `agent_id` ;
   d'après la documentation des hooks, `agent_id` désigne le sous-agent ou le coéquipier où le hook
   se déclenche, et `agent_type` est présent aussi dès qu'une session est lancée avec `--agent` ;
-  `Message::ends_main_turn` : un `Stop` de la session principale), suivi des sessions, édition de `settings.json` de
+  `Message::ends_main_turn` : un `Stop` de la session principale ; `Message::waits_for_the_user` :
+  Claude Code attend une réponse, une demande de permission, `AskUserQuestion`, `ExitPlanMode` ou
+  une notification qui attend l'utilisateur, ce qui la réveille), suivi des sessions, édition de `settings.json` de
   texte à texte, le style de sortie « Capri » (`style` : son texte, la signature qui reconnaît le
   nôtre), le miroir (`mirror` : son réglage, l'extraction de la ligne `[Capri]`, l'attente d'une
   ligne arrivée pendant qu'elle parle), et où vivent les réglages (`places` : le dossier de Capri
@@ -444,6 +466,15 @@ fois, et écartés : aucun ne se mêlait à ses dessins.
   `Hello`, qui dit s'il est attendu, en attente ou passé : attendu dès que l'intro commence,
   oublié si on lui parle, la fait taire, repart de zéro ou la cache, pendant l'intro comme après)
   se dit par `Chat::greet`, le chemin de la ligne du miroir.
+  `on_demand` charge **à la demande** un jeu de planches (générique : un trait `Kind`,
+  `OnDemand`) : un thread « capri-repos » lit, décode, serre en grille et prémultiplie, par un
+  canal d'une place que la boucle ne fait que consulter ; les planches sont confiées à la carte
+  graphique quand elles sont prêtes, et rendues `KEEP` (60 s) après qu'elle n'en veut plus, puis
+  `settle`. Une panne (fichier disparu, illisible, mauvaise taille, refus de la carte graphique)
+  lâche tout, le dit au journal, et elle s'en passe jusqu'au prochain lancement. `assets::rest`
+  ne vérifie au lancement que les en-têtes de ses planches de repos ; `Figure::offer_rests` et
+  `sync_rests` les relient à son dessin ; `PerchView::room_to_lie` dit s'il y a la place pour
+  elle allongée, d'après la liste des fenêtres déjà lue, sans lecture de plus.
   `figure` confie ses images à la carte graphique (les planches lues par `assets`, puis lâchées),
   fait les masques de clic, et traduit ce que décide `capri_core::look` en dessins pour le rendu ;
   `portraits` (essais ignorés) rend de vraies images de chaque pose par ce même code, pour les
@@ -704,10 +735,13 @@ une fausse commande `security` placée en tête du `PATH`.
   sa vie (`assets/capri/life/`) en viennent aussi : l'ancien jeu de cases de 240 px, dont ce
   dépôt **ne nomme pas l'auteur**, écarté jusque-là et autorisé par l'utilisateur le 23 novembre
   2026 (sa licence dit que tout son dessin est de son artiste, et son README ne les range pas
-  parmi les parties faites par d'autres) : `arrive`, `leave`, `walk`, `dangle`, `glitch` et `grin`
-  aujourd'hui, et pour le lot suivant `sleep` et `wake`. Trois variantes à glitch de son nouveau
-  dessin viennent des jeux de son artiste (`perch_glitch`, `perch_blink_glitch`,
-  `idle_blink_glitch`). `CREDITS.md` dit ce qu'on en sait,
+  parmi les parties faites par d'autres) : `arrive`, `leave`, `walk`, `dangle`, `glitch`, `grin`,
+  `sleep` et `wake`. Trois variantes à glitch de son nouveau dessin viennent des jeux de son
+  artiste (`perch_glitch`, `perch_blink_glitch`, `idle_blink_glitch`), et sa pose allongée aussi
+  (`assets/capri/laydown/`, six planches). **Ses planches de repos** (allongée, sommeil debout)
+  **ne sont jamais gardées en permanence sur la carte graphique** : chargées à la demande, hors
+  du thread principal, et rendues après usage ; sans elles, elle ne s'allonge pas, ou ne
+  s'endort pas debout, et rien d'autre ne change. `CREDITS.md` dit ce qu'on en sait,
   sans leur prêter un auteur. **Jamais une image que ce dépôt crédite à quelqu'un d'autre**
   (`click.png`, `form.png`, l'intro « Peek », les emotes) : une attribution se vérifie dans son
   README, sa licence et l'historique du fichier, pas de mémoire. Sans ses planches de vie, elle
@@ -983,7 +1017,8 @@ une fausse commande `security` placée en tête du `PATH`.
   cachent la ferait aussi quitter un bord que ses réglages recouvrent : pas décidé). Elle préfère être assise : d'un bord à l'autre on ne voit que son nouveau dessin, et
   `arrive` et `leave` montrent l'ancien. Le hasard vient d'une graine prise à l'horloge du
   système au lancement, jamais écrite ; les essais ont des graines fixes. Aucun réveil de la
-  boucle ni thread de plus : à chaque pas, elle compare une heure. Le journal n'en dit que ce
+  boucle ni thread de plus : à chaque pas, elle compare une heure (le seul thread de sa vie
+  est celui qui charge ses planches de repos, le temps du chargement). Le journal n'en dit que ce
   qu'elle décide et des nombres. Décochée, elle se comporte comme avant. Après tout changement
   de `look`, `roam`, `body` ou `perch` : `cargo test -p capri-core --test gestes_au_hasard`
   (des gestes tirés au hasard, à graines fixes, dans l'ordre où la boucle les traite : jamais
@@ -996,7 +1031,14 @@ une fausse commande `security` placée en tête du `PATH`.
   et libre, un éclat de temps en temps (`FIDGET`, d'un générateur à part, de la même graine).
   Elle ne sourit pour Claude Code qu'une fois par minute au plus (`CHEER_EVERY`), jamais pendant
   qu'on se parle, et du `Stop` reçu rien de plus n'est écrit au journal que ce que
-  `Message::for_log` permet.
+  `Message::for_log` permet. **Son repos** : tranquille (ni clic, ni prise, ni conversation ;
+  et, assise, pas de musique : debout, la musique ne change rien, comme toujours), elle s'allonge
+  puis s'endort ; s'occuper d'elle la réveille (un clic, une prise, lui parler, Claude Code qui
+  attend une réponse) ; tant qu'elle se repose, elle ne part pas d'elle-même, et « Changer de
+  place » la réveille et la fait partir ; jamais plus de `LIE_LONGEST` (une heure) allongée
+  d'affilée ; rassise ou réveillée, elle reste là une attente ordinaire. Endormie, elle doit
+  coûter moins qu'éveillée (8 dessins par seconde allongée, 6 debout, contre 12). Elle ne
+  commence à se reposer que case « Vivre sa vie » cochée, donc jamais pendant une répétition.
 - Aucun nom de modèle écrit en dur : il vient de l'utilisateur ou de la liste que donne le
   serveur. Même règle que pour les API : format et adresses d'un fournisseur se vérifient dans sa
   documentation, pas de mémoire (les sources de chaque adresse sont citées dans

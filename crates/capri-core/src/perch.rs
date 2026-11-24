@@ -386,6 +386,22 @@ pub fn follow(seen: &[Seen], screen: Rect, stature: Stature, spot: Spot) -> Resu
     Ok(Perch { spot: Spot::on(window, x), feet: Vec2::new(x, window.rect.min.y) })
 }
 
+/// Posée en `spot`, d'après une lecture des fenêtres qui vient d'être faite : tiendrait-elle là
+/// avec `stature` (une autre pose, plus large : allongée), **sans bouger** ? Ce qui repose sur le
+/// bord sur un morceau visible, loin de ses bouts, et elle entière dans l'écran, son point posé là
+/// où il est. De quoi savoir si elle peut s'y allonger, sans lire la liste une fois de plus.
+pub fn fits(seen: &[Seen], screen: Rect, stature: Stature, spot: Spot) -> bool {
+    let Some(index) = seen.iter().position(|window| window.id == spot.window) else { return false };
+    let window = &seen[index];
+    let Some((lo, hi)) = room(window.rect, screen, stature) else { return false };
+    let x = spot.x_on(window.rect);
+    if !(lo <= x && x <= hi) {
+        return false;
+    }
+    let (left, right) = stature.rest;
+    visible_edge(seen, index, screen).into_iter().any(|(from, to)| from <= x - left && x + right <= to)
+}
+
 /// Où peut aller le point posé le long du bord supérieur de `window` : ce qui repose dessus sur
 /// le bord, loin de ses bouts, et elle entière dans l'écran. `None` : le bord est hors de l'écran,
 /// ou ne lui laisse pas la place.
@@ -825,6 +841,34 @@ mod tests {
         let near_end = Spot { window: 3, along: 580.0, left: 2400.0, width: 624.0 };
         let grown = follow(&[edge], screen(), at(780.0), near_end).expect("elle reste");
         assert!(grown.feet.x <= 3024.0 - at(780.0).reach.right + 0.01, "{grown:?}");
+    }
+
+    #[test]
+    fn a_wider_pose_fits_only_where_she_is_without_moving() {
+        // une pose qui s'étend loin à gauche du point posé (allongée), et repose sur 300 px à gauche
+        let wide = Stature {
+            height: 600.0,
+            reach: Reach { left: 400.0, up: 170.0, right: 40.0, down: 130.0 },
+            rest: (300.0, 36.0),
+        };
+        let w = seen(1, rect(200.0, 800.0, 1600.0, 800.0));
+        let spot = |x: f32| Spot { window: 1, along: x - 200.0, left: 200.0, width: 1600.0 };
+        assert!(fits(&[w], screen(), wide, spot(1000.0)));
+        // trop près du bout gauche du bord : ce qui repose n'y tient pas (`follow` la glisserait)
+        assert!(!fits(&[w], screen(), wide, spot(450.0)));
+        assert!(follow(&[w], screen(), wide, spot(450.0)).is_ok_and(|perch| perch.feet.x > 450.0));
+        // ni trop près du bout droit
+        assert!(!fits(&[w], screen(), wide, spot(1790.0)));
+        // un bord trop près du haut de l'écran : pas la place au-dessus
+        let high = seen(2, rect(200.0, 100.0, 1600.0, 800.0));
+        let up = Spot { window: 2, along: 800.0, left: 200.0, width: 1600.0 };
+        assert!(!fits(&[high], screen(), wide, up));
+        // une fenêtre devant, sur ce qui repose à gauche : recouvert
+        let front = seen(3, rect(600.0, 600.0, 300.0, 400.0));
+        assert!(!fits(&[front, w], screen(), wide, spot(1000.0)));
+        assert!(fits(&[front, w], screen(), wide, spot(1300.0)));
+        // sa fenêtre partie
+        assert!(!fits(&[], screen(), wide, spot(1000.0)));
     }
 
     #[test]

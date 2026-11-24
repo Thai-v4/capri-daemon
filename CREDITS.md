@@ -10,7 +10,8 @@ avec eux.
 ## Les images (`assets/capri/`)
 
 Les images ne sont pas incluses dans ce dépôt : `tools/fetch-assets.sh` (ou `.ps1`) télécharge
-celles de `assets/capri/` (sauf `perch/`, `stand/`, `life/` et `intro/`, voir plus bas) depuis le dépôt [mochiiwuff/capri-desktop](https://github.com/mochiiwuff/capri-desktop), à la
+celles de `assets/capri/` (sauf `perch/`, `stand/`, `laydown/`, `life/` et `intro/`, voir plus bas)
+depuis le dépôt [mochiiwuff/capri-desktop](https://github.com/mochiiwuff/capri-desktop), à la
 révision `c011764ca1fdbd191925321e3aaa8af5b84babe8`, et vérifie l'empreinte SHA-256 de chacune.
 
 D'après ce dépôt, elles proviennent de captures de la série, d'un détourage réalisé par un fan et
@@ -52,18 +53,27 @@ frames… », `07320d71` : « she blinks on her perch with her artist's own fram
 Quand les planches de sa pose debout manquent, elle garde son dessin debout d'avant
 (`capri-cutout.png`, de mochiiwuff/capri-desktop, voir plus haut).
 
+### Sa pose allongée (`assets/capri/laydown/`)
+
+Les six planches où elle est allongée sur le bord d'une fenêtre (`laydown.png`,
+`laydown_blink.png`, `laydown_talk.png`, `laydown_sleep.png`, `laydown_glitch.png`,
+`laydown_leave.png`) viennent du même projet, à la même révision. Elles y sont arrivées ensemble
+par le commit `ff478644` du 30 octobre 2026, dont le message les attribue à son artiste : « she
+lies down along her window in her artist's new lay-down frames… ».
+
 ### Les planches de sa vie (`assets/capri/life/`)
 
-Six planches viennent du même projet, à la même révision : elle apparaît et s'efface
+Huit planches viennent du même projet, à la même révision : elle apparaît et s'efface
 (`arrive.png`, `leave.png`), marche (`walk.png`), pend quand on la tient (`dangle.png`), se relève
-(`glitch.png`) et sourit (`grin.png`). **Ce dépôt ne nomme pas leur auteur.** Elles y sont
-arrivées sans crédit, par le commit `79e707d5` du 25 octobre 2026 (« added her animations and
-kept her above games » : `dangle`, `glitch`, `grin`) et par le commit `eebe1854` du 27 octobre
-2026 (« released 0.7.0 … » : `arrive`, `leave`, `walk`, et la dernière version de `dangle`). Sa
+(`glitch.png`), sourit (`grin.png`), dort debout (`sleep.png`) et se réveille (`wake.png`). **Ce
+dépôt ne nomme pas leur auteur.** Elles y sont arrivées sans crédit, par le commit `79e707d5` du
+25 octobre 2026 (« added her animations and kept her above games » : `dangle`, `glitch`, `grin`,
+`sleep`, `wake`) et par le commit `eebe1854` du 27 octobre 2026 (« released 0.7.0 … » : `arrive`,
+`leave`, `walk`, et la dernière version de `dangle`). Sa
 licence dit que « Capri's art and animations are by her artist », et que les parties faites par
 d'autres sont listées dans son README : elles n'y figurent pas. Elles montrent un dessin plus
 ancien de Capri que ses poses debout et assise (de face, un bras tendu), et font partie d'un jeu
-de cases de 240 px dont ce projet n'utilise que ces six planches.
+de cases de 240 px dont ce projet n'utilise que ces huit planches.
 
 Jusqu'au 23 novembre 2026, ce projet écartait ce jeu de cases, faute d'auteur nommé. Il les prend
 depuis, par décision de son auteur, aux mêmes conditions que ses poses : la même licence, les
@@ -86,7 +96,7 @@ de clic (mixmix312352), l'animation de transformation et les deux emotes (Qewiw)
 
 ### Leur licence
 
-Les images de ces quatre dossiers sont sous la licence du projet Capri, la
+Les images de ces cinq dossiers sont sous la licence du projet Capri, la
 [PolyForm Noncommercial 1.0.0](https://polyformproject.org/licenses/noncommercial/1.0.0), dont
 voici les mentions obligatoires, recopiées telles quelles :
 
@@ -101,10 +111,11 @@ le seul que cette licence permette, et ce projet ne revendique aucun droit sur e
 couvertes par aucune licence de ce projet. Aucune autre image de ce dépôt n'est utilisée (ni celles
 créditées à d'autres auteurs, ni ses autres animations), et aucune ligne de son code n'est
 reprise : le découpage des planches, la place du bord de la fenêtre, sa hauteur et ses pieds ont
-été mesurés sur les images elles-mêmes (`crates/capri-core/src/sheets.rs`, `sheets/stand.rs` et
-`sheets/life.rs`) ; seuls leur cadence d'origine, remplacée ensuite par la nôtre, le rapport
-d'échelle entre ses deux poses et le décalage entre ses cases de 240 px et celles de sa pose
-debout ont été lus dans son code.
+été mesurés sur les images elles-mêmes (`crates/capri-core/src/sheets.rs`, `sheets/stand.rs`,
+`sheets/life.rs` et `sheets/lie.rs`) ; seuls leur cadence d'origine, remplacée ensuite par la
+nôtre, le rapport d'échelle entre ses poses (assise, debout, allongée), le décalage entre ses
+cases de 240 px et celles de sa pose debout, et le point de sa hanche sur le bord quand elle est
+allongée (recoupé ensuite sur les images) ont été lus dans son code.
 
 ### L'icône de l'app
 

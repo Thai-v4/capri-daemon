@@ -387,8 +387,11 @@ elle ne chargent rien de plus.
 
 Écrit et testé sans écran le 23 novembre 2026. « De tout près » a été regardée par l'utilisateur
 le soir même, la Capri du dépôt lancée avec ses vrais réglages (son journal : « intro : jouée, 22
-images sur 22 montrées, la première prête en 47 ms ») ; **les cinq autres et « Voir une intro »
-n'ont pas encore été vues en mouvement** : la liste est dans « État de validation ».
+images sur 22 montrées, la première prête en 47 ms »). Les six ont été vues par l'utilisateur le
+24 novembre 2026, par « Voir une intro » (son journal : dix-huit intros jouées, trois tours de la
+liste) : **le coucou ne lui plaît pas du tout, il sera retiré**, et « de tout près » sera jouée à
+chaque lancement, avec un effet de glitch, suivie d'une des autres tirée au sort. Les autres
+intros n'ont pas été commentées une par une : la liste est dans « État de validation ».
 
 ### Elle vit sa vie : elle va s'asseoir seule sur tes fenêtres
 
@@ -491,6 +494,56 @@ l'empreinte de l'app n'a pas été remesurée.
 
 Écrit et testé sans écran le 23 novembre 2026, images fixes rendues ; **pas encore regardé en
 mouvement** : la liste est dans « État de validation ».
+
+### Elle se repose
+
+Le cinquième lot : quand tu la laisses tranquille, elle s'allonge, puis s'endort.
+
+- **elle s'allonge** : assise sur un bord et tranquille depuis 6 à 12 minutes (ni clic, ni prise,
+  ni conversation, ni musique), elle s'allonge le long de ce bord, sa hanche là où elle était
+  assise, s'il y a la place : il lui faut plus de largeur, vers la gauche. Allongée, elle cligne,
+  parle si tu lui parles, et un clic lui donne un éclat de glitch ;
+- **elle s'endort** après 3 à 6 minutes de plus. Debout (quand elle n'a aucun bord), elle
+  s'endort dans ses cheveux après 10 à 20 minutes, et ne flotte plus ;
+- **elle se réveille** dès que tu t'occupes d'elle : un clic, une prise, lui parler au clavier ou
+  au micro ; et quand Claude Code attend ta réponse (une demande de permission, une question,
+  une notification qui t'attend). Réveillée, elle reste allongée, éveillée ;
+- **elle se rassoit** d'elle-même après 10 à 20 minutes allongée éveillée ou 20 à 40 minutes de
+  sommeil, et jamais plus d'une heure allongée d'affilée ; elle reste alors assise une attente
+  ordinaire (3 à 8 minutes), puis sa vie reprend ;
+- **sa vie en tient compte** : tant qu'elle se repose, elle ne change pas de place d'elle-même ;
+  « Changer de place » la réveille et la fait partir. Si son bord s'en va sous elle, ou si la
+  place vient à manquer, elle ne reste pas allongée dans le vide ;
+- **la musique** l'empêche de s'allonger et de s'endormir allongée, mais ne la réveille pas :
+  si elle commence pendant qu'elle est allongée, elle reste allongée, sans se balancer. Debout,
+  la musique ne change rien, comme toujours : elle peut s'y endormir ;
+- **elle ne commence à se reposer que si « Vivre sa vie » est cochée.**
+
+**Ses planches de repos ne sont chargées que quand elle s'en sert.** Les trois boucles de sa pose
+allongée pèsent lourd pour une pose qu'elle ne prend qu'une petite partie du temps. Au lancement,
+seuls leurs en-têtes sont vérifiés ; quand elle veut s'allonger, un thread les lit et les
+prépare (48 ms), et elle ne s'allonge que quand elles sont prêtes ; elles sont rendues une
+minute après qu'elle s'est relevée. Mesuré le 24 novembre 2026, en version optimisée :
+
+| Moment | Textures | Mémoire de l'app |
+|---|---|---|
+| Au repos | 85,9 Mo, inchangé | inchangée |
+| Allongée | 126,8 Mo (+40,9) | +49,5 Mo |
+| Relevée, planches rendues | 85,9 Mo | +0,8 Mo |
+| Endormie debout | 97,0 Mo (+11,1) | +16,5 Mo |
+| Réveillée, planches rendues | 85,9 Mo | +0,1 Mo |
+
+**Endormie, elle coûte moins qu'éveillée** : son dessin change 8 fois par seconde allongée et 6
+fois debout, contre 12 éveillée.
+
+**Deux dessins, encore** : sa pose allongée est de son nouveau dessin, par son artiste ; son
+sommeil et son réveil debout sont de l'ancien. Elle s'allonge toujours vers la gauche (les
+planches tournées de l'autre côté sont pour un autre lot). Sans ses planches allongées, elle ne
+s'allonge jamais ; sans celles du sommeil debout, elle ne s'endort pas debout ; rien d'autre ne
+change.
+
+Écrit et testé sans écran le 24 novembre 2026, images fixes rendues et regardées ; **pas encore
+regardé en mouvement** : la liste est dans « État de validation ».
 
 **Essayé et écarté le même jour : des dessins générés.** Trois essais pour ajouter à sa boucle
 debout un coucou de la main par un générateur d'images : le premier changeait son corps d'un
@@ -1504,9 +1557,9 @@ Règle : tout ce qui peut être testé sans écran va dans `capri-core`, `capri-
 
 Vérifié automatiquement :
 
-- formatage, `clippy -D warnings` et 802 tests sur **macOS Apple Silicon** (le 24 novembre 2026 ;
-  801 en version optimisée, un essai de la répétition de la musique n'existant qu'en version de
-  débogage ; plus 23 qui ne
+- formatage, `clippy -D warnings` et 836 tests sur **macOS Apple Silicon** (le 24 novembre 2026 ;
+  835 en version optimisée, un essai de la répétition de la musique n'existant qu'en version de
+  débogage ; plus 25 qui ne
   tournent qu'à la main : ils écrivent des images ou dessinent sur la vraie carte graphique,
   lisent un vrai `settings.json`, touchent au vrai trousseau, créent de vraies voix et un vrai
   moteur audio, sans bruit, lisent la vraie liste des fenêtres, guettent une annonce d'essai
@@ -1759,6 +1812,16 @@ Vérifié automatiquement :
   (900 vies). Sur la vraie carte graphique, à la main : les deux intros en images jouées en
   entier, deux fois chacune. Une relecture indépendante n'y a trouvé aucun état coincé, mais sept
   points, dont un saut de toute sa hauteur quand on l'attrapait en pleine chute, tous corrigés ;
+- son repos (le 24 novembre 2026) : s'allonger seulement tranquille, avec la place et ses
+  planches prêtes, s'endormir, chaque moyen de la réveiller (un clic, une prise, lui parler,
+  Claude Code qui attend une réponse), se rasseoir d'elle-même et jamais plus d'une heure
+  allongée, son bord ou sa place qui s'en vont sous elle (dits comme tels au journal, pas comme
+  un réveil), le chargement à la demande (des planches qui arrivent tard, jamais, ou en échec ;
+  jamais reprises pendant qu'elle s'en sert), et l'essai de gestes au hasard étendu aux longs
+  moments de calme. Sur la vraie carte graphique, à la main : sa mémoire mesurée au repos,
+  allongée, puis rendue. Une relecture indépendante n'y a trouvé aucun défaut grave ; elle a
+  comparé 360 vies simulées avec le commit précédent, identiques sans ses planches de repos, et
+  relevé une lacune d'essai et cinq points mineurs, corrigés ;
 - deux essais anciens de `capri-net` échouaient parfois sur une machine chargée (des délais trop
   courts pour le TLS du système : un faux serveur qui n'attendait le client qu'une demi-seconde,
   un appel borné à une seconde) : corrigés le 23 novembre 2026, ils passent 25 et 20 fois de
@@ -2316,8 +2379,30 @@ d'après son journal, et aucun de ces points n'a été confirmé un par un). Il 
 11. **« La faire taire » pendant l'intro** : l'intro continue, et elle ne dit pas bonjour ensuite ;
 12. **les dix phrases de bonjour** : dire si le ton lui va, et lesquelles retirer.
 
+**Elle se repose : à regarder à la main** (écrit et testé sans écran le 24 novembre 2026 ; rien
+n'a encore été vu en mouvement). Il faut la laisser tranquille 6 à 12 minutes, assise sur un
+bord assez large, sans musique :
+
+1. **elle s'allonge** : le passage d'assise à allongée, et sa hanche qui reste au même endroit ;
+2. **sa taille allongée** : paraît-elle de la même taille qu'assise ?
+3. **son sommeil allongée** : sa respiration à 8 dessins par seconde, douce ou saccadée ;
+4. **elle se rassoit** d'elle-même, après un moment ;
+5. **son sommeil debout** (sans aucun bord où s'asseoir) : elle ne flotte plus ; son réveil,
+   puis la coupe vers sa boucle ;
+6. **sur de vraies fenêtres** : elle ne s'allonge que là où il y a de la place à sa gauche ; ses
+   jambes et ses cheveux peuvent pendre par-dessus d'autres fenêtres ;
+7. **son bord qui se ferme ou se recouvre** pendant qu'elle est allongée : elle ne reste pas
+   dans le vide ;
+8. **ce qui la réveille** : un clic, une prise, ⌃⌥P, ⌃⌥D, et une demande de permission de Claude
+   Code dans une vraie session ;
+9. **aucun à-coup** au moment où ses planches se chargent ; son journal le dit (« pose
+   allongée : chargée… », puis « rendue ») ;
+10. **dans le Moniteur d'activité** : sa mémoire monte quand elle s'allonge et redescend une
+    minute après qu'elle s'est relevée.
+
 **Ses intros tirées au sort : à regarder à la main** (écrit et testé sans écran le 23 novembre
-2026 ; seule « de tout près » a été vue en mouvement). « Voir une intro », dans son menu, les
+2026 ; les six vues par l'utilisateur le 24, dans l'ensemble : le coucou sera retiré, aucun des
+points ci-dessous n'a été confirmé un par un). « Voir une intro », dans son menu, les
 joue l'une après l'autre sans relancer :
 
 1. **relancer plusieurs fois** : jamais la même intro deux fois de suite, et son journal la nomme
@@ -2603,8 +2688,12 @@ Points à surveiller :
    s'asseoir seule sur les fenêtres~~ (écrits et testés sans écran le même jour ; les trois
    regardés par l'utilisateur le soir même, dans l'ensemble, pas point par point) ; ~~elle
    marche, pend quand on la tient, sourit~~ (écrit et testé sans écran le même jour ; reste à
-   regarder en mouvement) ; elle
-   s'allonge, s'endort et se réveille.
+   regarder en mouvement) ; ~~elle
+   s'allonge, s'endort et se réveille~~ (écrit et testé sans écran le 24 novembre 2026 ; reste
+   à regarder en mouvement) ; ~~plusieurs intros tirées au sort~~ (écrit le 23 et le 24 novembre
+   2026, vues à l'écran le 24 : le coucou de mochiiwuff ne plaît pas, il sera retiré, et « de
+   tout près » sera suivie d'une entrée tirée au sort, avec un effet de glitch) ; se tourner des
+   deux côtés.
 
 ## Licence
 

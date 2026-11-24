@@ -20,9 +20,9 @@ use capri_core::sheets::WrongSize;
 /// Le sprite principal : le détourage d'origine, 220 × 420 px.
 const SPRITE: &str = "capri/capri-cutout.png";
 /// Seuil d'alpha au-dessus duquel un pixel « compte » pour attraper Capri.
-const ALPHA_THRESHOLD: u8 = 96;
+pub(crate) const ALPHA_THRESHOLD: u8 = 96;
 /// Marge (en pixels du sprite) autour de sa silhouette pour attraper ses membres fins.
-const GRAB_MARGIN: u32 = 3;
+pub(crate) const GRAB_MARGIN: u32 = 3;
 
 pub struct Sprite {
     pub width: u32,
@@ -376,7 +376,7 @@ pub mod life {
 
     /// Celles des planches de sa vie qui sont là, chacune à la bonne taille.
     pub struct LifeSheets {
-        /// Dans l'ordre de `Strip::ALL`, sans celles qui manquent.
+        /// Dans l'ordre de `Strip::AT_LAUNCH`, sans celles qui manquent.
         strips: Vec<LifeStrip>,
     }
 
@@ -412,6 +412,7 @@ pub mod life {
             Strip::Dangle => "tenue, elle gardera sa boucle debout",
             Strip::Glitch => "lâchée, elle ne se relèvera pas",
             Strip::Grin => "elle ne sourira pas",
+            Strip::Sleep | Strip::Wake => "elle ne s'endormira pas debout",
         }
     }
 
@@ -426,7 +427,8 @@ pub mod life {
 
     pub(super) fn load_from(dir: &Path) -> Option<LifeSheets> {
         let folder = dir.join(life::DIR);
-        let strips: Vec<LifeStrip> = Strip::ALL
+        // pas son sommeil ni son réveil debout : chargés à la demande (`rest`, `on_demand`)
+        let strips: Vec<LifeStrip> = Strip::AT_LAUNCH
             .into_iter()
             .filter_map(|strip| {
                 let repack = |width, height, rgba: &[u8]| life::repack(strip, width, height, rgba);
@@ -434,8 +436,149 @@ pub mod life {
                 Some(LifeStrip { strip, width: strip.grid_size().0, rgba })
             })
             .collect();
-        log::info!("planches de vie : {} sur {}", strips.len(), Strip::ALL.len());
+        log::info!("planches de vie : {} sur {}", strips.len(), Strip::AT_LAUNCH.len());
         (!strips.is_empty()).then_some(LifeSheets { strips })
+    }
+}
+
+/// Ses planches de repos, chargées à la demande (`on_demand`), jamais au lancement : sa pose
+/// allongée (`assets/capri/laydown/`, voir CREDITS.md et `capri_core::sheets::lie`), du même
+/// artiste que ses poses assise et debout ; son sommeil et son réveil debout
+/// (`assets/capri/life/`, `capri_core::sheets::life::Strip::NAP`). Au lancement, seuls leurs
+/// en-têtes sont lus ([`rest::lying`], [`rest::sleeping`]) : de quoi savoir si elle pourra s'en
+/// servir, sans rien décoder.
+pub mod rest {
+    use std::path::{Path, PathBuf};
+
+    use capri_core::AlphaMask;
+    use capri_core::look::{LieMasks, NapMasks};
+    use capri_core::sheets::{Shown, lie, life};
+
+    use crate::on_demand::Kind;
+
+    /// Sa pose allongée : ses six planches, toutes nécessaires.
+    pub struct Lying;
+
+    impl Kind for Lying {
+        type Strip = lie::Strip;
+        type Masks = LieMasks;
+        const NAME: &'static str = "pose allongée";
+        /// L'union de ses boucles et de son clignement (cases étroites), et celle de son éclat et
+        /// de son départ (cases larges).
+        const MASKS: &'static [(u32, u32)] =
+            &[(lie::NARROW, lie::CELL_HEIGHT), (lie::WIDE, lie::CELL_HEIGHT)];
+
+        fn strips() -> &'static [lie::Strip] {
+            &lie::Strip::ALL
+        }
+
+        fn file(strip: lie::Strip) -> String {
+            format!("{}/{}", lie::DIR, strip.file())
+        }
+
+        fn shown(strip: lie::Strip) -> Shown {
+            lie::shown(strip)
+        }
+
+        fn mask(strip: lie::Strip) -> Option<usize> {
+            Some(usize::from(strip.cell().0 == lie::WIDE))
+        }
+
+        fn masks(masks: Vec<AlphaMask>) -> LieMasks {
+            let mut masks = masks.into_iter();
+            let narrow = masks.next().unwrap_or_else(empty);
+            let wide = masks.next().unwrap_or_else(empty);
+            LieMasks { narrow, wide }
+        }
+    }
+
+    /// Son sommeil et son réveil debout : les deux.
+    pub struct Napping;
+
+    impl Kind for Napping {
+        type Strip = life::Strip;
+        type Masks = NapMasks;
+        const NAME: &'static str = "sommeil debout";
+        const MASKS: &'static [(u32, u32)] = &[
+            (life::CELL_WIDTH, capri_core::sheets::CELL_HEIGHT),
+            (life::CELL_WIDTH, capri_core::sheets::CELL_HEIGHT),
+        ];
+
+        fn strips() -> &'static [life::Strip] {
+            &life::Strip::NAP
+        }
+
+        fn file(strip: life::Strip) -> String {
+            format!("{}/{}", life::DIR, strip.file())
+        }
+
+        fn shown(strip: life::Strip) -> Shown {
+            life::shown(strip)
+        }
+
+        fn mask(strip: life::Strip) -> Option<usize> {
+            match strip {
+                life::Strip::Sleep => Some(0),
+                life::Strip::Wake => Some(1),
+                _ => None,
+            }
+        }
+
+        fn masks(masks: Vec<AlphaMask>) -> NapMasks {
+            let mut masks = masks.into_iter();
+            let sleep = masks.next().unwrap_or_else(empty);
+            let wake = masks.next().unwrap_or_else(empty);
+            NapMasks { sleep, wake }
+        }
+    }
+
+    /// Un masque où rien n'attrape (ce qui n'arrive pas : le thread en fait toujours un par case).
+    fn empty() -> AlphaMask {
+        AlphaMask::from_rgba(1, 1, &[0, 0, 0, 0], super::ALPHA_THRESHOLD, 0)
+    }
+
+    /// Le dossier des images, si les planches de `K` y sont toutes, à la bonne taille, d'après leur
+    /// seul en-tête (rien n'est décodé) ; une ligne au journal sinon (le nom du fichier et des
+    /// nombres).
+    fn present<K: Kind>(dir: &Path) -> bool {
+        K::strips().iter().all(|&strip| {
+            let file = K::file(strip);
+            let expected = K::shown(strip).strip_size();
+            let found = image::ImageReader::open(dir.join(&file))
+                .ok()
+                .and_then(|reader| reader.into_dimensions().ok());
+            match found {
+                Some(size) if size == expected => true,
+                Some((w, h)) => {
+                    log::warn!(
+                        "{} : {file} mesure {w} × {h} au lieu de {} × {}, elle s'en passera",
+                        K::NAME,
+                        expected.0,
+                        expected.1
+                    );
+                    false
+                }
+                None => {
+                    log::info!("{} : {file} absente ou illisible, elle s'en passera", K::NAME);
+                    false
+                }
+            }
+        })
+    }
+
+    /// Le dossier des images, si sa pose allongée y est.
+    pub fn lying() -> Option<PathBuf> {
+        super::assets_dir().filter(|dir| present::<Lying>(dir))
+    }
+
+    /// Le dossier des images, si son sommeil et son réveil debout y sont.
+    pub fn sleeping() -> Option<PathBuf> {
+        super::assets_dir().filter(|dir| present::<Napping>(dir))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn present_in<K: Kind>(dir: &Path) -> bool {
+        present::<K>(dir)
     }
 }
 
@@ -734,7 +877,7 @@ mod tests {
         #[test]
         fn the_app_bundle_carries_exactly_the_images_the_code_reads() {
             use capri_core::intro;
-            use capri_core::sheets::{self, life, stand};
+            use capri_core::sheets::{self, lie, life, stand};
 
             let script = include_str!("../../../tools/bundle-macos.sh");
             let mut listed: Vec<&str> = script
@@ -749,6 +892,7 @@ mod tests {
             read.extend(sheets::Strip::ALL.iter().map(|strip| format!("{}/{}", sheets::DIR, strip.file())));
             read.extend(stand::Strip::ALL.iter().map(|strip| format!("{}/{}", stand::DIR, strip.file())));
             read.extend(life::Strip::ALL.iter().map(|strip| format!("{}/{}", life::DIR, strip.file())));
+            read.extend(lie::Strip::ALL.iter().map(|strip| format!("{}/{}", lie::DIR, strip.file())));
             for entry in intro::LIST {
                 if let intro::Play::Film(film) = entry.play {
                     read.extend(film.files.iter().map(|file| format!("{}/{file}", film.dir)));
@@ -1348,14 +1492,16 @@ mod tests {
 
             let Some(dir) = super::super::assets_dir() else { return };
             let present = |folder: &str, file: &str| dir.join(folder).join(file).is_file();
-            let moves_here = Strip::ALL.iter().all(|strip| present(life::DIR, strip.file()))
+            let moves_here = Strip::AT_LAUNCH.iter().all(|strip| present(life::DIR, strip.file()))
                 && perch::Strip::ALL.iter().all(|strip| present(perch::DIR, strip.file()))
                 && stand::Strip::ALL.iter().all(|strip| present(stand::DIR, strip.file()));
             if !moves_here {
                 return;
             }
             let sheets = loader::load_from(&dir).expect("les vraies planches ont la taille décrite");
-            assert!(Strip::ALL.iter().all(|&strip| sheets.get(strip).is_some()));
+            assert!(Strip::AT_LAUNCH.iter().all(|&strip| sheets.get(strip).is_some()));
+            // son sommeil et son réveil debout ne sont jamais lus au lancement
+            assert!(Strip::NAP.iter().all(|&strip| sheets.get(strip).is_none()));
             let cell = |strip: Strip, index: u32| {
                 life::cell_pixels(strip, &sheets.get(strip).expect("là").rgba, index).unwrap()
             };
@@ -1505,6 +1651,234 @@ mod tests {
                     "{strip:?}"
                 );
                 assert!(!mask.hit(capri_core::Vec2::new(2.0 / 240.0, 380.0 / 384.0)), "{strip:?}");
+            }
+        }
+    }
+
+    /// Ses planches de repos : leurs en-têtes, et les mesures de `capri_core::sheets::lie` et
+    /// `sheets::life` sur les vraies images, si `tools/fetch-assets.sh` les a téléchargées (rien
+    /// n'est téléchargé ici).
+    mod resting {
+        use std::collections::HashSet;
+        use std::path::Path;
+
+        use capri_core::sheets::{lie, life};
+
+        use super::super::rest::{self, Lying, Napping};
+        use super::directory;
+
+        /// Une bande d'essai de la taille donnée, transparente.
+        fn write(dir: &Path, file: &str, (width, height): (u32, u32)) {
+            let path = dir.join(file);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            image::RgbaImage::new(width, height).save(path).unwrap();
+        }
+
+        #[test]
+        fn only_their_headers_say_whether_she_can_rest() {
+            let dir = directory("repos");
+            assert!(!rest::present_in::<Lying>(&dir) && !rest::present_in::<Napping>(&dir), "aucune");
+            for strip in lie::Strip::ALL {
+                write(&dir, &format!("{}/{}", lie::DIR, strip.file()), strip.strip_size());
+            }
+            assert!(rest::present_in::<Lying>(&dir));
+            // une d'une autre taille, une illisible : non
+            write(&dir, &format!("{}/{}", lie::DIR, lie::Strip::LieLeave.file()), (440, 250));
+            assert!(!rest::present_in::<Lying>(&dir));
+            std::fs::write(dir.join(lie::DIR).join(lie::Strip::LieLeave.file()), b"pas une image").unwrap();
+            assert!(!rest::present_in::<Lying>(&dir));
+            // son sommeil debout : les deux
+            write(
+                &dir,
+                &format!("{}/{}", life::DIR, life::Strip::Sleep.file()),
+                life::Strip::Sleep.strip_size(),
+            );
+            assert!(!rest::present_in::<Napping>(&dir), "il manque son réveil");
+            write(
+                &dir,
+                &format!("{}/{}", life::DIR, life::Strip::Wake.file()),
+                life::Strip::Wake.strip_size(),
+            );
+            assert!(rest::present_in::<Napping>(&dir));
+            let _ = std::fs::remove_dir_all(&dir);
+        }
+
+        /// Une case d'une bande : ses pixels.
+        fn cell(strip: &image::RgbaImage, width: u32, index: u32) -> image::RgbaImage {
+            image::imageops::crop_imm(strip, index * width, 0, width, strip.height()).to_image()
+        }
+
+        /// Ses pixels pleins (alpha > 96).
+        fn solid(cell: &image::RgbaImage) -> HashSet<(i32, i32)> {
+            cell.enumerate_pixels()
+                .filter(|(_, _, p)| p[3] > 96)
+                .map(|(x, y, _)| (x as i32, y as i32))
+                .collect()
+        }
+
+        /// Combien de pixels pleins diffèrent entre `a` et `b` décalé de (`dx`, `dy`).
+        fn apart(a: &HashSet<(i32, i32)>, b: &HashSet<(i32, i32)>, (dx, dy): (i32, i32)) -> usize {
+            let moved: HashSet<(i32, i32)> = b.iter().map(|&(x, y)| (x + dx, y + dy)).collect();
+            a.symmetric_difference(&moved).count()
+        }
+
+        /// Le centre du masque vert de ses yeux, dans le rectangle donné.
+        fn eyes(cell: &image::RgbaImage, (x0, y0, x1, y1): (u32, u32, u32, u32)) -> (f32, f32) {
+            let (mut sx, mut sy, mut n) = (0.0, 0.0, 0.0);
+            for (x, y, p) in cell.enumerate_pixels() {
+                if (x0..x1).contains(&x)
+                    && (y0..y1).contains(&y)
+                    && p[3] > 200
+                    && p[1] > 150
+                    && p[0] < 140
+                    && p[2] < 190
+                {
+                    (sx, sy, n) = (sx + x as f32, sy + y as f32, n + 1.0);
+                }
+            }
+            (sx / n, sy / n)
+        }
+
+        #[test]
+        fn the_real_lying_sheets_match_their_measures_when_present() {
+            let Some(dir) = super::super::assets_dir() else { return };
+            if !rest::present_in::<Lying>(&dir) {
+                return;
+            }
+            let read =
+                |strip: lie::Strip| image::open(dir.join(lie::DIR).join(strip.file())).unwrap().into_rgba8();
+            let (lying, talk, sleep, blink) = (
+                read(lie::Strip::Lie),
+                read(lie::Strip::LieTalk),
+                read(lie::Strip::LieSleep),
+                read(lie::Strip::LieBlink),
+            );
+            let (glitch, leave) = (read(lie::Strip::LieGlitch), read(lie::Strip::LieLeave));
+            // sa place dans la case : l'union de ses boucles et de son clignement, alpha non nul
+            let (mut x0, mut y0, mut x1, mut y1) = (u32::MAX, u32::MAX, 0, 0);
+            for (strip, image) in [
+                (lie::Strip::Lie, &lying),
+                (lie::Strip::LieTalk, &talk),
+                (lie::Strip::LieSleep, &sleep),
+                (lie::Strip::LieBlink, &blink),
+            ] {
+                for index in 0..strip.count() {
+                    for (x, y, p) in cell(image, lie::NARROW, index).enumerate_pixels() {
+                        if p[3] > 0 {
+                            (x0, y0, x1, y1) = (x0.min(x), y0.min(y), x1.max(x), y1.max(y));
+                        }
+                    }
+                }
+            }
+            assert_eq!((x0, x1 + 1), lie::SPAN);
+            assert_eq!((y0, y1 + 1), (lie::TOP, lie::BOTTOM));
+            // le bord : le trait où son départ s'efface (ses quatre dernières cases), autour de SEAT_Y
+            for index in 8..12 {
+                let last = cell(&leave, lie::WIDE, index);
+                let rows: Vec<u32> =
+                    last.enumerate_pixels().filter(|(_, _, p)| p[3] > 0).map(|(_, y, _)| y).collect();
+                assert!(rows.iter().all(|&y| (141..=144).contains(&y)), "départ, case {index}");
+                assert!((141..=144).contains(&lie::SEAT_Y));
+            }
+            // le dessous de ses hanches sur le bord, dans ses trois boucles (plus loin, ses jambes
+            // pendent : à partir de la colonne 295 à 309 selon le dessin)
+            for (image, index) in [(&lying, 0), (&lying, 24), (&lying, 30), (&talk, 14), (&sleep, 20)] {
+                let drawing = cell(image, lie::NARROW, index);
+                for x in 284..=293 {
+                    let bottom =
+                        (0..lie::CELL_HEIGHT).rev().find(|&y| drawing.get_pixel(x, y)[3] > 96).unwrap();
+                    assert!((139..=143).contains(&bottom), "dessin {index}, colonne {x} : {bottom}");
+                }
+                // son épaule : là où le dessous de son torse, et non ses cheveux, est le plus bas
+                let shoulder = (120..170)
+                    .find(|&x| {
+                        (0..lie::CELL_HEIGHT)
+                            .rev()
+                            .find(|&y| drawing.get_pixel(x, y)[3] > 96)
+                            .is_some_and(|y| y <= 145)
+                    })
+                    .unwrap();
+                assert!(
+                    (lie::SHOULDER..=lie::SHOULDER + 1).contains(&shoulder),
+                    "dessin {index} : {shoulder}"
+                );
+            }
+            // sa hanche est au bout de ce qui repose sur le bord, là où ses jambes commencent à pendre
+            const { assert!(lie::HIP > 294.0 && lie::HIP < 309.0) };
+            // sa parole : la même silhouette que sa boucle, dessin pour dessin
+            for index in [0, 13, 31, 47] {
+                assert_eq!(
+                    solid(&cell(&talk, lie::NARROW, index)),
+                    solid(&cell(&lying, lie::NARROW, index)),
+                    "dessin {index}"
+                );
+            }
+            // son clignement : chaque case la plus proche des dessins 28 à 35 de sa boucle
+            let loop_cells: Vec<HashSet<(i32, i32)>> =
+                (0..60).map(|index| solid(&cell(&lying, lie::NARROW, index))).collect();
+            for index in 0..8 {
+                let cells = solid(&cell(&blink, lie::NARROW, index));
+                let closest =
+                    (0..60).min_by_key(|&drawing| apart(&cells, &loop_cells[drawing], (0, 0))).unwrap();
+                assert_eq!(closest as u32, lie::BLINK_FROM + index, "clignement, case {index}");
+            }
+            // les cases larges : le même dessin, décalé de WIDE_SHIFT (la fin de son éclat, le début
+            // de son départ, au plus près du dessin 0 de sa boucle)
+            for (image, index) in [(&glitch, 9), (&leave, 0)] {
+                let wide = solid(&cell(image, lie::WIDE, index));
+                let best = (28..=40)
+                    .flat_map(|dx| (-2..=2).map(move |dy| (dx, dy)))
+                    .min_by_key(|&offset| apart(&wide, &loop_cells[0], offset))
+                    .unwrap();
+                assert!((best.0 - lie::WIDE_SHIFT as i32).abs() <= 1 && best.1.abs() <= 1, "{best:?}");
+            }
+            // son sommeil, un dessin sur trois : deux dessins montrés voisins diffèrent moins que deux
+            // dessins voisins de sa boucle éveillée, un sur deux
+            let shown = |image: &image::RgbaImage, step: usize| -> Vec<HashSet<(i32, i32)>> {
+                (0..60).step_by(step).map(|index| solid(&cell(image, lie::NARROW, index as u32))).collect()
+            };
+            let most = |drawings: &[HashSet<(i32, i32)>]| {
+                (0..drawings.len())
+                    .map(|i| {
+                        let (a, b) = (&drawings[i], &drawings[(i + 1) % drawings.len()]);
+                        apart(a, b, (0, 0)) as f64 / a.len() as f64
+                    })
+                    .fold(0.0, f64::max)
+            };
+            let (asleep, awake) = (most(&shown(&sleep, lie::SLEEP_STEP as usize)), most(&shown(&lying, 2)));
+            assert!(asleep < awake && asleep < 0.04, "endormie {asleep}, éveillée {awake}");
+            // ses yeux, à la même place dans sa boucle et son sommeil (le haut de son visage)
+            let (ex, ey) = eyes(&cell(&lying, lie::NARROW, 0), (110, 70, 150, 105));
+            assert!((ex - 133.5).abs() < 1.0 && (ey - 89.2).abs() < 1.0, "({ex}, {ey})");
+        }
+
+        #[test]
+        fn the_real_nap_matches_its_measures_when_present() {
+            let Some(dir) = super::super::assets_dir() else { return };
+            let arrive = dir.join(life::DIR).join(life::Strip::Arrive.file());
+            if !rest::present_in::<Napping>(&dir) || !arrive.is_file() {
+                return;
+            }
+            let read = |strip: life::Strip| {
+                image::open(dir.join(life::DIR).join(strip.file())).unwrap().into_rgba8()
+            };
+            let (sleep, wake, arrive) =
+                (read(life::Strip::Sleep), read(life::Strip::Wake), read(life::Strip::Arrive));
+            // son réveil finit sur la fin de son arrivée : ses yeux au même endroit, à un dixième près
+            let end = cell(&wake, life::CELL_WIDTH, life::Strip::Wake.count() - 1);
+            let arrived = cell(&arrive, life::CELL_WIDTH, life::Strip::Arrive.count() - 1);
+            let (ex, ey) = eyes(&end, (0, 90, life::CELL_WIDTH, 140));
+            assert!((ex - life::EYES.0).abs() < 0.2 && (ey - life::EYES.1).abs() < 0.2, "({ex}, {ey})");
+            let (a, b) = (solid(&end), solid(&arrived));
+            assert!((apart(&a, &b, (0, 0)) as f64) < 0.03 * b.len() as f64);
+            // endormie, roulée dans ses cheveux, elle flotte un peu au-dessus de ses pieds debout
+            for index in 0..life::Strip::Sleep.count() {
+                let drawing = cell(&sleep, life::CELL_WIDTH, index);
+                let lowest = (0..384)
+                    .rev()
+                    .find(|&y| (0..life::CELL_WIDTH).any(|x| drawing.get_pixel(x, y)[3] > 96))
+                    .unwrap();
+                assert_eq!(lowest, 354, "dessin {index}");
             }
         }
     }

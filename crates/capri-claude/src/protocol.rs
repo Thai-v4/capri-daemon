@@ -137,6 +137,19 @@ fn is_false(value: &bool) -> bool {
     !*value
 }
 
+/// Les catégories de notifications de Claude Code qui attendent l'utilisateur : une permission à
+/// accorder, Claude qui attend sa réponse depuis un moment, une question à remplir (un serveur MCP
+/// qui la pose, par un formulaire ou une adresse), un agent qui attend. Les mêmes que celles que
+/// suit le bandeau (`sessions`).
+pub const WAITING_NOTIFICATIONS: [&str; 5] =
+    ["permission_prompt", "idle_prompt", "elicitation_dialog", "elicitation_url_dialog", "agent_needs_input"];
+
+/// Un outil de Claude Code qui ouvre une question à l'utilisateur plutôt qu'un travail (une
+/// question à choix, la sortie du mode plan).
+pub fn asks_the_user(tool: &str) -> bool {
+    matches!(tool, "AskUserQuestion" | "ExitPlanMode")
+}
+
 /// La ligne que Claude a écrite pour Capri (le miroir), déjà débarrassée de son marqueur.
 ///
 /// Comme un secret : son `Debug` ne montre que sa longueur, pour qu'elle ne finisse jamais dans un
@@ -199,6 +212,31 @@ impl Message {
     /// comptent pas.)
     pub fn ends_main_turn(&self) -> bool {
         matches!(self.event, Event::TurnEnd { .. }) && self.agent.is_none()
+    }
+
+    /// Claude Code attend-il une réponse de l'utilisateur ? Une demande de permission
+    /// (`PermissionRequest`), une question posée par un outil qui interroge l'utilisateur
+    /// ([`asks_the_user`]), ou une notification de l'une des catégories qui l'attendent
+    /// ([`WAITING_NOTIFICATIONS`]) ; dans la session principale comme dans un sous-agent (c'est
+    /// toujours l'utilisateur qui répond). Jamais un outil ordinaire, ni la fin d'un tour. Capri se
+    /// réveille alors (voir `capri-app`).
+    pub fn waits_for_the_user(&self) -> bool {
+        match &self.event {
+            Event::NeedsPermission { .. } => true,
+            Event::ToolStart { tool, .. } => asks_the_user(tool),
+            Event::Notification { notification_type, .. } => {
+                WAITING_NOTIFICATIONS.contains(&notification_type.as_str())
+            }
+            Event::SessionStart { .. }
+            | Event::TurnStart
+            | Event::ToolEnd { .. }
+            | Event::ToolFailed { .. }
+            | Event::AgentStart { .. }
+            | Event::AgentEnd { .. }
+            | Event::TurnEnd { .. }
+            | Event::TurnFailed { .. }
+            | Event::SessionEnd { .. } => false,
+        }
     }
 
     /// La ligne à envoyer, saut de ligne final compris.
@@ -457,6 +495,40 @@ mod tests {
         ] {
             assert!(!message(event).ends_main_turn());
         }
+    }
+
+    #[test]
+    fn only_a_permission_a_question_or_a_waiting_notification_calls_the_user() {
+        let s = |text: &str| text.to_owned();
+        for event in [
+            Event::NeedsPermission { tool: s("Bash"), summary: None },
+            Event::ToolStart { tool: s("AskUserQuestion"), id: None, summary: None },
+            Event::ToolStart { tool: s("ExitPlanMode"), id: None, summary: None },
+            Event::Notification { notification_type: s("permission_prompt"), message: Some(s("…")) },
+            Event::Notification { notification_type: s("idle_prompt"), message: None },
+            Event::Notification { notification_type: s("elicitation_dialog"), message: None },
+            Event::Notification { notification_type: s("elicitation_url_dialog"), message: None },
+            Event::Notification { notification_type: s("agent_needs_input"), message: None },
+        ] {
+            assert!(message(event.clone()).waits_for_the_user(), "{event:?}");
+            // dans un sous-agent aussi : c'est toujours l'utilisateur qui répond
+            let inside = Message { agent: Some(s("Explore")), ..message(event.clone()) };
+            assert!(inside.waits_for_the_user(), "{event:?}");
+        }
+        // un outil ordinaire, la fin d'un tour, une notification qui n'attend personne : non
+        for event in [
+            Event::ToolStart { tool: s("Bash"), id: None, summary: Some(s("ls")) },
+            Event::ToolEnd { tool: s("AskUserQuestion"), id: None, duration_ms: None },
+            Event::TurnEnd { said: None },
+            Event::TurnStart,
+            Event::Notification { notification_type: s("auth_success"), message: None },
+            Event::Notification { notification_type: s("PERMISSION_PROMPT"), message: None },
+            Event::SessionStart { source: None, model: None },
+        ] {
+            assert!(!message(event.clone()).waits_for_the_user(), "{event:?}");
+        }
+        // le bandeau suit les mêmes catégories
+        assert_eq!(WAITING_NOTIFICATIONS.len(), 5);
     }
 
     #[test]

@@ -10,7 +10,10 @@
 //! l'autre. Elle bouge et réagit (`capri_core::look`) : tenue, elle pend ; lâchée, elle se
 //! relève ; un clic sur elle (un appui bref, relâché sans la déplacer : `capri_core::input::Hand`)
 //! la fait sourire, ou lui donne un éclat assise ; elle sourit quand Claude Code finit son tour ;
-//! elle marche d'une place à l'autre en bas de l'écran.
+//! elle marche d'une place à l'autre en bas de l'écran. Elle se repose : tranquille un moment,
+//! elle s'allonge sur son bord, puis s'endort, ou s'endort debout ; on lui parle, on clique sur
+//! elle, Claude Code attend une réponse : elle se réveille. Ses planches de repos sont chargées à
+//! la demande, hors du thread principal (`on_demand`), et lâchées quand elle ne s'en sert plus.
 //!
 //! Une seule fenêtre transparente, l'overlay de `capri-platform`, couvre l'écran principal. Elle
 //! laisse passer la souris partout, sauf sur Capri elle-même. Le curseur est lu auprès du système
@@ -64,6 +67,7 @@ mod music_rehearsal;
 mod music_setup;
 mod music_view;
 mod ollama_view;
+mod on_demand;
 #[cfg(debug_assertions)]
 mod perch_rehearsal;
 mod perch_setup;
@@ -147,13 +151,15 @@ fn main() -> Result<()> {
     // ses planches debout et assise ; sans elles, son dessin d'avant ; et celles de sa vie (elle
     // apparaît, elle s'efface) : sans elles, elle apparaît et disparaît d'un coup
     let (stand, perch, life) = (assets::stand::load(), assets::perch::load(), assets::life::load());
+    // ses planches de repos : leurs en-têtes seulement, rien n'est décodé (chargées à la demande)
+    let rests = figure::Rests { lying: assets::rest::lying(), sleeping: assets::rest::sleeping() };
     log::info!("images lues en {} ms", loaded.elapsed().as_millis());
 
     let mut builder = EventLoop::builder();
     capri_platform::configure_event_loop(&mut builder);
     let event_loop = builder.build().context("création de la boucle d'événements")?;
 
-    let mut app = App { images: Some(Images { sprite, stand, perch, life }), ..App::default() };
+    let mut app = App { images: Some(Images { sprite, stand, perch, life, rests }), ..App::default() };
     #[cfg(any(target_os = "macos", windows))]
     {
         app.journal_file = journal_file;
@@ -170,6 +176,8 @@ struct Images {
     stand: Option<assets::stand::StandSheets>,
     perch: Option<assets::perch::PerchSheets>,
     life: Option<assets::life::LifeSheets>,
+    /// Où sont ses planches de repos, d'après leurs en-têtes (chargées à la demande).
+    rests: figure::Rests,
 }
 
 #[derive(Default)]
@@ -356,6 +364,8 @@ impl ApplicationHandler for App {
             if r.figure.look.is_gone() {
                 r.banner.listen_only();
                 r.music.tick(Instant::now(), false); // cachée, elle ne se balance pas
+                // cachée, ses planches de repos sont lâchées comme ailleurs, une minute après
+                r.figure.sync_rests(&mut r.renderer, Instant::now());
             } else if r.step_due() {
                 r.tick();
             }
@@ -388,7 +398,8 @@ impl ApplicationHandler for App {
 
 impl App {
     fn start(&mut self, event_loop: &ActiveEventLoop) -> Result<Running> {
-        let Images { sprite, stand, perch, life } = self.images.take().context("démarrage déjà fait")?;
+        let Images { sprite, stand, perch, life, rests } =
+            self.images.take().context("démarrage déjà fait")?;
         let overlay = Overlay::new(event_loop)?;
 
         let (width, height) = overlay.size();
@@ -408,13 +419,21 @@ impl App {
         // ses images confiées à la carte graphique, puis lâchées
         let mut figure =
             figure::Figure::new(sprite, stand, perch, life, standing, |image| renderer.add_image(image))?;
+        figure.offer_rests(rests);
         let look = &figure.look;
+        let offered = look.offered();
         log::info!(
-            "dessins : debout {}, sur les fenêtres {}, elle apparaît {}, ses gestes : {} ; mémoire graphique : {:.1} Mo",
+            "dessins : debout {}, sur les fenêtres {}, elle apparaît {}, ses gestes : {}, son repos : {} ; mémoire graphique : {:.1} Mo",
             if look.has_stand() { "ses planches" } else { "son dessin d'avant" },
             if look.has_perch() { "assise" } else { "debout" },
             if look.has_life() { "par ses planches" } else { "d'un coup" },
             moves_of(look),
+            match (offered.lying, offered.sleeping) {
+                (true, true) => "allongée et debout, à la demande",
+                (true, false) => "allongée, à la demande",
+                (false, true) => "debout, à la demande",
+                (false, false) => "aucun",
+            },
             renderer.image_bytes() as f64 / 1_000_000.0
         );
         let body = figure.look.standing_size();
@@ -1466,8 +1485,8 @@ impl Running {
             self.capri.step(0.0, self.frame);
             self.perch.wake();
             let (seconds, period) = (self.seconds(), pace::refresh_period(self.refresh).as_secs_f64());
-            let stature = self.figure.look.stature();
-            self.perch.tick(&mut self.capri, &self.overlay, seconds, period, stature);
+            let (stature, lying) = (self.figure.look.stature(), self.figure.look.lying_stature());
+            self.perch.tick(&mut self.capri, &self.overlay, seconds, period, stature, lying);
         }
         self.figure.look.appear(&mut self.capri, self.frame);
         let seconds = self.seconds();
@@ -1508,8 +1527,10 @@ impl Running {
         }
         // sa fenêtre est lue le plus tard possible avant de dessiner : le dessin la montre plus fraîche
         let (seconds, period) = (self.seconds(), pace::refresh_period(self.refresh).as_secs_f64());
-        let stature = self.figure.look.stature();
-        self.perch.tick(&mut self.capri, &self.overlay, seconds, period, stature);
+        let (stature, lying) = (self.figure.look.stature(), self.figure.look.lying_stature());
+        self.perch.tick(&mut self.capri, &self.overlay, seconds, period, stature, lying);
+        // la place pour elle allongée, d'après cette lecture-là (aucune de plus)
+        self.figure.look.set_room_to_lie(self.perch.room_to_lie());
         let talking = self.banner.is_talking();
         let music = self.music.tick(now, self.figure.look.wants_music(&self.capri));
         // on se parle : son geste s'arrête, et aucun ne commence
@@ -1531,8 +1552,14 @@ impl Running {
         if self.banner.take_turn_end() && self.figure.look.cheer(&mut self.capri, self.frame) {
             log::debug!("Claude Code a fini son tour : elle sourit");
         }
-        // sa vie : elle part d'elle-même ailleurs, ou y apparaît, effacée d'ici
+        // Claude Code attend une réponse de l'utilisateur : endormie, elle se réveille
+        if self.banner.take_awaiting() && self.figure.look.stir(&mut self.capri, self.frame) {
+            log::debug!("Claude Code attend une réponse : elle se réveille");
+        }
+        // sa vie : elle part d'elle-même ailleurs, ou y apparaît, effacée d'ici ; elle se repose
         self.roam_step(seconds);
+        // ses planches de repos : chargées si elle en veut, lâchées si elle n'en veut plus
+        self.figure.sync_rests(&mut self.renderer, now);
         // « Voir une intro » : effacée, l'intro se joue
         if let Some(entry) = self.encore.filter(|_| self.figure.look.is_offstage()) {
             self.encore = None;
@@ -1718,7 +1745,9 @@ impl Running {
         self.scale = scale;
         self.apply_size(self.overlay.scale_factor());
         let (seconds, stature) = (self.seconds(), self.figure.look.stature());
-        self.perch.resized(&mut self.capri, &self.overlay, seconds, stature);
+        let lying = self.figure.look.lying_stature();
+        self.perch.resized(&mut self.capri, &self.overlay, seconds, stature, lying);
+        self.figure.look.set_room_to_lie(self.perch.room_to_lie());
         // trop grande pour son bord, elle l'a quitté : c'est un geste, pas un bord perdu
         self.roam.touched(seconds, &self.capri);
         true

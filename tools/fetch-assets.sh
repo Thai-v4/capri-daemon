@@ -3,9 +3,10 @@
 # vérifie l'empreinte SHA-256 de chaque fichier. Voir CREDITS.md pour leur provenance.
 #
 # - mochiiwuff/capri-desktop : le dessin debout, les visages, l'introduction (assets/capri/) ;
-# - lachydotmcg/capri-desktop : sa pose assise et sa pose debout, dessinées par l'artiste de ce
-#   projet (assets/capri/perch/, assets/capri/stand/), les planches de sa vie (elle apparaît,
-#   elle s'efface, elle marche, elle pend, elle se relève, elle sourit : assets/capri/life/) et
+# - lachydotmcg/capri-desktop : sa pose assise, sa pose debout et sa pose allongée, dessinées par
+#   l'artiste de ce projet (assets/capri/perch/, assets/capri/stand/, assets/capri/laydown/), les
+#   planches de sa vie (elle apparaît, elle s'efface, elle marche, elle pend, elle se relève, elle
+#   sourit, elle dort debout, elle se réveille : assets/capri/life/) et
 #   l'intro « Up close » du lancement
 #   (assets/capri/intro/), dont ce dépôt ne nomme pas l'auteur. PolyForm Noncommercial 1.0.0 :
 #   usage non commercial seulement. Jamais les planches ni l'intro que ce dépôt crédite à
@@ -97,6 +98,21 @@ be03a983e65d2de7fc9ef3f992759610431ee5f4a750af580d36dfe607ca51c7  arrive.png
 0d92f9ece48e0c0ccc728cb49322227c73f34458b14eb32606020bf3c5c98b5f  dangle.png
 f108f696a36db25de2162b128982ef30ae1c066b6594885b284bab8b22d80252  glitch.png
 760e8f9378389d6776f9e2477ffcb9e2c62a0a56bffce328c5d8c6710b21dbd4  grin.png
+f6dd6452ec73eebf1a04e4720771e1cd6f18c383aff3b1590478d12324f971a5  sleep.png
+89a0ba1f5f000a310224ea074ff27c51da864301071a083c157f2213116555ba  wake.png
+LIST
+
+# même dépôt, même révision ; sa pose allongée, du nouveau jeu de son artiste (le commit
+# ff478644 du dépôt : « …in her artist's new lay-down frames… ») : elle s'allonge sur son bord,
+# cligne, parle, dort, et s'en efface. Pas ses variantes retournées (`_flipped`), ni son
+# clignement glitché
+fetch lachydotmcg/capri-desktop b40fc2ed271976545c7a06ef78038a07a38f1dd5 assets/sprites "$DEST/laydown" <<'LIST'
+c13153f60c3543efaea6006bfa64221a5923651bae382aa302d6801ac7704cbf  laydown.png
+4cf6bc933bd3384610e6a1c6f0e287e23a1feb5ef0863204f8adbd47fbe4f32c  laydown_blink.png
+f0c36e913cea82b0595383befdf3e0f7a583c405d587091d8822bfa5b0886634  laydown_talk.png
+5a747bbe66379e4f65f3f398a97198d8182eac5cd52c40aa4bf4ba8f3905dc49  laydown_sleep.png
+6f8b2461d3560d23b2516de41affb96e4368d7d34b807a5655d46ea8a7dc417a  laydown_glitch.png
+59bbad7255ac06957cdd8ddead9fd1393e5a0e4719c42c74c41a0c4be017cfcb  laydown_leave.png
 LIST
 
 # même dépôt, même révision ; l'intro « Up close » du lancement (22 images de 1920 × 1080 : elle

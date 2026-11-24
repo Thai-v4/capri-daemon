@@ -14,7 +14,7 @@
 //! Dans le doute, mieux vaut se taire qu'affirmer quelque chose de périmé : une phase sans
 //! nouvelles finit par expirer.
 
-use crate::protocol::{Event, Message};
+use crate::protocol::{Event, Message, asks_the_user};
 use crate::text::{file_name, truncate};
 
 /// Longueur maximale du texte du bandeau.
@@ -325,11 +325,6 @@ impl Session {
             }),
         }
     }
-}
-
-/// Les outils qui ouvrent une question à l'utilisateur plutôt qu'un travail.
-fn asks_the_user(tool: &str) -> bool {
-    matches!(tool, "AskUserQuestion" | "ExitPlanMode")
 }
 
 /// La phase d'attente qui convient à cet outil. Claude Code signale une question posée à

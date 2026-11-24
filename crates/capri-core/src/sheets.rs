@@ -2,8 +2,9 @@
 //! cligne des yeux, parle, se balance sur ta musique, arrive et repart ; et, facultatives, un éclat
 //! ([`Strip::PerchGlitch`]) et une variante de son clignement ([`Strip::PerchBlinkGlitch`]).
 //! Celles de sa pose debout,
-//! du même artiste, sont décrites dans [`stand`], et celles de sa vie debout hors de sa boucle
-//! (elle se matérialise, elle s'efface) dans [`life`].
+//! du même artiste, sont décrites dans [`stand`], celles de sa pose allongée (chargées à la
+//! demande) dans [`lie`], et celles de sa vie debout hors de sa boucle (elle se matérialise, elle
+//! s'efface, elle dort debout) dans [`life`].
 //!
 //! **D'où elles viennent.** Dessinées par l'artiste du projet
 //! [lachydotmcg/capri-desktop](https://github.com/lachydotmcg/capri-desktop) (voir `CREDITS.md`),
@@ -40,6 +41,7 @@
 use crate::anim::Sheet;
 use crate::geom::Vec2;
 
+pub mod lie;
 pub mod life;
 pub mod stand;
 
@@ -290,6 +292,45 @@ impl Shown {
         let shown = index < self.full.count && index.is_multiple_of(self.step);
         let slot = index / self.step;
         shown.then_some((slot % self.columns * cw, slot / self.columns * ch))
+    }
+
+    /// La taille d'une case.
+    pub fn cell(self) -> (u32, u32) {
+        self.full.cell
+    }
+
+    /// Combien de dessins a la planche entière (montrés ou non).
+    pub fn drawings(self) -> u32 {
+        self.full.count
+    }
+
+    /// La taille de la planche telle qu'elle est téléchargée : une bande horizontale.
+    pub fn strip_size(self) -> (u32, u32) {
+        self.full.strip_size()
+    }
+
+    /// Cette grille, faite directement à partir de la bande telle qu'elle est téléchargée (RGBA 8
+    /// bits, `width` × `height`), sans passer par la grille complète : de quoi n'avoir en mémoire,
+    /// en route, que la bande et cette grille (pour les planches chargées à la demande, hors du
+    /// thread principal). `Err` si la bande n'a pas la taille attendue.
+    pub fn pack_strip(self, width: u32, height: u32, rgba: &[u8]) -> Result<Vec<u8>, WrongSize> {
+        let expected = self.full.strip_size();
+        if (width, height) != expected || rgba.len() != (width as usize) * (height as usize) * 4 {
+            return Err(WrongSize { expected, found: (width, height) });
+        }
+        let (cw, ch) = self.full.cell;
+        let (gw, gh) = self.grid_size();
+        let mut packed = vec![0u8; (gw * gh * 4) as usize];
+        let row = (cw * 4) as usize;
+        for index in (0..self.full.count).step_by(self.step as usize) {
+            let Some((px, py)) = self.origin(index) else { continue };
+            for y in 0..ch {
+                let from = ((y * width + index * cw) * 4) as usize;
+                let to = (((py + y) * gw + px) * 4) as usize;
+                packed[to..to + row].copy_from_slice(&rgba[from..from + row]);
+            }
+        }
+        Ok(packed)
     }
 
     /// Cette grille, faite à partir de la grille complète de la planche ([`repack`]) ; `None` si
@@ -669,6 +710,31 @@ mod tests {
             assert_eq!(packed[at..at + 4], [index as u8, 7, 0, 255], "dessin {index}");
         }
         assert!(shown.pack(&grid[4..]).is_none(), "une grille de la mauvaise taille");
+    }
+
+    #[test]
+    fn packing_straight_from_the_strip_gives_the_same_grid() {
+        for strip in Strip::ALL {
+            let (w, h) = strip.strip_size();
+            let (cw, _) = strip.cell();
+            // chaque pixel porte sa case et sa colonne dans la case
+            let rgba: Vec<u8> = (0..w * h)
+                .flat_map(|i| [((i % w) / cw) as u8, (i % w % cw) as u8, (i / w % 256) as u8, 255])
+                .collect();
+            let grid = repack(strip, w, h, &rgba).unwrap();
+            let shown = shown(strip);
+            assert_eq!(shown.pack_strip(w, h, &rgba), Ok(shown.pack(&grid).unwrap()), "{strip:?}");
+            assert_eq!(
+                (shown.cell(), shown.drawings(), shown.strip_size()),
+                (strip.cell(), strip.count(), (w, h))
+            );
+        }
+        let shown = shown(Strip::Perch);
+        assert_eq!(
+            shown.pack_strip(220, 420, &vec![0; 220 * 420 * 4]),
+            Err(WrongSize { expected: (11760, 384), found: (220, 420) })
+        );
+        assert!(shown.pack_strip(11760, 384, &[0; 16]).is_err(), "trop peu d'octets");
     }
 
     #[test]

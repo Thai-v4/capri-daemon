@@ -24,17 +24,30 @@
 //! **Elle se rassemble** (une intro, `capri_core::intro::act`) : rien de plus sur la carte
 //! graphique, des parts de la planche de son arrivée déjà confiée, une bande de lignes chacune,
 //! étirées vers les bords de l'écran (huit dessins de plus pendant 0,75 s).
+//!
+//! **Ses planches de repos** (sa pose allongée, son sommeil debout) ne sont jamais confiées au
+//! lancement : chargées à la demande (`on_demand`), quand son dessin en veut
+//! (`capri_core::look::Look::wants`), et lâchées une minute après qu'il n'en veut plus
+//! ([`Figure::sync_rests`]). Allongée : 40,9 Mo de textures de plus (ses trois boucles de 372 ×
+//! 250 px, un dessin sur deux, son sommeil un sur trois, son clignement, son éclat, son départ) ;
+//! endormie debout : 11,1 Mo (son sommeil et son réveil, de 240 px).
+
+use std::path::PathBuf;
+use std::time::Instant;
 
 use capri_core::Rect;
 use capri_core::intro::act;
-use capri_core::look::{Drawing, Look, Moves, Picture, Wardrobe};
-use capri_core::sheets::{self, Shown, life, stand};
+use capri_core::look::{Drawing, Look, Moves, Picture, Wants, Wardrobe};
+use capri_core::sheets::{self, Shown, lie, life, stand};
 use capri_render::{Crop, GHOST, ImageId, RenderError, SpriteDraw, SpriteImage};
 
 use crate::assets::Sprite;
 use crate::assets::life::LifeSheets;
 use crate::assets::perch::PerchSheets;
+use crate::assets::rest::{Lying, Napping};
 use crate::assets::stand::StandSheets;
+use crate::intro_view::Canvas;
+use crate::on_demand::{Change, OnDemand};
 
 /// Amplitude du « boil » de son dessin d'avant, en pixels de cette image (420 px de haut).
 const BOIL: f32 = 1.0;
@@ -50,6 +63,18 @@ struct Images {
 pub struct Figure {
     pub look: Look,
     images: Images,
+    /// Sa pose allongée, chargée à la demande.
+    lying: OnDemand<Lying>,
+    /// Son sommeil et son réveil debout, chargés à la demande.
+    napping: OnDemand<Napping>,
+}
+
+/// Où sont ses planches de repos (le dossier des images, d'après leurs en-têtes lus au lancement :
+/// `assets::rest`), si elles y sont.
+#[derive(Clone, Debug, Default)]
+pub struct Rests {
+    pub lying: Option<PathBuf>,
+    pub sleeping: Option<PathBuf>,
 }
 
 /// Confie à `upload` les seuls dessins montrés d'une planche remise en grille (`grid`), serrés dans
@@ -173,7 +198,10 @@ impl Figure {
                             life::Strip::Dangle => moves.dangle = mask,
                             life::Strip::Glitch => moves.glitch = mask,
                             life::Strip::Grin => moves.grin = mask,
-                            life::Strip::Arrive | life::Strip::Leave => {}
+                            life::Strip::Arrive
+                            | life::Strip::Leave
+                            | life::Strip::Sleep
+                            | life::Strip::Wake => {}
                         }
                     }
                     Err(err) => log::warn!(
@@ -185,7 +213,48 @@ impl Figure {
         }
         let wardrobe =
             Wardrobe { cutout: sprite.mask, stand: stand_mask, perch: perch_masks, life: life_mask, moves };
-        Ok(Self { look: Look::new(wardrobe, height), images })
+        Ok(Self {
+            look: Look::new(wardrobe, height),
+            images,
+            lying: OnDemand::new(None),
+            napping: OnDemand::new(None),
+        })
+    }
+
+    /// Ses planches de repos, là où elles sont (rien n'est lu ici) : elle pourra s'allonger
+    /// (avec sa pose assise), s'endormir debout (avec sa pose debout, sur laquelle elles
+    /// s'alignent). Sans elles, elle ne le fait jamais.
+    pub fn offer_rests(&mut self, rests: Rests) {
+        self.look.offer(Wants { lying: rests.lying.is_some(), sleeping: rests.sleeping.is_some() });
+        let offered = self.look.offered();
+        self.lying = OnDemand::new(rests.lying.filter(|_| offered.lying));
+        self.napping = OnDemand::new(rests.sleeping.filter(|_| offered.sleeping));
+    }
+
+    /// Un pas de ses planches de repos, à l'instant `now` : celles que son dessin veut sont
+    /// chargées (hors du thread principal) et confiées à `gpu` à mesure qu'elles arrivent, puis
+    /// données à son dessin ; celles qu'il ne veut plus depuis une minute, lâchées et reprises. Un
+    /// chargement qui échoue : elle s'en passe jusqu'à son prochain lancement. Ne bloque jamais.
+    pub fn sync_rests(&mut self, gpu: &mut impl Canvas<Id = ImageId>, now: Instant) {
+        let wants = self.look.wants();
+        match self.lying.step(wants.lying, now, gpu) {
+            Change::Nothing => {}
+            Change::Dressed(masks) => self.look.dress_lying(Some(masks)),
+            Change::Undressed => self.look.dress_lying(None),
+            Change::Failed => {
+                self.look.dress_lying(None);
+                self.look.offer(Wants { lying: false, ..self.look.offered() });
+            }
+        }
+        match self.napping.step(wants.sleeping, now, gpu) {
+            Change::Nothing => {}
+            Change::Dressed(masks) => self.look.dress_sleeping(Some(masks)),
+            Change::Undressed => self.look.dress_sleeping(None),
+            Change::Failed => {
+                self.look.dress_sleeping(None);
+                self.look.offer(Wants { sleeping: false, ..self.look.offered() });
+            }
+        }
     }
 
     /// Ce qu'il faut dessiner pour `picture`, dans l'ordre : elle, puis sa bouche par-dessus ;
@@ -228,7 +297,8 @@ impl Figure {
             Some(vec![(id, SpriteDraw { crop, ..plain })])
         };
         let life_cell = |cell: life::Cell| {
-            let id = image_of(&self.images.life, cell.strip)?;
+            // son sommeil et son réveil debout : chargés à la demande
+            let id = image_of(&self.images.life, cell.strip).or_else(|| self.napping.image(cell.strip))?;
             let shown = life::shown(cell.strip);
             let crop = Crop::pixels(shown.origin(cell.index)?, cell.strip.cell(), shown.grid_size());
             Some(vec![(id, SpriteDraw { crop, ..plain })])
@@ -240,6 +310,16 @@ impl Figure {
                 None => cutout(),
             },
             Drawing::Perch(cell) => perch_cell(cell).unwrap_or_else(cutout),
+            // sa pose allongée, chargée à la demande : `look` ne la dessine que confiée ; par
+            // prudence, rien plutôt que son dessin d'avant déformé à sa taille
+            Drawing::Lie(cell) => {
+                let shown = lie::shown(cell.strip);
+                let drawn = self.lying.image(cell.strip).zip(shown.origin(cell.index)).map(|(id, origin)| {
+                    let crop = Crop::pixels(origin, cell.strip.cell(), shown.grid_size());
+                    (id, SpriteDraw { crop, ..plain })
+                });
+                drawn.into_iter().collect()
+            }
             // sans ces images, `look` ne dessine jamais ses planches de vie ; par prudence, rien
             // plutôt que son dessin d'avant déformé à leur taille
             Drawing::Life(cell) => life_cell(cell).unwrap_or_default(),

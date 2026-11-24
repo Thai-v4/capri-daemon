@@ -203,6 +203,34 @@ fn tell(event: Event) -> Option<(&'static str, Tone)> {
                 Hold::Carried | Hold::Away | Hold::Walking => None,
             }
         }
+        Event::LiesDown => {
+            log::info!("repos : elle s'allonge sur son bord");
+            None
+        }
+        Event::FallsAsleep { lying } => {
+            log::info!("repos : elle s'endort {}", if lying { "allongée" } else { "debout" });
+            None
+        }
+        Event::WakesUp { lying, woken } => {
+            log::info!(
+                "repos : elle se réveille {}, {}",
+                if lying { "allongée" } else { "debout" },
+                if woken { "on s'est occupé d'elle" } else { "d'elle-même" }
+            );
+            None
+        }
+        Event::SitsUp { asleep } => {
+            log::info!("repos : elle se rassoit{}", if asleep { ", réveillée" } else { "" });
+            None
+        }
+        Event::Unsettled { why, asleep } => {
+            log::info!(
+                "repos : {}, elle n'est plus allongée{}",
+                why.describe(),
+                if asleep { " (elle dormait)" } else { "" }
+            );
+            None
+        }
     }
 }
 
@@ -227,5 +255,18 @@ mod tests {
         assert!(tell(Event::Refused(Hold::Music)).is_some());
         assert_eq!(tell(Event::Refused(Hold::Away)), None);
         assert_eq!(tell(Event::Refused(Hold::Carried)), None);
+        // son repos : rien au-dessus de sa tête
+        for event in [
+            Event::LiesDown,
+            Event::FallsAsleep { lying: true },
+            Event::FallsAsleep { lying: false },
+            Event::WakesUp { lying: true, woken: true },
+            Event::WakesUp { lying: false, woken: false },
+            Event::SitsUp { asleep: true },
+            Event::Unsettled { why: capri_core::look::Unsettled::NoRoom, asleep: true },
+            Event::Unsettled { why: capri_core::look::Unsettled::LedgeGone, asleep: false },
+        ] {
+            assert_eq!(tell(event), None, "{event:?}");
+        }
     }
 }
