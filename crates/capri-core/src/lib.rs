@@ -13,8 +13,9 @@
 //! planches de ses poses assise et debout (cases, dessins, où passe le bord de la fenêtre), et
 //! [`look`] dit lequel montrer à chaque image, où, et ce qui l'attrape. [`music`] décide,
 //! d'après l'état que les lecteurs connus ont annoncé, si de la musique joue. [`roam`] décide
-//! quand elle change d'elle-même de place, et où elle va : un bord, sinon debout en bas de
-//! l'écran, d'après une horloge passée en paramètre et un hasard à graine.
+//! quand elle change d'elle-même de place, et où elle va : un bord, sinon derrière le côté d'une
+//! fenêtre, où elle guette, sinon debout en bas de l'écran, d'après une horloge passée en
+//! paramètre et un hasard à graine.
 //! [`intro`] tient la liste de ses intros du lancement et les tire au sort ; pour une intro en
 //! images, quelle image montrer à chaque image, où (tout l'écran), quand elle est finie et ce qui
 //! la coupe (`capri-app` décode ses images une à une) ; pour une intro qu'elle joue elle-même

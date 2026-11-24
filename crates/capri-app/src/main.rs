@@ -97,9 +97,7 @@ use banner_view::BannerView;
 use capri_core::input::{CLICK_SLOP, Hand, Let};
 use capri_core::intro::{self, Cut, End, Entry, Missing, Part, Play, Suite};
 use capri_core::look::{Gesture, Look, Picture};
-use capri_core::{
-    Button, Capri, Press, Rect, Scale, Stance, Vec2, frame_at, interpret_press, pace, place_input,
-};
+use capri_core::{Button, Capri, Press, Rect, Scale, Vec2, frame_at, interpret_press, pace, place_input};
 use capri_platform::{Overlay, OverlayEvent};
 use capri_render::{ImageId, Renderer, SpriteDraw};
 use global_hotkey::hotkey::{Code, HotKey, Modifiers};
@@ -1490,8 +1488,8 @@ impl Running {
             self.capri.step(0.0, self.frame);
             self.perch.wake();
             let (seconds, period) = (self.seconds(), pace::refresh_period(self.refresh).as_secs_f64());
-            let (stature, lying) = (self.figure.look.stature(), self.figure.look.lying_stature());
-            self.perch.tick(&mut self.capri, &self.overlay, seconds, period, stature, lying);
+            let statures = perch_view::Statures::of(&self.figure.look);
+            self.perch.tick(&mut self.capri, &self.overlay, seconds, period, statures);
         }
         self.figure.look.appear(&mut self.capri, self.frame);
         let seconds = self.seconds();
@@ -1532,8 +1530,8 @@ impl Running {
         }
         // sa fenêtre est lue le plus tard possible avant de dessiner : le dessin la montre plus fraîche
         let (seconds, period) = (self.seconds(), pace::refresh_period(self.refresh).as_secs_f64());
-        let (stature, lying) = (self.figure.look.stature(), self.figure.look.lying_stature());
-        self.perch.tick(&mut self.capri, &self.overlay, seconds, period, stature, lying);
+        let statures = perch_view::Statures::of(&self.figure.look);
+        self.perch.tick(&mut self.capri, &self.overlay, seconds, period, statures);
         // la place pour elle allongée, d'après cette lecture-là (aucune de plus)
         self.figure.look.set_room_to_lie(self.perch.room_to_lie());
         let talking = self.banner.is_talking();
@@ -1762,9 +1760,8 @@ impl Running {
         log::debug!("taille : {} %", scale.percent());
         self.scale = scale;
         self.apply_size(self.overlay.scale_factor());
-        let (seconds, stature) = (self.seconds(), self.figure.look.stature());
-        let lying = self.figure.look.lying_stature();
-        self.perch.resized(&mut self.capri, &self.overlay, seconds, stature, lying);
+        let (seconds, statures) = (self.seconds(), perch_view::Statures::of(&self.figure.look));
+        self.perch.resized(&mut self.capri, &self.overlay, seconds, statures);
         self.figure.look.set_room_to_lie(self.perch.room_to_lie());
         // trop grande pour son bord, elle l'a quitté : c'est un geste, pas un bord perdu
         self.roam.touched(seconds, &self.capri);
@@ -1800,17 +1797,15 @@ impl Running {
         }
     }
 
-    /// Quand se réveiller ensuite. Au repos (elle flotte, ou posée sur une fenêtre immobile), dans
-    /// un pas de 60 Hz, comme avant. Pressée (on la tient, elle vole, elle marche, ou sa fenêtre
-    /// bouge), à chaque rafraîchissement de l'écran : sur macOS, c'est l'écran qui réveille la
-    /// boucle ; ailleurs, un minuteur à sa fréquence. Cachée, jamais pressée.
+    /// Quand se réveiller ensuite. Au repos (elle flotte, posée sur une fenêtre immobile, ou elle y
+    /// guette), dans un pas de 60 Hz, comme avant. Pressée (on la tient, elle vole, elle marche, elle
+    /// glisse de derrière une fenêtre, ou sa fenêtre bouge), à chaque rafraîchissement de l'écran :
+    /// sur macOS, c'est l'écran qui réveille la boucle ; ailleurs, un minuteur à sa fréquence.
+    /// Cachée, jamais pressée.
     fn next_wake(&mut self, hidden: bool) -> Instant {
         let now = Instant::now();
-        let carried = matches!(
-            self.capri.stance(),
-            Stance::Held { .. } | Stance::Thrown { .. } | Stance::Walking { .. } | Stance::Falling { .. }
-        );
-        let hurried = !hidden && (carried || self.perch.hurried(&self.capri, self.seconds()));
+        let moving = self.capri.follows_screen();
+        let hurried = !hidden && (moving || self.perch.hurried(&self.capri, self.seconds()));
         self.by_screen = self.overlay.follow_refresh(hurried);
         if !hurried {
             self.clock.reset();

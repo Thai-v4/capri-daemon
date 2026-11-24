@@ -22,6 +22,15 @@
 //! opaques, assez grandes, sur son écran, et pas les siennes ([`skip`]) ; et seules les parties
 //! visibles de leurs bords supérieurs ([`ledges`]) : une fenêtre devant en cache une derrière.
 //!
+//! **« Elle guette »** veut dire ici : derrière le côté gauche ou droit d'une fenêtre ([`Side`]),
+//! penchée dehors, coupée net au bord. Ce module ne connaît que son point d'accroche, sur le côté,
+//! à la hauteur de sa hanche ([`Lurk`]), et ce qui se voit d'elle autour ([`LurkStature`]) : les
+//! morceaux visibles des côtés ([`jambs`], le pendant de [`ledges`]), ceux où elle tiendrait
+//! ([`flanks`], le pendant de [`benches`]), le suivi et le départ ([`follow_flank`], le pendant de
+//! [`follow`]). Ce qui se voit d'elle doit tenir dans l'écran, devant le côté de sa fenêtre, loin de
+//! ses coins ([`CORNER`]), et aucune fenêtre devant ne doit le recouvrir, ni le côté sous elle :
+//! jamais coupée dans le vide. Ce qui se voit et comment est dans `look.rs` et `body.rs`.
+//!
 //! Les seuils sont en fractions de sa hauteur, comme dans `body.rs`.
 
 use crate::geom::{Rect, Vec2};
@@ -40,6 +49,11 @@ pub const MIN_HEIGHT: f32 = 0.15;
 /// En dessous de cette opacité, une fenêtre ne compte pas : elle apparaît, disparaît, ou ne se
 /// voit pas.
 pub const MIN_OPACITY: f32 = 0.9;
+/// Guettant, ce qui se voit d'elle reste à cette distance des coins d'une fenêtre, en haut et en
+/// bas de son côté : 0,1 de sa hauteur (30 points à sa taille d'origine, 12 à la plus petite),
+/// pour que sa coupe ne tombe pas là où la fenêtre s'arrondit. Choisi, pas mesuré : le rayon des
+/// coins dépend du système et de l'app.
+pub const CORNER: f32 = 0.1;
 
 /// Posée, elle relit la liste des fenêtres toutes les `SLOW` secondes (4 fois par seconde) tant
 /// que sa fenêtre ne bouge pas…
@@ -277,12 +291,21 @@ pub enum Leave {
 }
 
 impl Leave {
-    /// Pour le journal.
+    /// Pour le journal, posée sur un bord.
     pub fn describe(self) -> &'static str {
         match self {
             Leave::Gone => "sa fenêtre n'est plus à l'écran",
             Leave::Covered => "le bord sous ses pieds est recouvert",
             Leave::NoRoom => "le bord sort de l'écran ou ne lui laisse plus la place",
+        }
+    }
+
+    /// Pour le journal, guettant derrière un côté ([`follow_flank`]).
+    pub fn describe_side(self) -> &'static str {
+        match self {
+            Leave::Gone => "sa fenêtre n'est plus à l'écran",
+            Leave::Covered => "une fenêtre passe devant le côté où elle guette, ou là où elle se voit",
+            Leave::NoRoom => "le côté sort de l'écran ou ne lui laisse plus la place",
         }
     }
 }
@@ -436,6 +459,273 @@ fn visible_edge(seen: &[Seen], index: usize, screen: Rect) -> Vec<(f32, f32)> {
     pieces
 }
 
+/// Un côté d'une fenêtre, où elle guette : le gauche (elle est à gauche de la fenêtre, penchée
+/// vers la gauche) ou le droit.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Side {
+    Left,
+    Right,
+}
+
+impl Side {
+    pub const ALL: [Side; 2] = [Side::Left, Side::Right];
+
+    /// Vers l'extérieur de la fenêtre, en x : −1 à gauche, +1 à droite.
+    pub fn outward(self) -> f32 {
+        match self {
+            Side::Left => -1.0,
+            Side::Right => 1.0,
+        }
+    }
+
+    /// Où est ce côté de `window`, en x.
+    pub fn x(self, window: Rect) -> f32 {
+        match self {
+            Side::Left => window.min.x,
+            Side::Right => window.max().x,
+        }
+    }
+
+    /// Son rang dans [`Side::ALL`] : de quoi ranger une mesure par côté.
+    pub fn index(self) -> usize {
+        match self {
+            Side::Left => 0,
+            Side::Right => 1,
+        }
+    }
+
+    /// Pour le journal.
+    pub fn describe(self) -> &'static str {
+        match self {
+            Side::Left => "gauche",
+            Side::Right => "droit",
+        }
+    }
+}
+
+/// Un morceau visible du côté d'une fenêtre (le pendant de [`Ledge`]) : la fenêtre, le côté, où il
+/// est en x, et d'où à où il se voit, en y.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Jamb {
+    pub window: u64,
+    pub side: Side,
+    pub x: f32,
+    pub from: f32,
+    pub to: f32,
+}
+
+/// Tous les morceaux visibles des côtés des fenêtres, sur l'écran, de la fenêtre la plus en avant à
+/// la plus en arrière : le pendant de [`ledges`].
+pub fn jambs(seen: &[Seen], screen: Rect) -> Vec<Jamb> {
+    let mut jambs = Vec::new();
+    for (index, window) in seen.iter().enumerate() {
+        for side in Side::ALL {
+            let x = side.x(window.rect);
+            for (from, to) in visible_side(seen, index, side, screen, 0.0) {
+                jambs.push(Jamb { window: window.id, side, x, from, to });
+            }
+        }
+    }
+    jambs
+}
+
+/// Ce qu'il lui faut sur le côté d'une fenêtre pour y guetter, en pixels de l'overlay : ce qui se
+/// voit d'elle autour de son point d'accroche (sur le côté, à la hauteur de sa hanche), pour chaque
+/// côté, et sa hauteur debout. Rien ne se voit d'elle derrière la fenêtre : `left.right` et
+/// `right.left` valent 0.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LurkStature {
+    /// Sa hauteur debout : la mesure de [`CORNER`].
+    pub height: f32,
+    /// Sur le côté gauche d'une fenêtre, et sur le côté droit.
+    pub left: Reach,
+    pub right: Reach,
+}
+
+impl LurkStature {
+    /// Ce qui se voit d'elle sur ce côté.
+    pub fn on(&self, side: Side) -> Reach {
+        match side {
+            Side::Left => self.left,
+            Side::Right => self.right,
+        }
+    }
+}
+
+/// Où elle guette : sur quelle fenêtre, de quel côté, à quelle distance du haut de cette fenêtre
+/// est son point d'accroche, et où étaient alors le haut et le bas de la fenêtre (de quoi savoir,
+/// à la lecture suivante, si elle a été déplacée ou tirée par le haut ou le bas). Pixels de
+/// l'overlay.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct FlankSpot {
+    pub window: u64,
+    pub side: Side,
+    pub along: f32,
+    pub top: f32,
+    pub height: f32,
+}
+
+impl FlankSpot {
+    fn on(window: &Seen, side: Side, y: f32) -> Self {
+        Self {
+            window: window.id,
+            side,
+            along: y - window.rect.min.y,
+            top: window.rect.min.y,
+            height: window.rect.size.y,
+        }
+    }
+
+    /// Son point d'accroche le long du côté de `window` (nouvelle lecture de sa fenêtre), avant
+    /// d'être borné, comme [`Spot`] le long d'un bord : déplacée, ou tirée par le bas, elle garde sa
+    /// distance au haut ; tirée par le haut, sa distance au bas ; changée des deux à la fois, sa
+    /// proportion le long du côté.
+    fn y_on(&self, window: Rect) -> f32 {
+        let same = |a: f32, b: f32| (a - b).abs() < 0.5;
+        let (top, bottom) = (window.min.y, window.max().y);
+        let old_bottom = self.top + self.height;
+        if same(window.size.y, self.height) || same(top, self.top) {
+            top + self.along
+        } else if same(bottom, old_bottom) {
+            bottom - (self.height - self.along)
+        } else {
+            top + self.along * window.size.y / self.height.max(1.0)
+        }
+    }
+}
+
+/// Une place sur le côté d'une fenêtre : la fenêtre et son côté, et son point d'accroche, sur le
+/// côté (en x), à la hauteur de sa hanche (en y).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Lurk {
+    pub spot: FlankSpot,
+    pub at: Vec2,
+}
+
+/// Un morceau visible du côté d'une fenêtre où elle tiendrait à guetter (le pendant de [`Bench`]) :
+/// ce qui se voit d'elle sur le morceau, loin des coins de la fenêtre, et dans l'écran, sans
+/// fenêtre devant. De quoi choisir où aller (`crate::roam`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Flank {
+    /// Sa fenêtre : son numéro et son rectangle, en pixels de l'overlay.
+    pub window: Seen,
+    pub side: Side,
+    /// D'où à où peut aller son point d'accroche, en y (`lo` ≤ `hi`).
+    pub lo: f32,
+    pub hi: f32,
+}
+
+impl Flank {
+    /// Où est le côté, en x.
+    pub fn x(&self) -> f32 {
+        self.side.x(self.window.rect)
+    }
+
+    /// La place sur ce morceau de côté, son point d'accroche en `y` (borné au morceau).
+    pub fn at(&self, y: f32) -> Lurk {
+        let y = if y.is_nan() { self.lo } else { y.clamp(self.lo, self.hi) };
+        Lurk { spot: FlankSpot::on(&self.window, self.side, y), at: Vec2::new(self.x(), y) }
+    }
+}
+
+/// Tous les morceaux visibles des côtés où elle tiendrait à guetter (`stature` : ce qui se voit
+/// d'elle), de la fenêtre la plus en avant à la plus en arrière. Guettant sur l'un d'eux
+/// ([`Flank::at`]), [`follow_flank`] la garde là tant que rien ne bouge.
+pub fn flanks(seen: &[Seen], screen: Rect, stature: LurkStature) -> Vec<Flank> {
+    let mut flanks = Vec::new();
+    for (index, window) in seen.iter().enumerate() {
+        for side in Side::ALL {
+            let Some((lo, hi)) = flank_room(window.rect, side, screen, stature) else { continue };
+            let reach = stature.on(side);
+            for (from, to) in visible_side(seen, index, side, screen, out_of(reach)) {
+                // `clamp` exige lo <= hi : un morceau trop court pour ce qui se voit d'elle ne la
+                // porte pas
+                let (lo, hi) = (lo.max(from + reach.up), hi.min(to - reach.down));
+                if lo <= hi {
+                    flanks.push(Flank { window: *window, side, lo, hi });
+                }
+            }
+        }
+    }
+    flanks
+}
+
+/// Guettant en `spot`, d'après une nouvelle lecture des fenêtres : où mettre son point d'accroche
+/// pour rester à la même place le long du côté (borné au côté, loin de ses coins, ce qui se voit
+/// d'elle dans l'écran), ou pourquoi elle ne guette plus là : sa fenêtre partie, le côté recouvert
+/// (sous elle ou là où elle se voit), sorti de l'écran, ou plus la place.
+pub fn follow_flank(
+    seen: &[Seen],
+    screen: Rect,
+    stature: LurkStature,
+    spot: FlankSpot,
+) -> Result<Lurk, Leave> {
+    let index = seen.iter().position(|window| window.id == spot.window).ok_or(Leave::Gone)?;
+    let window = &seen[index];
+    let (lo, hi) = flank_room(window.rect, spot.side, screen, stature).ok_or(Leave::NoRoom)?;
+    // `flank_room` garantit lo <= hi ; une place qui n'est pas un nombre donne un y qui n'en est
+    // pas un, et aucun morceau visible ne le contient
+    let y = spot.y_on(window.rect).clamp(lo, hi);
+    let reach = stature.on(spot.side);
+    let free = visible_side(seen, index, spot.side, screen, out_of(reach))
+        .into_iter()
+        .any(|(from, to)| from <= y - reach.up && y + reach.down <= to);
+    if !free {
+        return Err(Leave::Covered);
+    }
+    Ok(Lurk { spot: FlankSpot::on(window, spot.side, y), at: Vec2::new(spot.side.x(window.rect), y) })
+}
+
+/// Combien ce qui se voit d'elle va vers l'extérieur de sa fenêtre.
+fn out_of(reach: Reach) -> f32 {
+    reach.left.max(reach.right).max(0.0)
+}
+
+/// Où peut aller son point d'accroche le long du côté `side` de `window` : ce qui se voit d'elle
+/// dans l'écran et devant le côté, loin de ses coins ([`CORNER`]). `None` : le côté est hors de
+/// l'écran, ou ne lui laisse pas la place.
+fn flank_room(window: Rect, side: Side, screen: Rect, stature: LurkStature) -> Option<(f32, f32)> {
+    let reach = stature.on(side);
+    let x = side.x(window);
+    if !(x - reach.left >= screen.min.x && x + reach.right <= screen.max().x) {
+        return None;
+    }
+    let corner = CORNER * stature.height;
+    let lo = (window.min.y + corner + reach.up).max(screen.min.y + reach.up);
+    let hi = (window.max().y - corner - reach.down).min(screen.max().y - reach.down);
+    (lo <= hi).then_some((lo, hi))
+}
+
+/// Les morceaux visibles du côté `side` de la fenêtre n° `index`, en y : sur l'écran, moins ce que
+/// cachent les fenêtres devant elle, sur le côté même ou sur la bande de `out` pixels dehors où
+/// elle se voit (une fenêtre devant qui la recouvrirait). Sans bande (`out` = 0), seul le côté
+/// compte.
+fn visible_side(seen: &[Seen], index: usize, side: Side, screen: Rect, out: f32) -> Vec<(f32, f32)> {
+    let Some(window) = seen.get(index) else { return Vec::new() };
+    let x = side.x(window.rect);
+    if !(screen.min.x <= x && x <= screen.max().x) {
+        return Vec::new();
+    }
+    let (from, to) = (window.rect.min.y.max(screen.min.y), window.rect.max().y.min(screen.max().y));
+    let mut pieces = if from < to { vec![(from, to)] } else { Vec::new() };
+    // la bande où elle se voit, dehors, le côté compris
+    let (a, b) = match side {
+        Side::Left => (x - out, x),
+        Side::Right => (x, x + out),
+    };
+    for front in &seen[..index] {
+        let r = front.rect;
+        // sur la bande (une fenêtre qui la touche seulement ne la recouvre pas) ; sans bande, il
+        // faut qu'elle passe sur le côté même
+        let over = if out > 0.0 { r.min.x < b && a < r.max().x } else { r.min.x < x && x < r.max().x };
+        if !over {
+            continue;
+        }
+        pieces = pieces.into_iter().flat_map(|piece| cut(piece, (r.min.y, r.max().y))).collect();
+    }
+    pieces
+}
+
 /// `[a, b]` privé de `[c, d]` : zéro, un ou deux morceaux.
 fn cut((a, b): (f32, f32), (c, d): (f32, f32)) -> impl Iterator<Item = (f32, f32)> {
     [(a, b.min(c)), (a.max(d), b)].into_iter().filter(|(from, to)| from < to)
@@ -493,6 +783,44 @@ impl Watch {
         self.last_read = Some(now);
         self.last_rect = rect;
     }
+
+    /// Guettant en `spot`, à l'instant `now` : la veille de son côté, comme posée sur un bord. S'il
+    /// est l'heure de relire ([`Watch::due`] : `mouse_down`, `period`), `read` lit les fenêtres qui
+    /// comptent (`None` : la liste illisible), la lecture est notée ([`Watch::saw`]), et elle suit
+    /// son côté, ou ne guette plus là ([`follow_flank`], `screen`, `stature`). Sinon, rien n'est lu.
+    #[allow(clippy::too_many_arguments)]
+    pub fn flank(
+        &mut self,
+        spot: FlankSpot,
+        now: f64,
+        mouse_down: bool,
+        period: f64,
+        screen: Rect,
+        stature: LurkStature,
+        read: impl FnOnce() -> Option<Vec<Seen>>,
+    ) -> Kept {
+        if !self.due(now, mouse_down, period) {
+            return Kept::Waiting;
+        }
+        let Some(seen) = read() else { return Kept::Lost(None) };
+        let rect = seen.iter().find(|window| window.id == spot.window).map(|window| window.rect);
+        self.saw(now, rect);
+        match follow_flank(&seen, screen, stature, spot) {
+            Ok(lurk) => Kept::Follows(lurk),
+            Err(why) => Kept::Lost(Some(why)),
+        }
+    }
+}
+
+/// Ce que dit la veille d'une guetteuse ([`Watch::flank`]).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Kept {
+    /// Pas l'heure de relire : rien n'a été lu.
+    Waiting,
+    /// Relue : elle suit son côté, là.
+    Follows(Lurk),
+    /// Relue : elle ne guette plus là, pour cette raison ; `None` : la liste illisible.
+    Lost(Option<Leave>),
 }
 
 #[cfg(test)]
@@ -869,6 +1197,264 @@ mod tests {
         assert!(fits(&[front, w], screen(), wide, spot(1300.0)));
         // sa fenêtre partie
         assert!(!fits(&[], screen(), wide, spot(1000.0)));
+    }
+
+    /// Guettant, à sa taille d'origine sur cet écran : ce qui se voit d'elle autour de son point
+    /// d'accroche, 200 pixels dehors, 390 au-dessus, 240 en dessous.
+    fn lurking() -> LurkStature {
+        LurkStature {
+            height: 600.0,
+            left: Reach { left: 200.0, up: 390.0, right: 0.0, down: 240.0 },
+            right: Reach { left: 0.0, up: 390.0, right: 200.0, down: 240.0 },
+        }
+    }
+
+    #[test]
+    fn jambs_are_the_visible_pieces_of_window_sides() {
+        let back = seen(1, rect(400.0, 300.0, 1600.0, 1200.0));
+        // devant, sur le haut du côté gauche de `back`
+        let front = seen(2, rect(200.0, 100.0, 600.0, 500.0));
+        let found = jambs(&[front, back], screen());
+        assert_eq!(
+            found,
+            [
+                Jamb { window: 2, side: Side::Left, x: 200.0, from: 100.0, to: 600.0 },
+                Jamb { window: 2, side: Side::Right, x: 800.0, from: 100.0, to: 600.0 },
+                Jamb { window: 1, side: Side::Left, x: 400.0, from: 600.0, to: 1500.0 },
+                Jamb { window: 1, side: Side::Right, x: 2000.0, from: 300.0, to: 1500.0 },
+            ]
+        );
+        // une fenêtre qui touche le côté sans passer dessus ne le cache pas ; hors de l'écran, rien
+        let beside = seen(3, rect(0.0, 0.0, 400.0, 1964.0));
+        assert!(jambs(&[beside, back], screen()).contains(&Jamb {
+            window: 1,
+            side: Side::Left,
+            x: 400.0,
+            from: 300.0,
+            to: 1500.0
+        }));
+        let wide = seen(4, rect(-100.0, 300.0, 4000.0, 800.0));
+        assert!(jambs(&[wide], screen()).is_empty(), "ses deux côtés hors de l'écran");
+    }
+
+    #[test]
+    fn flanks_need_room_outside_and_along_the_side_away_from_its_corners() {
+        // une fenêtre dont le haut touche presque le haut de l'écran : aucun bord ne la porte, assise
+        // ou debout, mais ses côtés oui
+        let sitting = Stature {
+            height: 600.0,
+            reach: Reach { left: 99.0, up: 341.0, right: 169.0, down: 164.0 },
+            rest: (95.0, 95.0),
+        };
+        let tall = seen(1, rect(600.0, 60.0, 1600.0, 1800.0));
+        assert!(benches(&[tall], screen(), sitting).is_empty());
+        let found = flanks(&[tall], screen(), lurking());
+        let corner = CORNER * 600.0;
+        assert_eq!(
+            found,
+            [
+                Flank {
+                    window: tall,
+                    side: Side::Left,
+                    lo: 60.0 + corner + 390.0,
+                    hi: 1860.0 - corner - 240.0
+                },
+                Flank {
+                    window: tall,
+                    side: Side::Right,
+                    lo: 60.0 + corner + 390.0,
+                    hi: 1860.0 - corner - 240.0
+                },
+            ]
+        );
+        // guettant n'importe où sur l'un d'eux, elle y reste
+        for flank in &found {
+            for y in [flank.lo, (flank.lo + flank.hi) / 2.0, flank.hi] {
+                let lurk = flank.at(y);
+                assert_eq!(lurk.at, Vec2::new(flank.x(), y));
+                assert_eq!(
+                    follow_flank(&[tall], screen(), lurking(), lurk.spot),
+                    Ok(lurk),
+                    "{flank:?} en {y}"
+                );
+            }
+        }
+        // bornée au morceau, et jamais un point qui n'est pas un nombre
+        assert_eq!(found[0].at(0.0).at.y, found[0].lo);
+        assert_eq!(found[0].at(f32::NAN).at.y, found[0].lo);
+        // trop près du bord gauche de l'écran : ce qui se voit d'elle en sortirait ; à droite, oui
+        let near = seen(2, rect(150.0, 60.0, 1600.0, 1800.0));
+        assert_eq!(
+            flanks(&[near], screen(), lurking()).iter().map(|f| f.side).collect::<Vec<_>>(),
+            [Side::Right]
+        );
+        // trop basse pour elle, loin des coins
+        let short = seen(3, rect(600.0, 300.0, 1600.0, 600.0));
+        assert!(flanks(&[short], screen(), lurking()).is_empty());
+        // une fenêtre devant, sur la bande où elle se voit (sans toucher le côté) : coupé
+        let front = seen(4, rect(450.0, 1000.0, 100.0, 100.0));
+        let cut = flanks(&[front, tall], screen(), lurking());
+        let left: Vec<(f32, f32)> =
+            cut.iter().filter(|f| f.window.id == 1 && f.side == Side::Left).map(|f| (f.lo, f.hi)).collect();
+        assert_eq!(
+            left,
+            [(60.0 + corner + 390.0, 1000.0 - 240.0), (1100.0 + 390.0, 1860.0 - corner - 240.0)]
+        );
+        // une fenêtre devant qui la touche seulement, à côté de la bande : rien ne change
+        let away = seen(5, rect(200.0, 900.0, 200.0, 300.0));
+        assert_eq!(flanks(&[away, tall], screen(), lurking()), found);
+    }
+
+    #[test]
+    fn she_follows_her_side_when_it_moves_and_leaves_when_it_goes_is_covered_or_has_no_room() {
+        let tall = seen(1, rect(600.0, 60.0, 1600.0, 1800.0));
+        let lurk = flanks(&[tall], screen(), lurking())[0].at(1000.0);
+        let spot = lurk.spot;
+        assert_eq!(spot, FlankSpot { window: 1, side: Side::Left, along: 940.0, top: 60.0, height: 1800.0 });
+        // déplacée : elle la suit
+        let moved = seen(1, rect(700.0, 100.0, 1600.0, 1800.0));
+        assert_eq!(
+            follow_flank(&[moved], screen(), lurking(), spot).map(|l| l.at),
+            Ok(Vec2::new(700.0, 1040.0))
+        );
+        // tirée par le haut : la distance au bas est gardée ; par le bas : celle au haut
+        let higher = seen(1, rect(600.0, 160.0, 1600.0, 1700.0));
+        assert_eq!(follow_flank(&[higher], screen(), lurking(), spot).map(|l| l.at.y), Ok(1000.0));
+        let shorter = seen(1, rect(600.0, 60.0, 1600.0, 1500.0));
+        assert_eq!(follow_flank(&[shorter], screen(), lurking(), spot).map(|l| l.at.y), Ok(1000.0));
+        // raccourcie sous elle : bornée, loin du coin
+        let small = seen(1, rect(600.0, 60.0, 1600.0, 1200.0));
+        let kept = follow_flank(&[small], screen(), lurking(), spot).expect("elle reste");
+        assert_eq!(kept.at.y, 1260.0 - CORNER * 600.0 - 240.0);
+        // partie, recouverte (sur le côté, ou là où elle se voit), sortie de l'écran, plus la place
+        assert_eq!(follow_flank(&[seen(2, tall.rect)], screen(), lurking(), spot), Err(Leave::Gone));
+        let over = seen(2, rect(500.0, 900.0, 300.0, 300.0));
+        assert_eq!(follow_flank(&[over, tall], screen(), lurking(), spot), Err(Leave::Covered));
+        let outside = seen(2, rect(420.0, 900.0, 100.0, 300.0));
+        assert_eq!(follow_flank(&[outside, tall], screen(), lurking(), spot), Err(Leave::Covered));
+        let off = seen(1, rect(100.0, 60.0, 1600.0, 1800.0));
+        assert_eq!(follow_flank(&[off], screen(), lurking(), spot), Err(Leave::NoRoom));
+        let flat = seen(1, rect(600.0, 60.0, 1600.0, 500.0));
+        assert_eq!(follow_flank(&[flat], screen(), lurking(), spot), Err(Leave::NoRoom));
+        // une place qui n'est pas un nombre ne la fait pas tomber en panne
+        let odd = FlankSpot { along: f32::NAN, ..spot };
+        assert_eq!(follow_flank(&[tall], screen(), lurking(), odd), Err(Leave::Covered));
+    }
+
+    #[test]
+    fn the_right_side_follows_the_same_rules_as_the_left() {
+        let corner = CORNER * 600.0;
+        // le côté droit en x = 2400 : 200 pixels dehors, à droite, jusqu'à 2600
+        let tall = seen(1, rect(800.0, 60.0, 1600.0, 1800.0));
+        let right = |windows: &[Seen]| -> Vec<(f32, f32)> {
+            flanks(windows, screen(), lurking())
+                .iter()
+                .filter(|f| f.window.id == 1 && f.side == Side::Right)
+                .map(|f| (f.lo, f.hi))
+                .collect()
+        };
+        let whole = (60.0 + corner + 390.0, 1860.0 - corner - 240.0);
+        assert_eq!(right(&[tall]), [whole]);
+        // trop près du bord droit de l'écran : ce qui se voit d'elle en sortirait ; à gauche, oui
+        let near = seen(1, rect(1300.0, 60.0, 1600.0, 1800.0));
+        assert_eq!(
+            flanks(&[near], screen(), lurking()).iter().map(|f| f.side).collect::<Vec<_>>(),
+            [Side::Left]
+        );
+        // une fenêtre devant, sur la bande dehors à droite (sans toucher le côté) : coupé
+        let strip = seen(4, rect(2450.0, 1000.0, 100.0, 100.0));
+        assert_eq!(right(&[strip, tall]), [(whole.0, 1000.0 - 240.0), (1100.0 + 390.0, whole.1)]);
+        // une fenêtre devant sur le côté même : coupé de même
+        let line = seen(5, rect(2350.0, 1000.0, 100.0, 100.0));
+        assert_eq!(right(&[line, tall]), [(whole.0, 1000.0 - 240.0), (1100.0 + 390.0, whole.1)]);
+        // une fenêtre devant qui finit sur le côté, dedans, ou qui commence au bout de la bande :
+        // rien ne change
+        let inside = seen(6, rect(2300.0, 1000.0, 100.0, 100.0));
+        let beyond = seen(7, rect(2600.0, 1000.0, 100.0, 100.0));
+        assert_eq!(right(&[inside, tall]), [whole]);
+        assert_eq!(right(&[beyond, tall]), [whole]);
+        // le suivi : recouverte sur la bande ou sur le côté, sortie de l'écran à droite
+        let spot = flanks(&[tall], screen(), lurking())
+            .into_iter()
+            .find(|f| f.side == Side::Right)
+            .unwrap()
+            .at(1050.0)
+            .spot;
+        assert!(follow_flank(&[tall], screen(), lurking(), spot).is_ok());
+        assert_eq!(follow_flank(&[strip, tall], screen(), lurking(), spot), Err(Leave::Covered));
+        assert_eq!(follow_flank(&[line, tall], screen(), lurking(), spot), Err(Leave::Covered));
+        assert!(follow_flank(&[beyond, tall], screen(), lurking(), spot).is_ok());
+        assert_eq!(follow_flank(&[near], screen(), lurking(), FlankSpot { ..spot }), Err(Leave::NoRoom));
+        // et le haut de l'écran compte de même des deux côtés
+        let high = seen(1, rect(800.0, -200.0, 1600.0, 700.0));
+        assert!(flanks(&[high], screen(), lurking()).is_empty());
+    }
+
+    #[test]
+    fn lurking_her_window_is_read_slowly_at_rest_and_at_every_refresh_while_it_moves() {
+        // un écran à 120 Hz, un pas de la boucle par rafraîchissement
+        let period = 1.0 / 120.0;
+        let mut window = seen(1, rect(600.0, 60.0, 1600.0, 1800.0));
+        let spot = flanks(&[window], screen(), lurking())[0].at(1000.0).spot;
+        let mut watch = Watch::new();
+        let (mut reads, mut step) = (0, 0);
+        let run = |watch: &mut Watch, window: Seen, seconds: f64, reads: &mut usize, step: &mut u32| {
+            let mut last = None;
+            let until = *step + (seconds * 120.0) as u32;
+            while *step < until {
+                let now = f64::from(*step) * period;
+                let kept = watch.flank(spot, now, false, period, screen(), lurking(), || {
+                    *reads += 1;
+                    Some(vec![window])
+                });
+                if kept != Kept::Waiting {
+                    last = Some(kept);
+                }
+                *step += 1;
+            }
+            last
+        };
+        // immobile, 2 s : une lecture tout de suite, puis 4 par seconde
+        let last = run(&mut watch, window, 2.0, &mut reads, &mut step);
+        assert!((8..=10).contains(&reads), "{reads} lectures");
+        assert_eq!(last, Some(Kept::Follows(follow_flank(&[window], screen(), lurking(), spot).unwrap())));
+        // elle bouge : à chaque rafraîchissement, et elle la suit
+        reads = 0;
+        for _ in 0..60 {
+            window.rect.min.x += 2.0;
+            run(&mut watch, window, 1.0 / 120.0, &mut reads, &mut step);
+        }
+        assert!(reads >= 55, "{reads} lectures en 60 rafraîchissements");
+        let last = run(&mut watch, window, 1.0 / 120.0, &mut reads, &mut step);
+        let x = |kept: Option<Kept>| match kept {
+            Some(Kept::Follows(lurk)) => lurk.at.x,
+            other => panic!("{other:?}"),
+        };
+        assert_eq!(x(last), window.rect.min.x);
+        // immobile de nouveau : après `KEEP_FAST`, lentement
+        run(&mut watch, window, KEEP_FAST + 0.1, &mut reads, &mut step);
+        reads = 0;
+        run(&mut watch, window, 1.0, &mut reads, &mut step);
+        assert!((3..=5).contains(&reads), "{reads} lectures en 1 s");
+        // sa fenêtre partie, ou la liste illisible : elle ne guette plus
+        watch.wake();
+        assert_eq!(
+            watch.flank(spot, 100.0, false, period, screen(), lurking(), || Some(Vec::new())),
+            Kept::Lost(Some(Leave::Gone))
+        );
+        watch.wake();
+        assert_eq!(watch.flank(spot, 101.0, false, period, screen(), lurking(), || None), Kept::Lost(None));
+    }
+
+    #[test]
+    fn the_journal_says_side_for_a_side_and_edge_for_an_edge() {
+        for why in [Leave::Gone, Leave::Covered, Leave::NoRoom] {
+            assert!(!why.describe_side().contains("bord"), "{why:?} : {}", why.describe_side());
+            assert!(!why.describe().contains("côté"), "{why:?} : {}", why.describe());
+        }
+        assert!(
+            Leave::Covered.describe_side().contains("côté") && Leave::NoRoom.describe_side().contains("côté")
+        );
     }
 
     #[test]

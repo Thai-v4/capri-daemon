@@ -579,6 +579,8 @@ impl BannerView {
             opacity: pose.opacity,
             crop: capri_render::Crop::WHOLE,
             tint: capri_render::Tint::NONE,
+            turn: capri_render::Turn::NONE,
+            keep: capri_render::Keep::ALL,
         })
     }
 }

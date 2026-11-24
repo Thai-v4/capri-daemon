@@ -19,7 +19,10 @@
 //! (clignement, parole), endormie, elle se rassoit, son départ allongée, la superposition de sa
 //! pose assise et de sa pose allongée sur le même bord ; debout, elle s'endort et se réveille.
 //! `rest_weighed_for_real` charge ses planches de repos comme l'app (son thread, la carte
-//! graphique) et dit ce qu'elles pèsent, avant, pendant, après.
+//! graphique) et dit ce qu'elles pèsent, avant, pendant, après. Elle guette (`lurk_portraits`) :
+//! derrière le côté gauche et le côté droit d'une fenêtre, sa bouche ouverte, ses clignements
+//! (glitché compris), sa glissade image par image, et, en croix, ce que voit son bandeau (le haut
+//! du milieu de ce qu'elle occupe) et ce qui l'attrape.
 
 use std::path::{Path, PathBuf};
 use std::time::Instant;
@@ -28,7 +31,7 @@ use capri_core::look::{Drawing, Picture};
 use capri_core::perch::{Perch, Spot};
 use capri_core::sheets::{self, stand};
 use capri_core::{Capri, Rect, Vec2};
-use capri_render::{Crop, ImageId, Offscreen, SpriteDraw, SpriteImage, Tint};
+use capri_render::{Crop, ImageId, Keep, Offscreen, SpriteDraw, SpriteImage, Tint, Turn};
 
 use crate::assets;
 use crate::figure::Figure;
@@ -97,6 +100,8 @@ impl Scene {
                 opacity: 1.0,
                 crop: Crop::WHOLE,
                 tint: Tint::NONE,
+                turn: Turn::NONE,
+                keep: Keep::ALL,
             },
         )
     }
@@ -532,6 +537,122 @@ fn superposition(scene: &mut Scene, life: Picture, standing: Picture) -> (Vec<u8
     );
     let cropped: Vec<Vec<u8>> = panels.iter().map(|panel| crop(panel, scene.size.0, at, crop_size)).collect();
     contact(&cropped, crop_size, 3)
+}
+
+/// Elle guette (le lot 9) : derrière le côté gauche, puis le côté droit d'une fenêtre dont le haut
+/// touche presque le haut de la scène, comme dans l'app (`capri_core::perch::flanks`, son point
+/// d'accroche au milieu du côté). Sortie : sa boucle, sa bouche ouverte, son clignement, son
+/// clignement glitché ; le haut du milieu de ce qu'elle occupe (là où se pose son bandeau) en croix
+/// bleue. Sa glissade, de rien de visible à penchée dehors. Et une grille de ce qui l'attrape (des
+/// points jaunes là où le curseur la prendrait), pour voir que ce qui est caché laisse passer.
+#[test]
+#[ignore = "écrit des images PNG dans CAPRI_PORTRAITS_DIR, avec les vraies planches et la vraie carte graphique"]
+fn lurk_portraits() {
+    use capri_core::perch::{self, Seen, Side};
+
+    let dir = directory();
+    let size = (900, 900);
+    let mut scene = Scene::new(size, HEIGHT);
+    let look = &scene.figure.look;
+    let (Some(lurking), Some(fit)) = (look.lurk_stature(), look.lurk_fit()) else {
+        panic!("il faut ses planches debout")
+    };
+    let screen = Rect::new(Vec2::ZERO, Vec2::new(size.0 as f32, size.1 as f32));
+    for side in Side::ALL {
+        // la fenêtre de l'autre côté du milieu de la scène
+        let window = match side {
+            Side::Left => Rect::new(Vec2::new(450.0, 24.0), Vec2::new(430.0, 860.0)),
+            Side::Right => Rect::new(Vec2::new(20.0, 24.0), Vec2::new(430.0, 860.0)),
+        };
+        let seen = [Seen { id: 1, rect: window }];
+        let flank = perch::flanks(&seen, screen, lurking)
+            .into_iter()
+            .find(|flank| flank.side == side)
+            .expect("un côté où elle tient");
+        let lurk = flank.at((flank.lo + flank.hi) / 2.0);
+        let name = match side {
+            Side::Left => "gauche",
+            Side::Right => "droite",
+        };
+        let mut c = capri(&scene.figure, size, Vec2::new(450.0, 820.0));
+        c.lurk_on(lurk, fit);
+        c.emerge();
+        // sa glissade, au pas de l'écran (60 Hz), une image sur trois
+        let mut glide = Vec::new();
+        let mut frame = 0;
+        while c.is_gliding() || glide.is_empty() {
+            let picture = step(&mut scene, &mut c, frame / 2);
+            if frame % 3 == 0 {
+                glide.push(scene.render(Some(window), &[picture]));
+            }
+            c.step(1.0 / 60.0, frame / 2);
+            frame += 1;
+        }
+        let (sheet, sheet_size) = contact(&glide, size, 6);
+        save(&dir, &format!("guette-{name}-glissade.png"), &sheet, sheet_size);
+        // sortie : sa boucle (dessin 0), sa bouche, son clignement, son clignement glitché
+        let mut shots = Vec::new();
+        // son tour suit l'image d'animation : 960, le début d'un tour où elle cligne (le 16e)
+        for (tour_frame, talking) in [(0u64, false), (6, true), (28, false), (5 * 60 + 28, false)] {
+            let frame = 960 + tour_frame;
+            c.step(0.0, frame);
+            scene.figure.look.update(&mut c, frame, talking, false);
+            let picture = scene.figure.look.picture(&c);
+            let shown = scene.figure.look.shown(&c);
+            let mut layers = vec![Scene::rect(scene.desk, screen)];
+            layers.push(Scene::rect(scene.window, window));
+            layers.push(Scene::rect(scene.title, Rect::new(window.min, Vec2::new(window.size.x, 56.0))));
+            layers.extend(scene.figure.layers(&picture, screen));
+            layers.extend(cross(
+                scene.top_mark,
+                Vec2::new(shown.min.x + shown.size.x / 2.0, shown.min.y),
+                8.0,
+            ));
+            shots.push(scene.offscreen.render(&layers, None).expect("rendue"));
+            if tour_frame == 0 {
+                let lean = picture.lean.expect("penchée");
+                println!(
+                    "guette à {name} : le bord en x = {:.0}, sa hanche en ({:.0}, {:.0}), penchée de {:.1}°, \
+                     ce qu'elle occupe de ({:.0}, {:.0}) à ({:.0}, {:.0})",
+                    lean.wall,
+                    lean.pivot.x,
+                    lean.pivot.y,
+                    lean.angle.to_degrees(),
+                    shown.min.x,
+                    shown.min.y,
+                    shown.max().x,
+                    shown.max().y
+                );
+            }
+        }
+        save(&dir, &format!("guette-{name}.png"), &shots[0], size);
+        let (sheet, sheet_size) = contact(&shots, size, 4);
+        save(&dir, &format!("guette-{name}-planche.png"), &sheet, sheet_size);
+        // ce qui l'attrape : un point jaune tous les 6 pixels là où le curseur la prendrait
+        let frame = 960;
+        c.step(0.0, frame);
+        scene.figure.look.update(&mut c, frame, false, false);
+        let picture = scene.figure.look.picture(&c);
+        let mut layers = vec![Scene::rect(scene.desk, screen), Scene::rect(scene.window, window)];
+        layers.extend(scene.figure.layers(&picture, screen));
+        let mut caught = 0;
+        for y in (0..size.1).step_by(6) {
+            for x in (0..size.0).step_by(6) {
+                let at = Vec2::new(x as f32, y as f32);
+                if scene.figure.look.is_over(&c, at) {
+                    caught += 1;
+                    layers.push(Scene::rect(scene.cursor_mark, Rect::new(at, Vec2::new(2.0, 2.0))));
+                    assert!(
+                        picture.lean.is_some_and(|lean| lean.shows(at)),
+                        "attrapée derrière la fenêtre en {at:?}"
+                    );
+                }
+            }
+        }
+        assert!(caught > 50, "{caught}");
+        let pixels = scene.offscreen.render(&layers, None).expect("rendue");
+        save(&dir, &format!("guette-{name}-attrape.png"), &pixels, size);
+    }
 }
 
 /// Une croix de `color` (une image de `Scene`) centrée en `at`, de `arm` pixels de chaque côté.

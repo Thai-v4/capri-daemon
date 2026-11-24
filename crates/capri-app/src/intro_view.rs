@@ -39,7 +39,7 @@ use capri_core::intro::{Cut, End, Film, Intro, Missing, Suite, place};
 use capri_core::{Rect, Vec2};
 #[cfg(any(target_os = "macos", windows, test))]
 use capri_core::{intro::Entry, roam::Hold};
-use capri_render::{Crop, ImageId, RenderError, Renderer, SpriteDraw, Tint};
+use capri_render::{Crop, ImageId, Keep, RenderError, Renderer, SpriteDraw, Tint, Turn};
 
 use crate::assets::intro::Sequence;
 
@@ -255,6 +255,8 @@ pub fn layer<Id: Copy>(id: Id, rect: Rect) -> (Id, SpriteDraw) {
             opacity: 1.0,
             crop: Crop::WHOLE,
             tint: Tint::NONE,
+            turn: Turn::NONE,
+            keep: Keep::ALL,
         },
     )
 }

@@ -94,9 +94,13 @@ au sort (écrit et testé sans écran le 24 novembre 2026 ; vu par l'utilisateur
 « le glitch me paraît très bien », le reste pas confirmé point par point). Le
 cinquième (elle s'allonge sur son bord, s'endort, se réveille ; ses planches de repos chargées
 à la demande) est écrit et testé sans écran le 24 novembre 2026 ; pas regardé en mouvement.
+Le neuvième, demandé le 24 novembre 2026 (sans bord où s'asseoir, elle guette de derrière le
+côté d'une fenêtre, penchée et coupée au bord, au lieu d'aller debout en bas de l'écran), est
+écrit et testé sans écran le même jour ; pas regardé en mouvement.
 Reste : se tourner des deux côtés (lot 7). Des dessins
 générés par un outil d'images ont été essayés le même jour pour un coucou de la main, trois
-fois, et écartés : aucun ne se mêlait à ses dessins.
+fois, et écartés : aucun ne se mêlait à ses dessins ; deux essais de plus le 24 novembre, pour
+une pose accrochée au côté d'une fenêtre, écartés aussi (elle guette avec ses vrais dessins).
 
 ## Architecture : où va quoi
 
@@ -218,6 +222,34 @@ fois, et écartés : aucun ne se mêlait à ses dessins.
   (`Watch`, en images), d'après ce qu'il lui faut autour du point posé (`Stature` : sa hauteur
   debout, la place qu'elle occupe, le morceau de bord qui la porte). Le corps (`body`) a la
   posture `Perched` et ses deux gestes, ancrés à ses pieds (`AlphaMask::feet`).
+  Et **guetter de derrière le côté d'une fenêtre**, quand aucun bord ne convient. Dans `perch` :
+  les côtés (`Side`), leurs morceaux visibles (`jambs`, le pendant de `ledges`), ceux où elle
+  tient (`flanks`, le pendant de `benches` : ce qui se voit d'elle tient dans l'écran, sans
+  fenêtre devant le côté ni devant la bande dehors où elle se voit, loin des coins, `CORNER`),
+  le suivi et le départ (`follow_flank`, `Leave::describe_side`), et la veille de son côté
+  (`Watch::flank` : la cadence d'une fenêtre où elle est posée, pas une lecture de plus). Dans
+  `sheets::stand`, la pose, mesurée sur ses planches : sa hanche (`HIP`), ses yeux (`EYES`), sa
+  silhouette en bandes (`OUTLINE`, `BAND`), et **deux constantes qui règlent tout** :
+  `LEAN_DEGREES` (22°, vers l'extérieur de la fenêtre, autour de sa hanche) et `EYE_MARGIN` (la
+  coupe à 9 px de planche de ses yeux ; 14 et 23 donnent la pose où son épaule et son bras
+  dépassent) ; `cut`, `lean`, `lurk_bounds` (ce qui se voit d'elle, jamais moins que le réel).
+  À droite d'une fenêtre, sa tête, ses cheveux et un mince bord de son corps dépassent ; à
+  gauche, en plus, son épaule, son bras et un bout de jupe le long de la coupe (c'est la pose
+  choisie par l'utilisateur, pas un défaut). Sa boucle et son clignement ordinaire tiennent la
+  marge sur chaque dessin ; son clignement à glitch non (`GLITCHY_EYE_MARGIN`, mesurée : un bout
+  de ses yeux passe sous le bord pendant un dessin). Dans `body` : `Stance::Lurking`, sa
+  glissade hors du côté et derrière lui (`emerge`, `withdraw`, `GLIDE` : 0,6 s, à la cadence de
+  l'écran), `take_off` (son côté parti : debout, entière, dans l'écran) et
+  `Capri::follows_screen` (seule la glissade presse la boucle ; immobile, elle guette au
+  repos). Dans `look` : le dessin penché et coupé (`Lean`, `Picture::lean` : sa boucle, ses
+  clignements et sa bouche, rien d'autre ; ni geste ni repos là), la glissade à la place
+  d'`arrive` et de `leave` (`Clip::Slide`), le masque de clic redressé et coupé (seul ce qui se
+  voit l'attrape ; sa marge, `lurk_edge`, se calcule de l'angle), `Look::visible` (tout ce qui
+  se voit d'elle) à part de `shown` (la place du bandeau, autour de sa tête penchée),
+  `lurk_stature`, `lurk_fit`. Prise, elle se redresse autour du point tenu, sans saut, et
+  n'est pas ramenée dans l'écran à la prise. Dans `roam` : `Choice::Flank`, un côté seulement
+  quand aucun bord ne convient, à la place de debout en bas de l'écran ; guettant, elle regarde
+  les bords à la cadence `LURKING` et ne change de côté qu'après `LURK_STAY`.
   Et `music` : de la musique joue-t-elle, d'après l'état que les lecteurs connus ont annoncé
   (`PlayerState`, lu de la seule valeur de `STATE_KEY` : trois valeurs exactes, tout le reste vaut
   « ne joue pas ») ; sans délai (une lecture compte tout de suite, une pause l'arrête tout de
@@ -336,7 +368,12 @@ fois, et écartés : aucun ne se mêlait à ses dessins.
   boucle redessine alors au pas suivant, `awaiting_present`). Une **teinte** par calque
   (`Tint`, `SpriteDraw::tint`) dessine la silhouette d'une image d'un aplat de couleur, pour les
   doubles du glitch : prémultipliée comme le reste, et `Tint::NONE`, la valeur par défaut, rend
-  exactement le résultat d'avant. `settle` ne garde que `SLOTS_KEPT` jeux de réglages : les
+  exactement le résultat d'avant. De même une **inclinaison** et une **coupe** par calque
+  (`Turn`, `Keep`, `SpriteDraw::turn` et `keep`), pour quand elle guette : le quad tourne dans
+  le shader autour d'un pivot, la part d'image lue ne change pas, et la coupe est le rectangle
+  de découpe du rendu (`set_scissor_rect`, ramené dans la surface ; une découpe vide n'est pas
+  dessinée) ; `Turn::NONE` et `Keep::ALL`, les valeurs par défaut, rendent exactement le
+  résultat d'avant. `settle` ne garde que `SLOTS_KEPT` jeux de réglages : les
   calques du film ne coûtent plus rien ensuite. `Offscreen` fait le même rendu dans une image en mémoire, pour les essais.
   Couleurs prémultipliées de bout en bout.
 - Les appels système et l'`unsafe` lié à l'OS vivent dans **deux crates, et nulle part
@@ -464,7 +501,9 @@ fois, et écartés : aucun ne se mêlait à ses dessins.
   `roam_view` lui donne de quoi vivre sa vie (`capri_core::roam` décide) : la liste des fenêtres
   par `perch_view`, l'overlay, le curseur, une graine prise à l'horloge du système au lancement ;
   il écrit au journal ce qu'elle décide, en nombres, et rend la phrase qu'elle dit quand on lui
-  demande de changer de place et qu'elle ne le peut pas. `roam_setup` lit et écrit `roam.json`
+  demande de changer de place et qu'elle ne le peut pas. Quand elle guette, `figure` traduit sa
+  pose penchée en calques inclinés et coupés, `perch_view` suit son côté (`Watch::flank`), et le
+  journal ne dit que le côté, gauche ou droit, et des nombres. `roam_setup` lit et écrit `roam.json`
   (la case « Vivre sa vie » de son menu, cochée par défaut ; la ligne « Changer de place » la
   fait partir sur un geste, case cochée ou non).
   `intro_view` joue le film de l'intro (`capri_core::intro` en donne la feuille et le glitch,
@@ -731,7 +770,7 @@ une fausse commande `security` placée en tête du `PATH`.
   images d'animation).
 - Elle tourne toute la journée : ne redessiner que quand la pose ou la position change, rester
   léger en CPU et en batterie. Au repos, la boucle se réveille à 60 Hz (`pace::REST`) ; pressée
-  seulement (tenue, en vol, en marche, en chute, ou sa fenêtre qui bouge ou un bouton de la souris enfoncé,
+  seulement (tenue, en vol, en marche, en chute, en glissade vers ou depuis le côté d'une fenêtre, ou sa fenêtre qui bouge ou un bouton de la souris enfoncé,
   plus une demi-seconde), elle suit l'écran : `Overlay::follow_refresh` (sur macOS 14 et suivants, un
   `CADisplayLink` de la vue, en pause le reste du temps ; ailleurs, refus, et un `pace::Clock` à
   la fréquence de `Overlay::refresh_rate`), et seuls les réveils de l'écran
@@ -1011,7 +1050,7 @@ une fausse commande `security` placée en tête du `PATH`.
   et `capri perch rehearse` ne disent que des nombres (le test ignoré `fenetres_du_bureau` le
   vérifie : à relancer après tout changement de la liste,
   `cargo test -p capri-app --test fenetres_du_bureau -- --ignored`). La liste n'est lue que
-  quand elle sert (au lâcher, puis posée, à la cadence de `perch::Watch` ; et, depuis qu'elle vit
+  quand elle sert (au lâcher, puis posée ou guettant, à la cadence de `perch::Watch` ; et, depuis qu'elle vit
   sa vie, une fois par décision quand elle choisit où aller, sa fenêtre étant relue juste avant
   qu'elle apparaisse sur son bord), jamais quand elle est cachée ; son coût se mesure avec le
   test ignoré `liste_des_fenetres` de `capri-platform`, en version optimisée, avant de changer
@@ -1041,7 +1080,12 @@ une fausse commande `security` placée en tête du `PATH`.
   jamais figé, son dessin assis toujours sur son bord ; depuis ses gestes : jamais deux gestes à
   la fois, un geste finit toujours, aucun départ pendant une retenue, elle ne marche jamais à
   reculons et ses marches s'arrêtent, tenue elle n'est jamais immobile quand le curseur s'éloigne
-  d'un bord et sa mèche le rejoint). Ses gestes en font partie : debout et libre, elle marche au
+  d'un bord et sa mèche le rejoint ; depuis qu'elle guette : jamais derrière une fenêtre sans
+  rien de visible, jamais coupée sans côté sous elle, tout ce qui se voit d'elle dans l'écran,
+  une glissade finit toujours, et prise, le point tenu reste sous le curseur). Après un
+  changement de l'inclinaison ou de la coupe d'un calque :
+  `cargo test --release -p capri-render gpu_tests -- --ignored` (la vraie carte graphique) et
+  les portraits. Ses gestes en font partie : debout et libre, elle marche au
   lieu de s'effacer quand elle va vers la gauche pour un trajet court (`WALK_LONGEST`) ; assise
   et libre, un éclat de temps en temps (`FIDGET`, d'un générateur à part, de la même graine).
   Elle ne sourit pour Claude Code qu'une fois par minute au plus (`CHEER_EVERY`), jamais pendant
@@ -1054,6 +1098,20 @@ une fausse commande `security` placée en tête du `PATH`.
   d'affilée ; rassise ou réveillée, elle reste là une attente ordinaire. Endormie, elle doit
   coûter moins qu'éveillée (8 dessins par seconde allongée, 6 debout, contre 12). Elle ne
   commence à se reposer que case « Vivre sa vie » cochée, donc jamais pendant une répétition.
+  **Guetter** : sans aucun bord où s'asseoir, cases « S'asseoir sur les fenêtres » et « Vivre
+  sa vie » cochées, elle va guetter de derrière le côté d'une fenêtre plutôt que debout en bas
+  de l'écran (par sa vie et par « Changer de place » ; jamais en la lâchant à la main, jamais
+  pendant une répétition). S'asseoir reste son premier choix, dès qu'un bord convient. Elle
+  sort de derrière le côté en glissant et s'y retire de même : son ancien dessin ne se montre
+  jamais sur un côté. Elle n'y joue aucun geste (un clic n'y fait rien) et ne s'y repose pas.
+  Son côté perdu sans geste (fenêtre fermée, recouverte, sortie de l'écran, plus la place)
+  vaut `LOST` : elle est debout, entière, dans l'écran, et repart vite, debout en bas de
+  l'écran compris ; jamais coupée dans le vide, jamais sans rien de visible. Une case
+  décochée ou une taille trop grande vaut un geste (`BY_HAND`). **Sa pose est calculée à
+  l'affichage sur ses vrais dessins debout : jamais une image générée, modifiée ni
+  retournée.** Limites connues : « Vivre sa vie » décochée pendant qu'elle glisse ou qu'elle
+  est cachée la fait apparaître entière d'un coup ; redressée par une prise près d'un bord de
+  l'écran, son image peut en dépasser tant qu'on la tient.
 - Aucun nom de modèle écrit en dur : il vient de l'utilisateur ou de la liste que donne le
   serveur. Même règle que pour les API : format et adresses d'un fournisseur se vérifient dans sa
   documentation, pas de mémoire (les sources de chaque adresse sont citées dans

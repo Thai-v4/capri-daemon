@@ -408,7 +408,8 @@ Le troisième lot. Tu n'as plus à la déposer : elle choisit seule où aller.
   elle va ailleurs. La fenêtre où elle vit ne se cache pas pendant le trajet ;
 - **elle préfère être assise** : d'un bord à un autre, on ne voit que ses dessins assis, de son
   nouveau dessin. Elle ne se tient debout, en bas de l'écran, que si elle part debout et
-  qu'aucun bord ne convient ;
+  qu'aucun bord ne convient (depuis le neuvième lot, elle va alors plutôt guetter de derrière le
+  côté d'une fenêtre, s'il y en a un : voir plus bas) ;
 - **elle varie** : le bord est tiré au sort, les plus larges ayant plus de chances, jamais deux
   fois de suite le même quand un autre existe, de préférence sur une autre fenêtre que la sienne,
   et loin du curseur de ta souris. Les durées aussi sont tirées au sort : assise, 3 à 8 minutes ;
@@ -551,11 +552,50 @@ change.
 Écrit et testé sans écran le 24 novembre 2026, images fixes rendues et regardées ; **pas encore
 regardé en mouvement** : la liste est dans « État de validation ».
 
-**Essayé et écarté le même jour : des dessins générés.** Trois essais pour ajouter à sa boucle
+### Elle guette de derrière une fenêtre
+
+Le neuvième lot, demandé le 24 novembre 2026. Quand le haut de tes fenêtres est trop près du
+haut de l'écran, elle n'a aucun bord où s'asseoir (à 80 % de sa taille, il lui faut environ 137
+points au-dessus du bord). Au lieu d'aller se tenir debout en bas de l'écran, elle va guetter
+de derrière le côté d'une fenêtre.
+
+- **Ce qu'on voit** : elle est à moitié cachée derrière la fenêtre, penchée dehors de 22°,
+  coupée net au bord. À droite d'une fenêtre, sa tête, ses cheveux et un mince bord de son
+  corps dépassent ; à gauche, en plus, son épaule, son bras et un bout de jupe, le long du
+  bord ;
+- **ses vrais dessins** : sa boucle debout, ses clignements et sa bouche quand elle parle.
+  Rien n'est dessiné de plus : l'inclinaison et la coupe sont calculées à l'affichage, les
+  images ne sont pas modifiées, et c'est le même dessin des deux côtés, jamais retourné ;
+- **elle sort de derrière la fenêtre** en glissant, en 0,6 s, et s'y retire de même avant de
+  partir ;
+- **s'asseoir reste son premier choix** : elle ne guette que si aucun bord ne convient, et dès
+  qu'un bord se libère elle va s'y asseoir (elle regarde toutes les 30 à 120 s). Sans bord,
+  elle change de côté après 3 à 8 minutes ;
+- **elle suit sa fenêtre** quand tu la déplaces. Recouverte, fermée ou sortie de l'écran : elle
+  se retrouve debout, entière, et repart vite ;
+- **les clics** : seul ce qui se voit d'elle les attrape ; sa partie cachée laisse passer le
+  clic vers la fenêtre. La prendre la redresse sous ton curseur, sans saut ;
+- **ce qu'elle n'y fait pas** : ni geste (un clic bref n'y fait rien), ni repos. Ses gestes
+  viennent de son ancien dessin, qui ne s'aligne pas sur cette pose ;
+- **les cases** : il faut « S'asseoir sur les fenêtres » et « Vivre sa vie » cochées ; elle n'y
+  va jamais parce qu'on la lâche sur un côté.
+
+Limites connues : « Vivre sa vie » décochée pendant qu'elle glisse la fait apparaître entière
+d'un coup ; pendant un dessin de son clignement à glitch, un bout de ses yeux passe sous le
+bord (3 px de planche) ; prise près d'un bord de l'écran, son image redressée peut en dépasser
+tant qu'on la tient ; sous Windows, rien n'a été exécuté, seulement compilé.
+
+Écrit et testé sans écran le 24 novembre 2026, images fixes rendues et regardées ; **pas encore
+regardé en mouvement** : la liste est dans « État de validation ».
+
+**Essayé et écarté : des dessins générés.** Trois essais pour ajouter à sa boucle
 debout un coucou de la main par un générateur d'images : le premier changeait son corps d'un
 dessin à l'autre, les deux suivants gardaient son corps au pixel près mais donnaient une main qui
 clignote, puis un bras trop pauvre. Aucun ne se mêlait à ses dessins sans qu'on le voie ; rien
-n'en est gardé dans le dépôt.
+n'en est gardé dans le dépôt. Deux essais de plus le 24 novembre 2026, pour une pose où elle
+s'accroche au côté d'une fenêtre : le premier lui donnait un visage humain ; le second, avec
+son vrai dessin en référence, s'en approchait beaucoup, mais la pose n'était pas naturelle.
+Écartés aussi : elle guette avec ses vrais dessins.
 
 ## Jalon 4 : lui parler
 
@@ -1563,9 +1603,9 @@ Règle : tout ce qui peut être testé sans écran va dans `capri-core`, `capri-
 
 Vérifié automatiquement :
 
-- formatage, `clippy -D warnings` et 849 tests sur **macOS Apple Silicon** (le 24 novembre 2026 ;
-  848 en version optimisée, un essai de la répétition de la musique n'existant qu'en version de
-  débogage ; plus 26 qui ne
+- formatage, `clippy -D warnings` et 879 tests sur **macOS Apple Silicon** (le 24 novembre 2026 ;
+  878 en version optimisée, un essai de la répétition de la musique n'existant qu'en version de
+  débogage ; plus 28 qui ne
   tournent qu'à la main : ils écrivent des images ou dessinent sur la vraie carte graphique,
   lisent un vrai `settings.json`, touchent au vrai trousseau, créent de vraies voix et un vrai
   moteur audio, sans bruit, lisent la vraie liste des fenêtres, guettent une annonce d'essai
@@ -2397,6 +2437,29 @@ d'après son journal, et aucun de ces points n'a été confirmé un par un). Il 
 11. **« La faire taire » pendant l'intro** : l'intro continue, et elle ne dit pas bonjour ensuite ;
 12. **les dix phrases de bonjour** : dire si le ton lui va, et lesquelles retirer.
 
+**Elle guette de derrière une fenêtre : à regarder à la main** (écrit et testé sans écran le 24
+novembre 2026 ; rien n'a encore été vu en mouvement). Il faut qu'aucun bord ne convienne : une
+fenêtre dont le haut est près de la barre des menus, avec de la place à côté, puis « Changer de
+place » dans son menu :
+
+1. **elle sort du côté** en glissant, en 0,6 s environ : la glissade paraît-elle naturelle ?
+2. **la pose** des deux côtés : l'angle, ce qui dépasse, la coupe nette au bord, rien de dessiné
+   sur la fenêtre, aucun artefact autour d'elle ;
+3. **ses clignements** (celui à glitch toutes les 20 s) et **sa bouche** quand elle parle ;
+4. **déplacer et redimensionner la fenêtre** : elle suit. La recouvrir ou la fermer : elle est
+   debout, entière, puis repart vite ;
+5. **les clics** : le curseur la prend sur sa tête ; un clic juste à côté, sur la fenêtre, passe
+   à la fenêtre ; un clic bref sur elle ne fait rien ;
+6. **la prendre** : le point tenu reste sous le curseur et elle se redresse, sans saut, même
+   près d'un bord de l'écran ;
+7. **lui parler** : son bandeau au-dessus de sa tête penchée, dans l'écran ;
+8. **la cacher et la montrer** pendant qu'elle guette, et pendant qu'elle glisse ;
+9. **changer sa taille**, décocher « S'asseoir sur les fenêtres » ou « Vivre sa vie » pendant
+   qu'elle guette ;
+10. **libérer un bord** : elle va s'y asseoir en 30 à 120 s ;
+11. **les coins arrondis** de la fenêtre : s'en tient-elle assez loin ?
+12. **le processeur** : au repos quand elle guette sans bouger.
+
 **Elle se repose : à regarder à la main** (écrit et testé sans écran le 24 novembre 2026 ; rien
 n'a encore été vu en mouvement). Il faut la laisser tranquille 6 à 12 minutes, assise sur un
 bord assez large, sans musique :
@@ -2419,7 +2482,8 @@ bord assez large, sans musique :
     minute après qu'elle s'est relevée.
 
 **Son intro en deux temps et son glitch : à regarder à la main** (écrit et testé sans écran le
-24 novembre 2026 ; le glitch et la suite n'ont pas encore été vus en mouvement). « Voir une
+24 novembre 2026 ; vus par l'utilisateur le même jour, « le glitch me paraît très bien » ; aucun
+de ces points n'a été confirmé un par un). « Voir une
 intro », dans son menu, rejoue le film puis l'entrée suivante, sans relancer :
 
 1. **le glitch de « de tout près »** : assez marqué au début et à la fin ? Son visage reste-t-il
@@ -2710,8 +2774,9 @@ Points à surveiller :
    à regarder en mouvement) ; ~~plusieurs intros tirées au sort~~ (écrit le 23 et le 24 novembre
    2026, vues à l'écran le 24 : le coucou de mochiiwuff ne plaisait pas, il est retiré ; « de
    tout près » est suivie d'une entrée tirée au sort, avec un effet de glitch calculé : écrit le
-   24, pas encore vu en mouvement) ; se tourner des
-   deux côtés.
+   24, vu le même jour, le glitch convient) ; ~~elle guette de derrière le côté d'une fenêtre
+   quand aucun bord ne convient~~ (écrit et testé sans écran le 24 novembre 2026 ; reste à
+   regarder en mouvement) ; se tourner des deux côtés.
 
 ## Licence
 

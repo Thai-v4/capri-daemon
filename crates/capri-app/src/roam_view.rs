@@ -29,7 +29,7 @@
 
 use capri_claude::Tone;
 use capri_core::look::Look;
-use capri_core::perch::{Seen, Stature};
+use capri_core::perch::{LurkStature, Seen, Stature};
 use capri_core::roam::{Busy, Choice, Event, Hold, Roamer, World};
 use capri_core::{Capri, Rect, Vec2};
 use capri_platform::Overlay;
@@ -139,8 +139,8 @@ impl World for Desk<'_> {
         self.perch.windows(stature, self.overlay)
     }
 
-    fn recheck(&mut self, capri: &mut Capri, stature: Stature) {
-        self.perch.arrived(capri, self.overlay, self.now, stature);
+    fn recheck(&mut self, capri: &mut Capri, stature: Stature, lurking: Option<LurkStature>) {
+        self.perch.arrived(capri, self.overlay, self.now, stature, lurking);
     }
 }
 
@@ -149,36 +149,46 @@ impl World for Desk<'_> {
 fn tell(event: Event) -> Option<(&'static str, Tone)> {
     let benches =
         |count: usize| format!("{count} {}", if count <= 1 { "bord possible" } else { "bords possibles" });
+    let sides =
+        |count: usize| format!("{count} {}", if count <= 1 { "côté possible" } else { "côtés possibles" });
     match event {
-        Event::Leaves { to, benches: count, asked, walking } => {
-            let seated = matches!(to, Choice::Ledge(_));
+        Event::Leaves { to, benches: count, flanks, asked, walking } => {
             log::info!(
-                "elle change de place{} : {}, {}",
+                "elle change de place{} : {}, {}, {}",
                 if asked { " (demandé)" } else { "" },
                 benches(count),
-                match (seated, walking) {
-                    (true, _) => "elle va s'asseoir sur l'un d'eux",
-                    (false, true) => "elle va en marchant ailleurs en bas de l'écran",
-                    (false, false) => "elle va se tenir debout en bas de l'écran",
+                sides(flanks),
+                match (to, walking) {
+                    (Choice::Ledge(_), _) => "elle va s'asseoir sur l'un d'eux".to_owned(),
+                    (Choice::Flank(lurk), _) => {
+                        format!(
+                            "elle va guetter derrière le côté {} d'une fenêtre",
+                            lurk.spot.side.describe()
+                        )
+                    }
+                    (_, true) => "elle va en marchant ailleurs en bas de l'écran".to_owned(),
+                    (_, false) => "elle va se tenir debout en bas de l'écran".to_owned(),
                 }
             );
             None
         }
-        Event::Stays { benches: count, asked } => {
+        Event::Stays { benches: count, flanks, asked } => {
             log::debug!(
-                "elle reste où elle est{} : {}, aucune autre place",
+                "elle reste où elle est{} : {}, {}, aucune autre place",
                 if asked { " (demandé)" } else { "" },
-                benches(count)
+                benches(count),
+                sides(flanks)
             );
             asked.then_some(("Je ne vois pas d'autre place où aller", Tone::Done))
         }
-        Event::Arrived { seated, lost } => {
+        Event::Arrived { seated, lurking, lost } => {
             log::debug!(
                 "arrivée {}",
-                match (seated, lost) {
-                    (true, _) => "assise",
-                    (false, true) => "debout : le bord où elle allait n'y était plus",
-                    (false, false) => "debout",
+                match (seated, lurking, lost) {
+                    (true, _, _) => "assise",
+                    (false, true, _) => "derrière le côté d'une fenêtre : elle guette",
+                    (false, false, true) => "debout : le bord ou le côté où elle allait n'y était plus",
+                    (false, false, false) => "debout",
                 }
             );
             None
@@ -241,16 +251,27 @@ mod tests {
     #[test]
     fn she_only_speaks_when_asked_and_unable() {
         assert_eq!(
-            tell(Event::Leaves { to: Choice::Floor(Vec2::ZERO), benches: 4, asked: true, walking: true }),
+            tell(Event::Leaves {
+                to: Choice::Floor(Vec2::ZERO),
+                benches: 4,
+                flanks: 0,
+                asked: true,
+                walking: true
+            }),
             None
         );
         assert_eq!(tell(Event::TurnedBack), None);
         assert_eq!(tell(Event::Halted), None);
         assert_eq!(tell(Event::Fidgeted), None);
         assert_eq!(tell(Event::Refused(Hold::Walking)), None, "elle arrive bientôt");
-        assert_eq!(tell(Event::Arrived { seated: false, lost: true }), None);
-        assert_eq!(tell(Event::Stays { benches: 0, asked: false }), None, "d'elle-même, sans un mot");
-        assert!(tell(Event::Stays { benches: 1, asked: true }).is_some());
+        assert_eq!(tell(Event::Arrived { seated: false, lurking: false, lost: true }), None);
+        assert_eq!(tell(Event::Arrived { seated: false, lurking: true, lost: false }), None);
+        assert_eq!(
+            tell(Event::Stays { benches: 0, flanks: 2, asked: false }),
+            None,
+            "d'elle-même, sans un mot"
+        );
+        assert!(tell(Event::Stays { benches: 1, flanks: 0, asked: true }).is_some());
         assert!(tell(Event::Refused(Hold::Talking)).is_some());
         assert!(tell(Event::Refused(Hold::Music)).is_some());
         assert_eq!(tell(Event::Refused(Hold::Away)), None);

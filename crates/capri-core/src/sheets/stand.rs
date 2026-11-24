@@ -30,10 +30,36 @@
 //! remonte, sur le tour. Le flottement que le programme ajoute (`body.rs`) ne s'additionne donc à
 //! rien : il reste le seul.
 //!
+//! **Elle guette** (de derrière le côté d'une fenêtre, voir `crate::perch` et `crate::look`) avec
+//! ces mêmes dessins, jamais retournés ni modifiés : penchée de [`LEAN_DEGREES`] autour de sa
+//! hanche ([`HIP`]) vers l'extérieur de la fenêtre ([`lean`]), et coupée net à la verticale du bord,
+//! [`EYE_MARGIN`] pixels en deçà de ses yeux penchés, du côté de la fenêtre ([`cut`]). L'angle et
+//! la coupe sont la variante n° 2 de la maquette (la n° 4 de l'autre côté), choisie telle quelle par
+//! l'utilisateur le 24 novembre 2026 ; ces deux constantes la font toute (14° et 23 px redonnent, à
+//! un pixel près, la variante n° 1, où elle se montre davantage).
+//!
+//! **Ce qui se voit d'elle**, mesuré sur ses vrais dessins (les centres de leurs pixels, vérifié par
+//! l'essai des vraies planches de l'app) : sur le côté **droit** d'une fenêtre, sa tête et ses
+//! cheveux, et, le long de la coupe, un mince bord de son corps jusqu'à sa taille (30 px au-dessus
+//! de sa hanche) ; sur le côté **gauche**, sa tête, ses cheveux, et aussi son épaule, son haut, son
+//! bras et un bout de sa jupe, le long de la coupe jusqu'à 6 px au-dessus de sa hanche. Le reste est
+//! caché derrière la fenêtre.
+//!
+//! La hanche, sa silhouette bande par bande ([`OUTLINE`]) et ses yeux ([`EYES`]) sont mesurés sur
+//! les planches. Ce qui se voit d'elle ([`lurk_bounds`]) se calcule de sa silhouette, un peu plus
+//! large que le vrai : de quoi savoir la place qu'il lui faut, et de combien glisser pour être
+//! cachée tout entière derrière la fenêtre. Ses yeux (le vert autour, entier) restent du côté qui se
+//! voit, à [`EYE_MARGIN`] de la coupe au moins, des deux côtés, dans chaque dessin de sa boucle et
+//! de son clignement ordinaire ; sa bouche aussi (vérifié plus bas). **Son clignement glitché, non** :
+//! il décale de côté des bandes de ses yeux, dont la plus proche de la fenêtre passe jusqu'à 3,2 px
+//! derrière la coupe à gauche, et en reste à 0,3 px à droite ([`GLITCHY_EYE_MARGIN`], mesuré sur la
+//! vraie planche) ; ce clignement-là se joue quand même sur un côté.
+//!
 //! Le texte est en pixels des planches (y vers le bas, origine en haut à gauche de la case).
 
 use crate::anim::Sheet;
-use crate::geom::Vec2;
+use crate::geom::{Rect, Vec2};
+use crate::perch::Side;
 
 use super::{CELL_HEIGHT, HOLD, Layout, STEP, Shown, WrongSize};
 
@@ -65,6 +91,50 @@ pub const BLINK_FROM: u32 = 24;
 /// Où est la bouche dans une case : de (58, 117) à (74, 131) inclus, dans les cinq dessins ;
 /// rien n'est dessiné ailleurs dans sa planche.
 pub const MOUTH_BOX: ((u32, u32), (u32, u32)) = ((58, 117), (74, 131));
+/// Ses yeux : le masque vert autour d'eux, de (54, 109) à (77, 120) inclus, dans chaque dessin de
+/// sa boucle et de son clignement (mesuré : le vert, rouge sous 110, vert au-dessus de 150, bleu
+/// sous 160, opaque, au-dessus de son cou). Sa variante glitchée décale de côté des bandes de ces
+/// lignes-là, ses yeux compris (de la colonne 43 à la 93) : voir [`GLITCHY_EYE_MARGIN`].
+pub const EYES: ((u32, u32), (u32, u32)) = ((54, 109), (77, 120));
+/// Guettant, dans son clignement glitché ([`Strip::StandBlinkGlitch`]), la marge la plus faible de
+/// ses yeux à la coupe, sur le côté gauche d'une fenêtre puis sur le droit ([`Side::index`]) :
+/// le vert des lignes de [`EYES`], coin de pixel le plus près de la fenêtre, penché. Négative, une
+/// bande passe derrière la fenêtre : de 3,2 px à gauche (son dessin 6) ; à droite, elle s'approche
+/// à 0,3 px de la coupe (son dessin 2). Mesuré sur la vraie planche le 24 novembre 2026 ; l'essai
+/// des vraies planches de l'app le refait, pour qu'une planche qui change se voie.
+pub const GLITCHY_EYE_MARGIN: [f32; 2] = [-3.21, 0.30];
+/// Sa hanche, autour de laquelle elle se penche quand elle guette : le milieu de sa silhouette (alpha
+/// au-dessus de 96, comme le masque de clic) à la ligne 240, juste sous sa jupe (de la colonne 55 ou
+/// 56 à la 79 : son milieu en 67 ou 67,5 selon le dessin), arrondi au pixel comme dans la maquette.
+pub const HIP: (f32, f32) = (68.0, 240.0);
+/// Sa silhouette bande par bande : pour chaque bande de [`BAND`] lignes à partir de [`TOP`] (la
+/// dernière s'arrête à [`BOTTOM`]), la première et la dernière colonne où quelque chose est dessiné
+/// (alpha non nul), dans tous ses dessins debout, clignements, variante glitchée et bouche compris.
+pub const OUTLINE: [(u32, u32); 15] = [
+    (20, 87),
+    (7, 103),
+    (4, 111),
+    (4, 113),
+    (10, 107),
+    (10, 82),
+    (28, 75),
+    (41, 79),
+    (43, 81),
+    (54, 82),
+    (53, 77),
+    (48, 73),
+    (43, 67),
+    (43, 61),
+    (48, 57),
+];
+/// La hauteur d'une bande de [`OUTLINE`], en lignes.
+pub const BAND: u32 = 24;
+/// Guettant, elle est penchée de tant de degrés vers l'extérieur de la fenêtre, autour de sa hanche
+/// (la maquette, variante n° 2).
+pub const LEAN_DEGREES: f32 = 22.0;
+/// Guettant, la coupe passe à tant de pixels de ses yeux penchés ([`EYES`], le vert autour, entier),
+/// du côté de la fenêtre (la maquette, variante n° 2).
+pub const EYE_MARGIN: f32 = 9.0;
 /// Combien de fois un pixel de ses planches debout est plus grand à l'écran qu'un pixel de ses
 /// planches assises, pour qu'elle ait la même taille dans les deux poses.
 ///
@@ -302,6 +372,82 @@ pub fn perch_cell_size(strip: super::Strip, height: f32) -> Vec2 {
     Vec2::new(w as f32 * s, h as f32 * s)
 }
 
+/// Guettant sur le côté `side` d'une fenêtre : de combien elle est penchée, en radians, à l'écran
+/// (y vers le bas : positif dans le sens des aiguilles d'une montre). Toujours vers l'extérieur de
+/// la fenêtre : sa tête vers la gauche sur le côté gauche, vers la droite sur le côté droit.
+pub fn lean(side: Side) -> f32 {
+    // la tête vers la droite, c'est le sens des aiguilles d'une montre
+    side.outward() * LEAN_DEGREES.to_radians()
+}
+
+/// Guettant sur le côté `side` d'une fenêtre : où passe la coupe dans sa case penchée, en x (pixels
+/// de ses planches) : à [`EYE_MARGIN`] de ses yeux penchés ([`EYES`]), du côté de la fenêtre.
+pub fn cut(side: Side) -> f32 {
+    let (hip, angle, o) = (Vec2::new(HIP.0, HIP.1), lean(side), side.outward());
+    let ((x0, y0), (x1, y1)) = EYES;
+    let (x0, y0, x1, y1) = (x0 as f32, y0 as f32, (x1 + 1) as f32, (y1 + 1) as f32);
+    // le bord de ses yeux penchés le plus près de la fenêtre (vers l'intérieur : -o)
+    let nearest = [Vec2::new(x0, y0), Vec2::new(x1, y0), Vec2::new(x1, y1), Vec2::new(x0, y1)]
+        .map(|corner| turn(corner, hip, angle).x * o)
+        .into_iter()
+        .fold(f32::MAX, f32::min);
+    (nearest - EYE_MARGIN) * o
+}
+
+/// Guettant sur le côté `side` d'une fenêtre : de combien de pixels de ses planches sa hanche est
+/// dehors, de l'autre côté de la coupe que la fenêtre ; négatif, elle est derrière la fenêtre (avec
+/// [`LEAN_DEGREES`] et [`EYE_MARGIN`] d'aujourd'hui, sa hanche est derrière, des deux côtés).
+pub fn hip_out(side: Side) -> f32 {
+    (HIP.0 - cut(side)) * side.outward()
+}
+
+/// Le point `p` tourné de `angle` radians autour de `pivot` (à l'écran, y vers le bas : positif dans
+/// le sens des aiguilles d'une montre).
+pub fn turn(p: Vec2, pivot: Vec2, angle: f32) -> Vec2 {
+    let (sin, cos) = angle.sin_cos();
+    let d = p - pivot;
+    pivot + Vec2::new(d.x * cos - d.y * sin, d.x * sin + d.y * cos)
+}
+
+/// Guettant sur le côté `side` d'une fenêtre, ce qui se voit d'elle, en pixels de ses planches,
+/// autour de son point d'accroche (sur la coupe, à la hauteur de sa hanche) : sa silhouette bande
+/// par bande ([`OUTLINE`]) penchée ([`lean`]), et ce qui en reste du côté dehors de la coupe. Un peu
+/// plus que ce qui se voit vraiment (chaque bande compte pour un rectangle), jamais moins. Rien
+/// au-delà de la coupe : `max.x` vaut 0 à gauche, `min.x` à droite.
+pub fn lurk_bounds(side: Side) -> Rect {
+    let hip = Vec2::new(HIP.0, HIP.1);
+    let angle = lean(side);
+    let o = side.outward();
+    let cut = cut(side);
+    let shows = |p: Vec2| (p.x - cut) * o >= 0.0;
+    let (mut lo, mut hi) = (Vec2::new(f32::MAX, f32::MAX), Vec2::new(f32::MIN, f32::MIN));
+    for (band, &(x0, x1)) in OUTLINE.iter().enumerate() {
+        let y0 = (TOP + band as u32 * BAND) as f32;
+        let y1 = ((TOP + (band as u32 + 1) * BAND).min(BOTTOM)) as f32;
+        // les bords des pixels : de la colonne `x0` au bout de la colonne `x1`
+        let (x0, x1) = (x0 as f32, (x1 + 1) as f32);
+        let corners = [Vec2::new(x0, y0), Vec2::new(x1, y0), Vec2::new(x1, y1), Vec2::new(x0, y1)]
+            .map(|corner| turn(corner, hip, angle));
+        // la bande penchée, privée de ce qui est derrière la fenêtre (un côté du polygone à la fois)
+        for (index, &a) in corners.iter().enumerate() {
+            let b = corners[(index + 1) % corners.len()];
+            let mut keep = |p: Vec2| {
+                lo = Vec2::new(lo.x.min(p.x), lo.y.min(p.y));
+                hi = Vec2::new(hi.x.max(p.x), hi.y.max(p.y));
+            };
+            if shows(a) {
+                keep(a);
+            }
+            if shows(a) != shows(b) {
+                let t = (cut - a.x) / (b.x - a.x);
+                keep(Vec2::new(cut, a.y + t * (b.y - a.y)));
+            }
+        }
+    }
+    let anchor = Vec2::new(cut, hip.y);
+    Rect::new(lo - anchor, hi - lo)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -454,6 +600,97 @@ mod tests {
         assert!(FEET.1 <= BOTTOM as f32);
         let ((x0, y0), (x1, y1)) = MOUTH_BOX;
         assert!(x0 < x1 && x1 < CELL_WIDTH && y0 < y1 && y1 < CELL_HEIGHT);
+    }
+
+    /// Les coins d'une boîte de pixels (inclusive), aux bords des pixels.
+    fn corners(((x0, y0), (x1, y1)): ((u32, u32), (u32, u32))) -> [Vec2; 4] {
+        let (x0, y0, x1, y1) = (x0 as f32, y0 as f32, (x1 + 1) as f32, (y1 + 1) as f32);
+        [Vec2::new(x0, y0), Vec2::new(x1, y0), Vec2::new(x1, y1), Vec2::new(x0, y1)]
+    }
+
+    #[test]
+    fn her_outline_covers_her_whole_silhouette_band_by_band() {
+        // les bandes vont de ses cheveux à la pointe de son pied, sans trou ni de trop
+        let bands = OUTLINE.len() as u32;
+        assert!(TOP + (bands - 1) * BAND < BOTTOM && TOP + bands * BAND >= BOTTOM);
+        assert!(OUTLINE.iter().all(|&(x0, x1)| x0 <= x1 && x1 < CELL_WIDTH));
+        // sa hanche, ses yeux et sa bouche y sont
+        let band = |y: u32| OUTLINE[((y - TOP) / BAND) as usize];
+        let (x0, x1) = band(HIP.1 as u32);
+        assert!(x0 as f32 <= HIP.0 && HIP.0 <= x1 as f32);
+        for ((x0, y0), (x1, y1)) in [EYES, MOUTH_BOX] {
+            for y in y0..=y1 {
+                let (lo, hi) = band(y);
+                assert!(lo <= x0 && x1 <= hi, "ligne {y}");
+            }
+        }
+    }
+
+    #[test]
+    fn lurking_she_leans_out_of_the_window_and_only_her_head_shows_eyes_and_mouth_whole() {
+        let hip = Vec2::new(HIP.0, HIP.1);
+        let above = Vec2::new(HIP.0, TOP as f32);
+        for side in Side::ALL {
+            // sa tête vers l'extérieur de la fenêtre, de 22 degrés
+            let head = turn(above, hip, lean(side));
+            assert!((head.x - hip.x) * side.outward() > 0.0, "{side:?} : {head:?}");
+            let tilt = ((head.x - hip.x).abs() / (hip.y - head.y)).atan().to_degrees();
+            assert!((tilt - LEAN_DEGREES).abs() < 1e-3, "{side:?} : {tilt}");
+            // ses yeux entiers, penchés, à `EYE_MARGIN` de la coupe au plus près, du côté qui se voit
+            let margin = |corner: Vec2| (turn(corner, hip, lean(side)).x - cut(side)) * side.outward();
+            let nearest = corners(EYES).into_iter().map(margin).fold(f32::MAX, f32::min);
+            assert!((nearest - EYE_MARGIN).abs() < 1e-3, "{side:?} : {nearest}");
+            // sa bouche aussi (7,7 px au plus près à gauche, 8,6 à droite)
+            for corner in corners(MOUTH_BOX) {
+                assert!(margin(corner) > 7.0, "{side:?} : sa bouche à {} px de la coupe", margin(corner));
+            }
+            // sa hanche est derrière la fenêtre
+            assert!(hip_out(side) < -20.0, "{side:?} : {}", hip_out(side));
+        }
+        // tourner de 0 ne change rien ; d'un angle puis de son opposé, on revient au même point
+        let p = Vec2::new(20.0, 50.0);
+        assert_eq!(turn(p, hip, 0.0), p);
+        let back = turn(turn(p, hip, 0.3), hip, -0.3);
+        assert!((back - p).length() < 1e-3);
+    }
+
+    #[test]
+    fn what_shows_of_her_lurking_is_measured_from_her_outline_and_stops_at_the_cut() {
+        for side in Side::ALL {
+            let shown = lurk_bounds(side);
+            let (lo, hi) = (shown.min, shown.max());
+            // rien derrière la fenêtre
+            match side {
+                Side::Left => assert!(hi.x.abs() < 1e-3 && lo.x < -80.0, "{shown:?}"),
+                Side::Right => assert!(lo.x.abs() < 1e-3 && hi.x > 80.0, "{shown:?}"),
+            }
+            // ses cheveux, bien au-dessus de sa hanche ; en bas, ce qui se voit d'elle va : à gauche,
+            // le long de la coupe, jusqu'à sa hanche (son épaule, son haut, son bras, un bout de
+            // jupe) ; à droite, pas plus bas que sa taille (sa tête, ses cheveux, un bord de son
+            // corps le long de la coupe)
+            assert!(lo.y < -200.0, "{side:?} : {shown:?}");
+            match side {
+                Side::Left => assert!(hi.y > -10.0 && hi.y < 10.0, "jusqu'à sa hanche : {shown:?}"),
+                Side::Right => assert!(hi.y < -15.0, "pas plus bas que sa taille : {shown:?}"),
+            }
+            // ses yeux dedans
+            let hip = Vec2::new(HIP.0, HIP.1);
+            let anchor = Vec2::new(cut(side), hip.y);
+            for corner in corners(EYES) {
+                let p = turn(corner, hip, lean(side)) - anchor;
+                assert!(shown.to_unit(p).is_some(), "{side:?} : {p:?} hors de {shown:?}");
+            }
+        }
+        // calculé de sa silhouette le 24 novembre 2026 : à gauche, la coupe en x = 41,7, 103,7 px
+        // dehors, 211,5 au-dessus de sa hanche et 1,6 en dessous ; à droite, en x = 90,6, 84,2 px
+        // dehors, de 222,0 à 18,6 au-dessus de sa hanche
+        assert!((cut(Side::Left) - 41.7).abs() < 0.05 && (cut(Side::Right) - 90.6).abs() < 0.05);
+        let left = lurk_bounds(Side::Left);
+        assert!((left.min.x + 103.7).abs() < 0.1 && (left.min.y + 211.5).abs() < 0.1, "{left:?}");
+        assert!((left.max().y - 1.6).abs() < 0.1, "{left:?}");
+        let right = lurk_bounds(Side::Right);
+        assert!((right.max().x - 84.2).abs() < 0.1 && (right.min.y + 222.0).abs() < 0.1, "{right:?}");
+        assert!((right.max().y + 18.6).abs() < 0.1, "{right:?}");
     }
 
     #[test]

@@ -3,8 +3,8 @@
 //!
 //! N'imprime que des nombres : combien de fenêtres, pourquoi certaines ne comptent pas, le rang
 //! (de la plus en avant à la plus en arrière) et le rectangle de celles qui comptent, les morceaux
-//! visibles de leurs bords, en pixels de l'overlay, un essai de pose sur l'un d'eux, et ce que
-//! coûte une lecture. Jamais un titre ni un nom d'app : la liste n'en contient pas. Ne lit et
+//! visibles de leurs bords et de leurs côtés, en pixels de l'overlay, un essai de pose sur l'un
+//! d'eux, combien de côtés la laisseraient guetter, et ce que coûte une lecture. Jamais un titre ni un nom d'app : la liste n'en contient pas. Ne lit et
 //! n'écrit aucun réglage, ne demande aucune permission.
 //!
 //! Rend 0 si tout est conforme, 1 sinon.
@@ -121,6 +121,37 @@ fn run() -> i32 {
         }),
         "des bords visibles dans l'écran",
     );
+    // les côtés, où elle guette quand aucun bord ne la porte (chacun, gauche ou droit, que
+    // `Side::describe` nomme)
+    let jambs = perch::jambs(&seen, screen);
+    println!("côtés visibles : {}", jambs.len());
+    for jamb in &jambs {
+        println!(
+            "  fenêtre n° {}, côté {} : x = {:.0}, de {:.0} à {:.0} px",
+            rank(jamb.window),
+            jamb.side.describe(),
+            jamb.x,
+            jamb.from,
+            jamb.to
+        );
+    }
+    check(
+        jambs.iter().all(|j| {
+            j.from < j.to && j.from >= 0.0 && j.to <= screen.size.y && j.x >= 0.0 && j.x <= screen.size.x
+        }),
+        "des côtés visibles dans l'écran",
+    );
+    if crate::assets::stand::present() {
+        let lurking = capri_core::look::lurking_stature(stature.height);
+        let flanks = perch::flanks(&seen, screen, lurking);
+        println!("côtés où elle guetterait, debout sur ses planches : {}", flanks.len());
+        check(
+            flanks
+                .iter()
+                .all(|flank| perch::follow_flank(&seen, screen, lurking, flank.at(flank.lo).spot).is_ok()),
+            "guettant sur l'un d'eux, la même lecture la garde au même endroit",
+        );
+    }
 
     // un essai : lâchée au milieu du premier bord qui lui laisse la place, elle s'y pose, et la
     // même lecture la garde au même endroit

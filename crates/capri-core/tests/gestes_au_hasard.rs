@@ -38,6 +38,12 @@
 //!   on la cache, matérialisée à sa place si on lui parle, tenue si on l'attrape ; jouée jusqu'au
 //!   bout, elle est à sa place ; hors d'une intro, elle est toujours dans l'écran ; ce qui est
 //!   dessiné pendant une entrée est l'entrée en cours ;
+//! - elle guette (une vie sur trois commence sur un bureau dont les fenêtres touchent le haut de
+//!   l'écran, et des fenêtres s'ouvrent parfois tout en haut) : seulement sans aucun bord, sa vie et
+//!   « S'asseoir » cochées ; là, elle est sortie tout entière, ce qui se voit d'elle est dans
+//!   l'écran, non vide, et son côté est sous elle ; jamais coincée derrière la fenêtre ; sa glissade
+//!   finit toujours, sans saut ; ni geste ni repos ; dessinée penchée, sa boucle debout seulement ;
+//!   son côté parti, recouvert, sa taille, ses cases : elle ne guette plus, debout, entière ;
 //! - son repos : de temps en temps, personne ne s'occupe d'elle pendant longtemps (le temps passe
 //!   alors à grandes enjambées) ; elle s'allonge, s'endort, se réveille par chaque moyen (on lui
 //!   parle, un clic, une prise, Claude Code qui attend, « Changer de place », cachée), son bord s'en
@@ -53,15 +59,16 @@
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
+use capri_core::body::GLIDE;
 use capri_core::input::{Hand, Let};
 use capri_core::intro::{self, Act, After, End, Entry, Part, Play, Suite};
 use capri_core::look::{
     Drawing, Gesture, LONGEST_GESTURE, LieMasks, Look, Moves, NapMasks, PerchMasks, Rest, Unsettled, Wants,
     Wardrobe,
 };
-use capri_core::perch::{self, Seen, Stature};
+use capri_core::perch::{self, LurkStature, Seen, Stature};
 use capri_core::roam::{
-    AVOID, BY_HAND, Busy, Choice, Event, FLOOR, Hold, LIE_LONGEST, Rng, Roamer, SEATED, UP_ASLEEP,
+    AVOID, BY_HAND, Busy, Choice, Event, FLOOR, Hold, LIE_LONGEST, LURK_STAY, Rng, Roamer, SEATED, UP_ASLEEP,
     WALK_LONGEST, World,
 };
 use capri_core::sheets::{self, lie, life, stand};
@@ -228,7 +235,22 @@ fn edges(capri: &Capri) -> Vec<Vec2> {
 
 /// Combien son image debout dépasse de l'écran, au plus d'un côté (0 : entièrement dedans).
 fn outside(capri: &Capri) -> f32 {
-    let (min, max) = (capri.position(), capri.position() + capri.size());
+    beyond_screen(capri.position(), capri.position() + capri.size())
+}
+
+/// Combien ce qu'on voit d'elle dépasse de l'écran : guettant, tout ce qui se voit d'elle
+/// (`Look::visible` : sa part derrière la fenêtre ne se dessine pas ; pas la place de son bandeau,
+/// plus étroite) ; sinon son image debout.
+fn outside_seen(capri: &Capri, look: &Look) -> f32 {
+    if capri.lurking().is_some() {
+        let seen = look.visible(capri);
+        return beyond_screen(seen.min, seen.max());
+    }
+    outside(capri)
+}
+
+/// Combien le rectangle de `min` à `max` dépasse de l'écran, au plus d'un côté.
+fn beyond_screen(min: Vec2, max: Vec2) -> f32 {
     [SCREEN.min.x - min.x, SCREEN.min.y - min.y, max.x - SCREEN.max().x, max.y - SCREEN.max().y]
         .into_iter()
         .fold(0.0, f32::max)
@@ -298,14 +320,22 @@ impl World for Desk {
         self.reads += 1;
         Some(self.windows.clone())
     }
-    fn recheck(&mut self, capri: &mut Capri, stature: Stature) {
-        ride(capri, self, stature);
+    fn recheck(&mut self, capri: &mut Capri, stature: Stature, lurking: Option<LurkStature>) {
+        ride(capri, self, stature, lurking);
     }
 }
 
 /// Posée, elle suit sa fenêtre ou la quitte, comme `perch_view` (à chaque pas : sa cadence ne
-/// change rien à ce qui est vérifié ici).
-fn ride(capri: &mut Capri, desk: &Desk, stature: Stature) {
+/// change rien à ce qui est vérifié ici) ; guettant, de même.
+fn ride(capri: &mut Capri, desk: &Desk, stature: Stature, lurking: Option<LurkStature>) {
+    if let Some(lurk) = capri.lurking() {
+        match lurking.filter(|_| desk.perch).map(|l| perch::follow_flank(&desk.windows, SCREEN, l, lurk.spot))
+        {
+            Some(Ok(lurk)) => capri.ride_flank(lurk),
+            _ => capri.take_off(),
+        }
+        return;
+    }
     let Some(spot) = capri.perched() else { return };
     if !desk.perch {
         return capri.take_off();
@@ -429,6 +459,17 @@ struct Tally {
     sheets_failed: usize,
     /// Son repos allongée arrêté sans qu'on s'occupe d'elle (plus la place, plus posée).
     unsettled: usize,
+    /// Elle guette : ses départs vers un côté, ses arrivées, des pas sortie, des pas à glisser ; son
+    /// côté parti sous elle, cachée, attrapée, parlée en guettant, décochée ou trop grande.
+    to_flank: usize,
+    lurks: usize,
+    lurk_steps: usize,
+    glide_steps: usize,
+    flank_gone: usize,
+    hidden_lurking: usize,
+    grabbed_lurking: usize,
+    talked_lurking: usize,
+    touched_lurking: usize,
 }
 
 /// Une entrée est-elle possible avec ses planches ?
@@ -519,15 +560,19 @@ fn live(seed: u64, dressed: (bool, bool, bool, u8), tally: &mut Tally) -> Result
     let mut capri = Capri::new(look.standing_size(), SCREEN, Vec2::new(2400.0, 1200.0));
     capri.set_feet(look.standing_feet());
     capri.set_leave_frames(look.leave_frames());
-    let mut desk = Desk {
-        windows: vec![
+    // une vie sur trois, des fenêtres qui touchent presque le haut de l'écran : aucun bord, des côtés
+    let windows = if seed % 3 == 1 {
+        vec![
+            Seen { id: 1, rect: Rect::new(Vec2::new(400.0, 30.0), Vec2::new(1000.0, 1800.0)) },
+            Seen { id: 2, rect: Rect::new(Vec2::new(1700.0, 60.0), Vec2::new(900.0, 1700.0)) },
+        ]
+    } else {
+        vec![
             Seen { id: 1, rect: Rect::new(Vec2::new(300.0, 900.0), Vec2::new(1400.0, 900.0)) },
             Seen { id: 2, rect: Rect::new(Vec2::new(1500.0, 700.0), Vec2::new(1200.0, 1000.0)) },
-        ],
-        cursor: Some(Vec2::new(100.0, 100.0)),
-        perch: true,
-        reads: 0,
+        ]
     };
+    let mut desk = Desk { windows, cursor: Some(Vec2::new(100.0, 100.0)), perch: true, reads: 0 };
     let mut next_id = 3;
     let mut roamer = Roamer::new(seed, 0.0, true);
     let mut moving = false;
@@ -552,6 +597,10 @@ fn live(seed: u64, dressed: (bool, bool, bool, u8), tally: &mut Tally) -> Result
     let mut film: Option<u64> = None;
     // combien elle dépassait de l'écran au pas précédent (hors d'une intro qu'elle joue)
     let mut last_out: Option<f32> = None;
+    // depuis combien de pas elle glisse de derrière une fenêtre, ou s'y retire, vers où, et de quel
+    // côté
+    let mut gliding_for = 0u64;
+    let mut glide_to: Option<(f32, perch::FlankSpot)> = None;
     if let Some(launch) = suite.as_mut() {
         if with_film {
             if seed % 5 == 4 {
@@ -594,6 +643,8 @@ fn live(seed: u64, dressed: (bool, bool, bool, u8), tally: &mut Tally) -> Result
     // « Changer de place » demandé et pas encore servi ; sa dernière arrivée debout en bas de l'écran
     let mut asked = false;
     let mut floor_arrival: Option<f64> = None;
+    // sa dernière arrivée sur un côté, tant qu'elle y guette (son côté perdu, oubliée)
+    let mut lurk_arrival: Option<f64> = None;
     // sa marche en cours : combien de pas de la boucle elle dure (chacun avance son corps d'un
     // vingt-quatrième de seconde, même quand le temps passe par à-coups), et d'où elle est partie
     let mut walk: Option<(u64, f32, f32)> = None;
@@ -696,6 +747,8 @@ fn live(seed: u64, dressed: (bool, bool, bool, u8), tally: &mut Tally) -> Result
             if playing.is_over() {
                 suite = None;
             }
+            // le film fait partie de l'intro : ce qu'elle dépassait de l'écran avant ne compte plus
+            last_out = None;
             continue;
         }
 
@@ -714,8 +767,16 @@ fn live(seed: u64, dressed: (bool, bool, bool, u8), tally: &mut Tally) -> Result
             story.push(format!("{frame} : une fenêtre se ferme"));
         }
         if desk.windows.len() < 6 && dice.chance(150) {
-            let min = Vec2::new(dice.between(-200.0, 2800.0), dice.between(0.0, 1800.0));
-            let size = Vec2::new(dice.between(200.0, 2000.0), dice.between(100.0, 1200.0));
+            // parfois tout en haut de l'écran, et haute : sans bord, avec des côtés
+            let top = dice.chance(3);
+            let min = Vec2::new(
+                dice.between(-200.0, 2800.0),
+                if top { dice.between(0.0, 200.0) } else { dice.between(0.0, 1800.0) },
+            );
+            let size = Vec2::new(
+                dice.between(200.0, 2000.0),
+                if top { dice.between(900.0, 1900.0) } else { dice.between(100.0, 1200.0) },
+            );
             desk.windows.insert(0, Seen { id: next_id, rect: Rect::new(min, size) });
             next_id += 1;
         }
@@ -728,6 +789,7 @@ fn live(seed: u64, dressed: (bool, bool, bool, u8), tally: &mut Tally) -> Result
         let calm = (calm_life && look.is_walking(&capri)) || quiet_stretch;
         if !calm && dice.chance(120) {
             talking = !talking;
+            tally.talked_lurking += usize::from(talking && capri.lurking().is_some() && look.is_here());
             // on lui parle (`App::talk`, `Running::cut_intro`) : l'intro qu'elle joue s'arrête et
             // elle se matérialise ; en train de s'effacer pour une intro, elle revient sur ses pas
             if talking && look.is_performing() {
@@ -761,13 +823,15 @@ fn live(seed: u64, dressed: (bool, bool, bool, u8), tally: &mut Tally) -> Result
         // `roam_view::touched`)
         if !calm && dice.chance(500) {
             desk.perch = !desk.perch;
-            let was = capri.perched().is_some();
+            let lurked = capri.lurking().is_some();
+            let was = capri.perched().is_some() || lurked;
             if !desk.perch && was {
                 capri.take_off();
             }
             roamer.touched(now, &capri);
-            if was && capri.perched().is_none() {
+            if was && capri.perched().is_none() && capri.lurking().is_none() {
                 tally.touched_off += 1;
+                tally.touched_lurking += usize::from(lurked);
                 if (roamer.next() - (now + BY_HAND.min)).abs() > 1e-6 {
                     return fail(
                         format!("image {frame} : décochée, elle repartira à {}", roamer.next()),
@@ -794,12 +858,13 @@ fn live(seed: u64, dressed: (bool, bool, bool, u8), tally: &mut Tally) -> Result
                 if matches!(look.rest(), Rest::Lying | Rest::Asleep { lying: true }) {
                     tally.hidden_lying += 1;
                 }
+                tally.hidden_lurking += usize::from(capri.lurking().is_some());
                 look.vanish(&mut capri, frame);
             } else {
                 if look.is_gone() {
                     capri.step(0.0, frame);
                     let stature = look.stature();
-                    ride(&mut capri, &desk, stature);
+                    ride(&mut capri, &desk, stature, look.lurk_stature());
                 }
                 look.appear(&mut capri, frame);
                 let waiting = roamer.next();
@@ -819,12 +884,14 @@ fn live(seed: u64, dressed: (bool, bool, bool, u8), tally: &mut Tally) -> Result
             capri.set_size(look.standing_size());
 
             let stature = look.stature();
-            let was = capri.perched().is_some();
-            ride(&mut capri, &desk, stature);
+            let lurked = capri.lurking().is_some();
+            let was = capri.perched().is_some() || lurked;
+            ride(&mut capri, &desk, stature, look.lurk_stature());
             look.set_room_to_lie(room_to_lie(&look, &capri, &desk));
             roamer.touched(now, &capri);
-            if was && capri.perched().is_none() {
+            if was && capri.perched().is_none() && capri.lurking().is_none() {
                 tally.touched_off += 1;
+                tally.touched_lurking += usize::from(lurked);
                 if (roamer.next() - (now + BY_HAND.min)).abs() > 1e-6 {
                     return fail(
                         format!("image {frame} : trop grande, elle repartira à {}", roamer.next()),
@@ -900,8 +967,10 @@ fn live(seed: u64, dressed: (bool, bool, bool, u8), tally: &mut Tally) -> Result
         // même passage. Restée tenue sans bouton (son relâchement perdu), un clic la lâche
         if !hidden && !calm && pressing.is_none() && (!capri.is_held() || stuck) && dice.chance(40) {
             let picture = look.picture(&capri);
-            // sur la part d'elle qui se voit (une intro peut la mettre en partie hors de l'écran)
-            let cursor = on_screen(picture.rect.min + picture.rect.size * 0.5);
+            // sur la part d'elle qui se voit (une intro peut la mettre en partie hors de l'écran ;
+            // guettant, ce qui se voit d'elle est autour de sa tête, dehors)
+            let shown = if picture.lean.is_some() { look.shown(&capri) } else { picture.rect };
+            let cursor = on_screen(shown.min + shown.size * 0.5);
             if look.is_over(&capri, cursor) {
                 hand.press(cursor, now);
                 desk.cursor = Some(cursor);
@@ -958,9 +1027,18 @@ fn live(seed: u64, dressed: (bool, bool, bool, u8), tally: &mut Tally) -> Result
                         tally.grabs_by_release += 1;
                         stuck = false;
                         let (seated, before) = (look.is_seated(&capri), capri.position());
+                        let held = held_point(&look, &capri, &grab);
                         if look.hold(&mut capri, &grab) {
                             story.push(format!("{frame} : prise et lâchée au même passage"));
-                            if let Err(what) = no_jump(&capri, &grab, seated, before, tally) {
+                            let jumped = match held {
+                                Some(held) => no_jump_lurking(&capri, &grab, held),
+                                None => no_jump(&capri, &grab, seated, before, tally),
+                            };
+                            // redressée, son image peut dépasser de l'écran : c'est là que la mesure repart
+                            if held.is_some() {
+                                last_out = None;
+                            }
+                            if let Err(what) = jumped {
                                 return fail(format!("image {frame} : {what}"), &story);
                             }
                         }
@@ -1097,9 +1175,19 @@ fn live(seed: u64, dressed: (bool, bool, bool, u8), tally: &mut Tally) -> Result
             tally.grabbed_resting += usize::from(look.is_resting());
             stuck = false;
             let (seated, before) = (look.is_seated(&capri), capri.position());
+            let held = held_point(&look, &capri, &grab);
+            tally.grabbed_lurking += usize::from(capri.lurking().is_some() && !look.is_away());
             if look.hold(&mut capri, &grab) {
                 story.push(format!("{frame} : attrapée"));
-                if let Err(what) = no_jump(&capri, &grab, seated, before, tally) {
+                let jumped = match held {
+                    Some(held) => no_jump_lurking(&capri, &grab, held),
+                    None => no_jump(&capri, &grab, seated, before, tally),
+                };
+                // redressée, son image peut dépasser de l'écran : c'est là que la mesure repart
+                if held.is_some() {
+                    last_out = None;
+                }
+                if let Err(what) = jumped {
                     return fail(format!("image {frame} : {what}"), &story);
                 }
                 // le curseur que son corps connaît : le dernier relevé depuis l'appui
@@ -1192,6 +1280,11 @@ fn live(seed: u64, dressed: (bool, bool, bool, u8), tally: &mut Tally) -> Result
             }
             Stance::Floating => capri_core::body::RETURN * capri.size().y / 24.0,
             Stance::Perched { .. } => 0.0,
+            // sa glissade, adoucie (au plus 1,5 fois sa vitesse moyenne)
+            Stance::Lurking { lurk, .. } => {
+                let fit = capri.lurk_fit();
+                1.5 * fit.slide[lurk.spot.side.index()] * capri.size().x / GLIDE / 24.0
+            }
             Stance::Held { .. } | Stance::Thrown { .. } => f32::INFINITY,
         };
         if moved.length() > most + 0.01 {
@@ -1215,10 +1308,22 @@ fn live(seed: u64, dressed: (bool, bool, bool, u8), tally: &mut Tally) -> Result
             capri.land(perch);
         }
         let lying_before = matches!(look.rest(), Rest::Lying | Rest::Asleep { lying: true });
-        ride(&mut capri, &desk, stature);
+        let lurked = capri.lurking().is_some();
+        ride(&mut capri, &desk, stature, look.lurk_stature());
         if lying_before && capri.perched().is_none() && !capri.is_held() {
             tally.ledge_gone_lying += 1;
             story.push(format!("{frame} : son bord parti sous elle allongée"));
+        }
+        if lurked && capri.lurking().is_none() {
+            tally.flank_gone += 1;
+            story.push(format!("{frame} : son côté parti sous elle"));
+            // un côté perdu : elle se choisit vite une autre place, debout comprise
+            lurk_arrival = None;
+            floor_arrival = None;
+            // debout, entière : dans l'écran
+            if outside(&capri) > 0.01 {
+                return fail(format!("image {frame} : son côté parti, et hors de l'écran"), &story);
+            }
         }
         // la place pour elle allongée, d'après cette lecture (`perch_view::room_to_lie`)
         let room = room_to_lie(&look, &capri, &desk);
@@ -1284,11 +1389,13 @@ fn live(seed: u64, dressed: (bool, bool, bool, u8), tally: &mut Tally) -> Result
         let (here, grooving, held_back) = (look.is_here(), look.is_grooving(), carried(&capri));
         let walking_before = look.is_walking(&capri);
         let seated_before = look.is_seated(&capri) && capri.perched().is_some();
+        let perched_before = capri.perched().is_some();
         let rest_before = look.rest();
         tally.grooving += usize::from(grooving);
         tally.talking += usize::from(talking && here);
         tally.hovered += usize::from(hovered && here);
         let busy = Busy { talking, hovered };
+        let heading_before = roamer.heading();
         let events = roamer.step(&mut look, &mut capri, &mut desk, busy, now, frame);
         // une prise faite au relâchement : tenue pendant ce pas, lâchée à sa fin
         if let Some(at) = hand.let_go() {
@@ -1372,9 +1479,51 @@ fn live(seed: u64, dressed: (bool, bool, bool, u8), tally: &mut Tally) -> Result
                             if under_cursor(desk.cursor, feet, standing.reach, height) {
                                 return fail(format!("image {frame} : debout, sous le curseur"), &story);
                             }
-                            // d'elle-même, debout, de loin en loin seulement
+                            // d'elle-même, debout, de loin en loin seulement ; guettant, pas avant une
+                            // attente ordinaire
                             if !by_hand && floor_arrival.is_some_and(|at| now - at < SEATED.min) {
                                 return fail(format!("image {frame} : debout, elle saute trop tôt"), &story);
+                            }
+                            if !by_hand && lurk_arrival.is_some_and(|at| now - at < LURK_STAY.min) {
+                                return fail(format!("image {frame} : guettant, debout trop tôt"), &story);
+                            }
+                        }
+                        Choice::Flank(lurk) => {
+                            tally.to_flank += 1;
+                            // seulement sans aucun bord (où elle ne serait pas sous le curseur ; assise,
+                            // sans autre que le sien, si on le lui demande), en vivant sa vie,
+                            // « S'asseoir » cochée
+                            let Event::Leaves { benches, .. } = event else { unreachable!() };
+                            let open = perch::benches(&desk.windows, SCREEN, look.stature())
+                                .iter()
+                                .any(|bench| free_bench(bench, desk.cursor, look.stature()));
+                            let fair = benches == 0 || !open || (by_hand && perched_before);
+                            if !fair || !roamer.is_enabled() || !desk.perch || !look.has_stand() {
+                                return fail(
+                                    format!(
+                                        "image {frame} : guetter, avec {benches} bords, sa vie {}",
+                                        roamer.is_enabled()
+                                    ),
+                                    &story,
+                                );
+                            }
+                            // d'elle-même, pas plus tôt que debout, ni, guettant, qu'une attente ordinaire
+                            let early = floor_arrival.is_some_and(|at| now - at < SEATED.min)
+                                || lurk_arrival.is_some_and(|at| now - at < LURK_STAY.min);
+                            if !by_hand && early {
+                                return fail(format!("image {frame} : vers un côté trop tôt"), &story);
+                            }
+                            // là, elle y resterait ; jamais sous le curseur
+                            let lurking = look.lurk_stature().expect("ses planches debout");
+                            let stays = perch::follow_flank(&desk.windows, SCREEN, lurking, lurk.spot);
+                            if !stays.as_ref().is_ok_and(|l| (l.at - lurk.at).length() < 0.01) {
+                                return fail(
+                                    format!("image {frame} : un côté où elle ne tient pas : {stays:?}"),
+                                    &story,
+                                );
+                            }
+                            if under_cursor(desk.cursor, lurk.at, lurking.on(lurk.spot.side), height) {
+                                return fail(format!("image {frame} : sur un côté, sous le curseur"), &story);
                             }
                         }
                         Choice::Stay => {
@@ -1391,7 +1540,18 @@ fn live(seed: u64, dressed: (bool, bool, bool, u8), tally: &mut Tally) -> Result
                         return fail(format!("image {frame} : demandée, elle reste où elle est"), &story);
                     }
                 }
-                Event::Arrived { seated, lost } => {
+                Event::Arrived { seated, lurking, lost } => {
+                    if lurking {
+                        tally.lurks += 1;
+                        let lurk = capri.lurking().expect("guettant");
+                        let need = look.lurk_stature().expect("ses planches debout");
+                        if seated || perch::follow_flank(&desk.windows, SCREEN, need, lurk.spot).is_err() {
+                            return fail(
+                                format!("image {frame} : arrivée sur un côté qui ne la porte pas"),
+                                &story,
+                            );
+                        }
+                    }
                     tally.arrived += 1;
                     // on lui parle : elle revient sur ses pas, elle n'apparaît pas ailleurs
                     if talking {
@@ -1409,11 +1569,20 @@ fn live(seed: u64, dressed: (bool, bool, bool, u8), tally: &mut Tally) -> Result
                                 &story,
                             );
                         }
+                    } else if lurking {
+                        // sur un côté : son attente de guetteuse remplace celle d'avant
+                        lurk_arrival = Some(now);
+                        floor_arrival = None;
                     } else if !lost {
                         floor_arrival = Some(now);
                     }
                     if lost {
                         tally.arrived_lost += 1;
+                        // son côté parti pendant qu'elle y allait : elle se choisit vite une autre place
+                        if matches!(heading_before, Some(Choice::Flank(_))) {
+                            lurk_arrival = None;
+                            floor_arrival = None;
+                        }
                     }
                 }
                 Event::TurnedBack => {
@@ -1565,6 +1734,76 @@ fn live(seed: u64, dressed: (bool, bool, bool, u8), tally: &mut Tally) -> Result
         if desk.reads > decisions {
             return fail(format!("{} lectures pour {decisions} décisions", desk.reads), &story);
         }
+        // ne guettant plus (son côté perdu, une prise, une intro…), son attente de guetteuse ne compte
+        // plus (une prise : 5 minutes, plus longue)
+        if capri.lurking().is_none() && !look.is_traveling() {
+            lurk_arrival = None;
+        }
+        // elle guette : sortie tout entière une fois là, ce qui se voit d'elle dans l'écran et non
+        // vide, son côté sous elle ; sa glissade finit ; ni geste ni repos ; sa boucle, penchée
+        if let Some(lurk) = capri.lurking() {
+            if let Stance::Lurking { toward, .. } = capri.stance()
+                && capri.is_gliding()
+            {
+                tally.glide_steps += 1;
+                // une glissade : dans un sens, d'un côté (revenue sur ses pas, ou ailleurs, une autre)
+                let same = glide_to.is_some_and(|(to, spot)| to == toward && spot.window == lurk.spot.window);
+                gliding_for = if same { gliding_for + 1 } else { 1 };
+                glide_to = Some((toward, lurk.spot));
+                if gliding_for > (GLIDE * 24.0).ceil() as u64 + 1 {
+                    return fail(format!("image {frame} : elle glisse depuis {gliding_for} pas"), &story);
+                }
+            } else {
+                gliding_for = 0;
+                glide_to = None;
+            }
+            if look.gesture().is_some() || look.rest() != Rest::Awake {
+                return fail(
+                    format!("image {frame} : guettant, {:?} et {:?}", look.gesture(), look.rest()),
+                    &story,
+                );
+            }
+            if !look.is_gone() {
+                let picture = look.picture(&capri);
+                let leaning =
+                    picture.lean.is_some_and(|lean| lean.wall == lurk.at.x && lean.side == lurk.spot.side);
+                if !matches!(picture.drawing, Drawing::Stand(_)) || !leaning {
+                    return fail(format!("image {frame} : guettant, dessinée {picture:?}"), &story);
+                }
+            }
+            if look.is_here() {
+                tally.lurk_steps += 1;
+                let (seen, shown) = (look.visible(&capri), look.shown(&capri));
+                // tout ce qui se voit d'elle dans l'écran, et la place de son bandeau dedans
+                let within = |inner: Rect| {
+                    inner.min.x >= seen.min.x - 0.01
+                        && inner.max().x <= seen.max().x + 0.01
+                        && inner.min.y >= seen.min.y - 0.01
+                        && inner.max().y <= seen.max().y + 0.01
+                };
+                if capri.lurk_out() != Some(1.0)
+                    || seen.size.x <= 0.0
+                    || seen.size.y <= 0.0
+                    || outside_seen(&capri, &look) > 0.01
+                    || !within(shown)
+                {
+                    return fail(
+                        format!(
+                            "image {frame} : là, guettant, sortie {:?}, on voit {seen:?}, son bandeau sur {shown:?}",
+                            capri.lurk_out()
+                        ),
+                        &story,
+                    );
+                }
+                let need = look.lurk_stature().expect("ses planches debout");
+                if !desk.perch || perch::follow_flank(&desk.windows, SCREEN, need, lurk.spot).is_err() {
+                    return fail(format!("image {frame} : guettant sans côté sous elle"), &story);
+                }
+            }
+        } else {
+            gliding_for = 0;
+            glide_to = None;
+        }
         // un geste à la fois, et il finit ; ni en marchant, ni tenue
         if let (Some(gesture), Some(since)) = (look.gesture(), look.gesture_since()) {
             if frame >= since + gesture.frames() || gesture.frames() > LONGEST_GESTURE {
@@ -1605,7 +1844,7 @@ fn live(seed: u64, dressed: (bool, bool, bool, u8), tally: &mut Tally) -> Result
         } else if let Some((_, _, to)) = walk.take() {
             // une marche finie sans rien pour la déranger : elle arrive là où elle allait, ou au
             // bord de l'écran, et c'est une arrivée debout
-            let arrived = events.contains(&Event::Arrived { seated: false, lost: false });
+            let arrived = events.contains(&Event::Arrived { seated: false, lurking: false, lost: false });
             if calm_life && !carried(&capri) && look.is_here() && !hidden {
                 if !arrived {
                     return fail(format!("image {frame} : sa marche finie sans arriver"), &story);
@@ -1621,7 +1860,9 @@ fn live(seed: u64, dressed: (bool, bool, bool, u8), tally: &mut Tally) -> Result
             tally.walks_arrived += usize::from(arrived);
         }
         // jamais coincée (une intro qu'elle joue est bornée plus haut)
-        if !hidden && !look.is_here() && !look.is_performing() {
+        // (sa glissade de derrière une fenêtre se compte en pas, plus haut, pas en images : quand le
+        // temps passe par à-coups, son corps n'avance que d'un pas)
+        if !hidden && !look.is_here() && !look.is_performing() && !capri.is_gliding() {
             let since = *away_since.get_or_insert(frame);
             if frame - since > SETTLED_WITHIN && frame - toggled_at > SETTLED_WITHIN {
                 return fail(format!("image {frame} : montrée, mais pas là depuis l'image {since}"), &story);
@@ -1629,7 +1870,7 @@ fn live(seed: u64, dressed: (bool, bool, bool, u8), tally: &mut Tally) -> Result
         } else {
             away_since = None;
         }
-        if hidden && !look.is_gone() && frame - toggled_at > SETTLED_WITHIN {
+        if hidden && !look.is_gone() && frame - toggled_at > SETTLED_WITHIN && !capri.is_gliding() {
             return fail(format!("image {frame} : cachée, mais à moitié effacée"), &story);
         }
         // son repos : jamais endormie pendant qu'on lui parle ; allongée, toujours sur un bord où elle
@@ -1685,7 +1926,8 @@ fn live(seed: u64, dressed: (bool, bool, bool, u8), tally: &mut Tally) -> Result
             _ => {}
         }
         // là et debout, éveillée, son tour avance (un geste l'arrête au plus le temps du plus long)
-        if !hidden && look.is_here() && capri.stance() == Stance::Floating && !look.is_resting() {
+        let upright = capri.stance() == Stance::Floating || capri.lurking().is_some();
+        if !hidden && look.is_here() && upright && !look.is_resting() {
             let mut probe = capri.clone();
             probe.step(0.0, frame + LONGEST_GESTURE + 1);
             if probe.tour() == capri.tour() {
@@ -1725,8 +1967,8 @@ fn live(seed: u64, dressed: (bool, bool, bool, u8), tally: &mut Tally) -> Result
             }
         }
         // hors d'une intro qu'elle joue, jamais plus hors de l'écran qu'au pas précédent ; et lâchée en
-        // partie dehors, elle revient dedans à chaque pas
-        let out = outside(&capri);
+        // partie dehors, elle revient dedans à chaque pas (guettant : ce qui se voit d'elle)
+        let out = outside_seen(&capri, &look);
         if look.is_performing() {
             last_out = None;
         } else {
@@ -1769,6 +2011,28 @@ fn no_jump(
         return Err(format!("un saut de {moved} px à la prise (curseur : {} px)", trail_length(grab)));
     }
     tally.grabbed_outside += usize::from(outside(capri) > 0.5);
+    Ok(())
+}
+
+/// Guettant (dessinée penchée), le point de son image droite que tient le curseur de la prise,
+/// depuis le coin haut gauche de son image ; `None` si elle n'est pas penchée.
+fn held_point(look: &Look, capri: &Capri, grab: &capri_core::input::Grab) -> Option<Vec2> {
+    let picture = look.picture(capri);
+    picture.lean.map(|lean| lean.upright(grab.at) - picture.rect.min)
+}
+
+/// Prise guettant : elle se redresse autour de ce que tient le curseur, qui reste sous lui ; il ne
+/// s'en écarte que de ce que la prise rejoue du curseur (son glissé vers sa mèche compris), même
+/// en partie hors de l'écran (redressée, son image peut dépasser de l'écran, comme une prise en
+/// partie dehors pendant une intro : ensuite, jamais plus, et lâchée, elle y revient).
+fn no_jump_lurking(capri: &Capri, grab: &capri_core::input::Grab, held: Vec2) -> Result<(), String> {
+    let gap = (capri.position() + held - grab.at).length();
+    if gap > 1.5 * trail_length(grab) + 0.01 {
+        return Err(format!(
+            "guettant, le point tenu à {gap} px du curseur (curseur : {} px)",
+            trail_length(grab)
+        ));
+    }
     Ok(())
 }
 
@@ -1836,6 +2100,16 @@ fn performed(
         other => return Err(format!("{act:?} : une fin qui n'est pas celle d'une entrée, {other:?}")),
     }
     Ok(())
+}
+
+/// Un bord où elle pourrait aller sans être sous le curseur (`roam::choose`, la marge de
+/// `roam::AVOID`), quelque part entre ses deux bouts ?
+fn free_bench(bench: &perch::Bench, cursor: Option<Vec2>, stature: Stature) -> bool {
+    let Some(c) = cursor else { return true };
+    let (reach, margin) = (stature.reach, AVOID * stature.height);
+    let y = bench.y();
+    let level = y - reach.up - margin <= c.y && c.y <= y + reach.down + margin;
+    !level || bench.lo <= c.x - reach.right - margin || bench.hi >= c.x + reach.left + margin
 }
 
 /// Le curseur serait-il sur elle, le point posé en `at`, la place `reach` autour, avec la marge de
@@ -1922,6 +2196,16 @@ fn random_gestures_never_leave_her_stuck_hidden_or_off_her_edge() {
         assert!(!sleeping || tally.dozes_standing > 3, "{wardrobe:?} : {tally:?}");
         assert!(sleeping || tally.dozes_standing == 0, "{wardrobe:?} : {tally:?}");
         assert!(tally.calm > 100, "{wardrobe:?} : {tally:?}");
+        // elle guette, avec ses planches debout ; jamais sans
+        assert!(
+            !stand_sheets
+                || (tally.to_flank > 20
+                    && tally.lurks > 20
+                    && tally.lurk_steps > 500
+                    && tally.glide_steps > 200),
+            "{wardrobe:?} : {tally:?}"
+        );
+        assert!(stand_sheets || tally.to_flank + tally.lurks == 0, "{wardrobe:?} : {tally:?}");
         total.to_ledge += tally.to_ledge;
         total.to_floor += tally.to_floor;
         total.stays += tally.stays;
@@ -1976,6 +2260,11 @@ fn random_gestures_never_leave_her_stuck_hidden_or_off_her_edge() {
         total.waited_for_sheets += tally.waited_for_sheets;
         total.sheets_failed += tally.sheets_failed;
         total.unsettled += tally.unsettled;
+        total.flank_gone += tally.flank_gone;
+        total.hidden_lurking += tally.hidden_lurking;
+        total.grabbed_lurking += tally.grabbed_lurking;
+        total.talked_lurking += tally.talked_lurking;
+        total.touched_lurking += tally.touched_lurking;
         // « Voir une intro », servi et refusé, dans chaque garde-robe
         assert!(tally.encores_started > 30 && tally.encores_refused > 10, "{wardrobe:?} : {tally:?}");
     }
@@ -2028,6 +2317,15 @@ fn random_gestures_never_leave_her_stuck_hidden_or_off_her_edge() {
             && total.waited_for_sheets > 100
             && total.sheets_failed > 0
             && total.unsettled > 10,
+        "{total:?}"
+    );
+    // guettant : son côté parti sous elle, cachée, attrapée, on lui parle, décochée ou trop grande
+    assert!(
+        total.flank_gone > 10
+            && total.hidden_lurking > 10
+            && total.grabbed_lurking > 10
+            && total.talked_lurking > 10
+            && total.touched_lurking > 3,
         "{total:?}"
     );
     // prise en partie hors de l'écran sans saut, tenue dehors, revenue dedans ; entrée en marchant

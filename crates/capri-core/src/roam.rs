@@ -23,8 +23,18 @@
 //! avec des poids, parmi ceux où elle tient : jamais celui où elle est quand un autre existe,
 //! moins souvent un autre morceau de sa propre fenêtre ([`SAME_WINDOW`]), un peu plus souvent un
 //! long morceau, et jamais là où le curseur serait sur elle ([`AVOID`]). Sans aucun bord, elle va
-//! se tenir debout en bas de l'écran ([`FLOOR`]) ; assise, sans autre bord, elle reste, sauf si on
-//! lui demande de changer de place : alors elle va debout en bas de l'écran.
+//! guetter derrière le côté d'une fenêtre ([`perch::flanks`], tiré au sort de même, le long du
+//! côté), mais seulement si elle vit sa vie (la case cochée, jamais pendant une répétition) ;
+//! sinon, ou sans côté non plus, elle va se tenir debout en bas de l'écran ([`FLOOR`]). Assise,
+//! sans autre bord, elle reste, sauf si on lui demande de changer de place : alors elle va guetter,
+//! ou debout en bas de l'écran ; guettant, sans autre place que debout, de même.
+//!
+//! **Elle guette** : elle y glisse hors du bord ([`Look::arrive`]) et s'y retire pour repartir, elle
+//! suit sa fenêtre comme posée, et si son côté s'en va, elle ne guette plus (debout, là où elle
+//! est) et se choisit vite une autre place ([`LOST`]). Elle y regarde à la cadence de [`LURKING`] si
+//! un bord s'est libéré, et y va dès qu'il y en a un ; vers un autre côté ou debout, elle n'y va
+//! d'elle-même qu'après [`LURK_STAY`]. Elle ne s'y repose pas. Sa case « Vivre sa vie » décochée,
+//! elle ne guette plus, comme sur un geste de l'utilisateur ([`BY_HAND`]).
 //!
 //! **Quand** ([`Roam`]) : après un moment tiré dans une plage, qui dépend de ce qui vient de se
 //! passer ([`Stay`]). Pendant qu'on la tient ou qu'elle vole, qu'on lui parle au micro, qu'elle
@@ -80,7 +90,7 @@
 use crate::body::{Capri, Stance};
 use crate::geom::{Rect, Vec2};
 use crate::look::{Look, Rest, Unsettled};
-use crate::perch::{self, Bench, Perch, Reach, Seen, Stature};
+use crate::perch::{self, Bench, Flank, Lurk, LurkStature, Perch, Reach, Seen, Side, Stature};
 use crate::sheets::life;
 
 /// Une plage de durées, en secondes : un moment y est tiré au sort, uniformément.
@@ -101,6 +111,12 @@ impl Span {
     }
 }
 
+/// Guettant, arrivée d'elle-même (ou revenue d'être cachée) : elle regarde à cette cadence si un bord
+/// s'est libéré, comme debout ([`STANDING`]), puisqu'elle préfère être assise.
+pub const LURKING: Span = Span::new(30.0, 120.0);
+/// Guettant, elle ne va d'elle-même vers un autre côté, ou debout, qu'après une attente ordinaire,
+/// comme assise ([`SEATED`]) : de 3 à 8 minutes après son arrivée.
+pub const LURK_STAY: Span = Span::new(180.0, 480.0);
 /// Le premier départ après son lancement (ou la case « Vivre sa vie » recochée) : assez tôt pour
 /// qu'on la voie vivre peu après l'avoir lancée.
 pub const FIRST: Span = Span::new(20.0, 40.0);
@@ -217,6 +233,8 @@ pub enum Stay {
     Seated,
     /// De même, debout : [`STANDING`].
     Standing,
+    /// De même, guettant : [`LURKING`].
+    Lurking,
     /// Posée ou lâchée par l'utilisateur, ou descendue de son bord par un de ses gestes : [`BY_HAND`].
     ByHand,
     /// Son bord est parti sous elle : [`LOST`].
@@ -231,6 +249,7 @@ impl Stay {
             Stay::Start => FIRST,
             Stay::Seated => SEATED,
             Stay::Standing => STANDING,
+            Stay::Lurking => LURKING,
             Stay::ByHand => BY_HAND,
             Stay::Lost => LOST,
             Stay::Nowhere => NOWHERE,
@@ -283,6 +302,8 @@ pub enum Origin {
     Seated { window: u64, at: Vec2 },
     /// Debout, ses pieds en `feet`.
     Standing { feet: Vec2 },
+    /// Guettant sur le côté `side` de la fenêtre n° `window`, son point d'accroche en `at`.
+    Lurking { window: u64, side: Side, at: Vec2 },
 }
 
 /// Ce qu'il faut pour choisir où aller.
@@ -291,6 +312,11 @@ pub struct Options<'a> {
     /// Les bords où elle tiendrait (`perch::benches`) ; aucun si elle ne s'assoit pas sur les
     /// fenêtres, ou si leur liste est illisible.
     pub benches: &'a [Bench],
+    /// Les côtés où elle guetterait (`perch::flanks`) ; aucun si elle ne s'assoit pas sur les
+    /// fenêtres, ne vit pas sa vie, n'a pas ses planches debout, ou si leur liste est illisible.
+    pub flanks: &'a [Flank],
+    /// Ce qui se voit d'elle quand elle guette (`Look::lurk_stature`), s'il y a des côtés.
+    pub lurking: Option<LurkStature>,
     /// L'overlay, en ses pixels.
     pub screen: Rect,
     /// Ce qu'il lui faut sur un bord (`Look::stature`) ; sa hauteur debout mesure les distances.
@@ -310,6 +336,8 @@ pub struct Options<'a> {
 pub enum Choice {
     /// S'asseoir sur un bord, à cette place.
     Ledge(Perch),
+    /// Guetter derrière le côté d'une fenêtre, à cette place.
+    Flank(Lurk),
     /// Se tenir debout, ses pieds là, en bas de l'écran.
     Floor(Vec2),
     /// Nulle part ailleurs : elle reste où elle est.
@@ -320,19 +348,21 @@ pub enum Choice {
 #[derive(Clone, Copy, Debug)]
 struct Room {
     bench: Option<Bench>,
+    flank: Option<Flank>,
     y: f32,
     lo: f32,
     hi: f32,
     weight: f32,
 }
 
-/// Où aller ensuite (voir le module) : un bord, sinon debout en bas de l'écran, sinon rester.
+/// Où aller ensuite (voir le module) : un bord, sinon le côté d'une fenêtre, sinon debout en bas de
+/// l'écran, sinon rester.
 pub fn choose(rng: &mut Rng, options: &Options) -> Choice {
     let Options { benches, seated, cursor, from, .. } = *options;
     let height = seated.height;
     let own = match from {
         Origin::Seated { window, at } => Some((window, at)),
-        Origin::Standing { .. } => None,
+        Origin::Standing { .. } | Origin::Lurking { .. } => None,
     };
     // le morceau de bord où elle est assise
     let is_own = |bench: &Bench| {
@@ -351,7 +381,14 @@ pub fn choose(rng: &mut Rng, options: &Options) -> Choice {
             let factor = if same_window { SAME_WINDOW } else { 1.0 };
             let y = bench.y();
             for (lo, hi) in away_from(pieces, y, seated.reach, cursor, AVOID * height) {
-                rooms.push(Room { bench: Some(*bench), y, lo, hi, weight: factor * (hi - lo + height) });
+                rooms.push(Room {
+                    bench: Some(*bench),
+                    flank: None,
+                    y,
+                    lo,
+                    hi,
+                    weight: factor * (hi - lo + height),
+                });
             }
         }
         rooms
@@ -366,11 +403,63 @@ pub fn choose(rng: &mut Rng, options: &Options) -> Choice {
     {
         return Choice::Ledge(bench.at(x));
     }
-    // assise, elle préfère y rester que se tenir debout, sauf si on lui demande de changer de place
+    // assise, elle préfère y rester que guetter ou se tenir debout, sauf si on lui demande de
+    // changer de place
     if own.is_some() && !options.asked {
         return Choice::Stay;
     }
+    if let Some(choice) = flank(rng, options) {
+        return choice;
+    }
+    // guettant, sans autre côté, elle préfère y rester que se tenir debout, de même
+    if matches!(from, Origin::Lurking { .. }) && !options.asked {
+        return Choice::Stay;
+    }
     floor(rng, options)
+}
+
+/// Derrière le côté d'une fenêtre, s'il y en a un où elle tient : jamais celui où elle est quand un
+/// autre existe, sinon plus loin le long du sien, loin du curseur, tiré au sort comme un bord.
+fn flank(rng: &mut Rng, options: &Options) -> Option<Choice> {
+    let Options { flanks, lurking, cursor, from, .. } = *options;
+    let lurking = lurking?;
+    let height = lurking.height;
+    let own = match from {
+        Origin::Lurking { window, side, at } => Some((window, side, at)),
+        Origin::Seated { .. } | Origin::Standing { .. } => None,
+    };
+    // le morceau de côté où elle guette
+    let is_own = |flank: &Flank| {
+        own.is_some_and(|(window, side, at)| {
+            flank.window.id == window
+                && flank.side == side
+                && flank.lo - 1.0 <= at.y
+                && at.y <= flank.hi + 1.0
+        })
+    };
+    let rooms = |own_piece: bool| -> Vec<Room> {
+        let mut rooms = Vec::new();
+        for flank in flanks.iter().filter(|flank| is_own(flank) == own_piece) {
+            let mut pieces = vec![(flank.lo, flank.hi)];
+            if let Some((_, _, at)) = own.filter(|_| own_piece) {
+                pieces = without(pieces, at.y - HOP * height, at.y + HOP * height);
+            }
+            let same_window = own.is_some_and(|(window, _, _)| window == flank.window.id);
+            let factor = if same_window { SAME_WINDOW } else { 1.0 };
+            let reach = lurking.on(flank.side);
+            for (lo, hi) in away_along(pieces, flank.x(), reach, cursor, AVOID * height) {
+                let weight = factor * (hi - lo + height);
+                rooms.push(Room { bench: None, flank: Some(*flank), y: flank.x(), lo, hi, weight });
+            }
+        }
+        rooms
+    };
+    let mut found = rooms(false);
+    if found.is_empty() && own.is_some() {
+        found = rooms(true);
+    }
+    let (room, y) = draw(rng, &found)?;
+    room.flank.map(|flank| Choice::Flank(flank.at(y)))
 }
 
 /// Debout en bas de l'écran ([`FLOOR`]), ailleurs que là où elle est et loin du curseur.
@@ -388,7 +477,7 @@ fn floor(rng: &mut Rng, options: &Options) -> Choice {
     }
     let rooms: Vec<Room> = away_from(pieces, y, reach, cursor, AVOID * height)
         .into_iter()
-        .map(|(lo, hi)| Room { bench: None, y, lo, hi, weight: hi - lo + height })
+        .map(|(lo, hi)| Room { bench: None, flank: None, y, lo, hi, weight: hi - lo + height })
         .collect();
     match draw(rng, &rooms) {
         Some((room, x)) => Choice::Floor(Vec2::new(x, room.y)),
@@ -419,6 +508,23 @@ fn away_from(
         return pieces;
     }
     without(pieces, cursor.x - reach.right - margin, cursor.x + reach.left + margin)
+}
+
+/// Les morceaux de `pieces` (en y, le long d'un côté en x = `x`) où ce qui se voit d'elle (la place
+/// `reach` autour de son point d'accroche) reste à plus de `margin` du curseur.
+fn away_along(
+    pieces: Vec<(f32, f32)>,
+    x: f32,
+    reach: Reach,
+    cursor: Option<Vec2>,
+    margin: f32,
+) -> Vec<(f32, f32)> {
+    let Some(cursor) = cursor else { return pieces };
+    let level = x - reach.left - margin <= cursor.x && cursor.x <= x + reach.right + margin;
+    if !level {
+        return pieces;
+    }
+    without(pieces, cursor.y - reach.down - margin, cursor.y + reach.up + margin)
 }
 
 /// `pieces` privés de l'intervalle ouvert `(a, b)` (`a` < `b`) : chacun donne zéro, un ou deux
@@ -483,25 +589,28 @@ pub trait World {
     /// Les fenêtres qui comptent (`perch::sift`, `stature` : ce qu'il lui faut sur un bord), lues
     /// maintenant ; `None` si le système ne les donne pas.
     fn seen(&mut self, stature: Stature) -> Option<Vec<Seen>>;
-    /// Elle vient d'être posée sur un bord pour y apparaître : sa fenêtre relue tout de suite,
-    /// comme une lecture de sa veille posée ; elle la suit (`Capri::ride`), ou la quitte
-    /// (`Capri::take_off`) si elle est partie, si son bord ne lui laisse plus la place, ou si elle
-    /// ne s'assoit plus sur les fenêtres.
-    fn recheck(&mut self, capri: &mut Capri, stature: Stature);
+    /// Elle vient d'être posée sur un bord, ou mise derrière le côté d'une fenêtre, pour y
+    /// apparaître : sa fenêtre relue tout de suite, comme une lecture de sa veille posée ; elle la
+    /// suit (`Capri::ride`, `Capri::ride_flank`), ou la quitte (`Capri::take_off`) si elle est
+    /// partie, si son bord ou son côté ne lui laisse plus la place, ou si elle ne s'assoit plus sur
+    /// les fenêtres. `lurking` : ce qui se voit d'elle quand elle guette (`Look::lurk_stature`).
+    fn recheck(&mut self, capri: &mut Capri, stature: Stature, lurking: Option<LurkStature>);
 }
 
 /// Ce qui vient de se passer, pour le journal (des décisions et des nombres) et pour ce qu'elle en
 /// dit.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Event {
-    /// Elle part vers `to` (un bord, ou debout en bas de l'écran ; jamais `Choice::Stay`) ;
-    /// `benches` : les morceaux de bord où elle tiendrait ; `asked` : « Changer de place » ;
-    /// `walking` : elle y va en marchant (sinon elle s'efface).
-    Leaves { to: Choice, benches: usize, asked: bool, walking: bool },
+    /// Elle part vers `to` (un bord, le côté d'une fenêtre, ou debout en bas de l'écran ; jamais
+    /// `Choice::Stay`) ; `benches` : les morceaux de bord où elle tiendrait ; `flanks` : les côtés
+    /// où elle guetterait ; `asked` : « Changer de place » ; `walking` : elle y va en marchant
+    /// (sinon elle s'efface, ou se retire derrière sa fenêtre).
+    Leaves { to: Choice, benches: usize, flanks: usize, asked: bool, walking: bool },
     /// Aucune autre place : elle reste.
-    Stays { benches: usize, asked: bool },
-    /// Arrivée, assise ou debout ; `lost` : debout parce que le bord où elle allait n'y était plus.
-    Arrived { seated: bool, lost: bool },
+    Stays { benches: usize, flanks: usize, asked: bool },
+    /// Arrivée, assise, guettant ou debout ; `lost` : debout parce que le bord ou le côté où elle
+    /// allait n'y était plus.
+    Arrived { seated: bool, lurking: bool, lost: bool },
     /// On lui parle pendant qu'elle s'efface pour partir : elle revient sur ses pas, là où elle
     /// était, et n'ira pas plus loin.
     TurnedBack,
@@ -534,13 +643,14 @@ pub struct Roamer {
     asked: bool,
     /// Où elle va, pendant qu'elle s'efface pour y aller.
     trip: Option<Choice>,
-    /// D'elle-même, elle ne change pas de place debout avant cette heure ([`SEATED`] après sa
-    /// dernière arrivée debout en bas de l'écran) : sans bord, elle chercherait sinon une autre
-    /// place debout toutes les 30 s à 2 min, toute la journée.
+    /// D'elle-même, elle ne va ni debout ni guetter avant cette heure ([`SEATED`] après sa dernière
+    /// arrivée debout en bas de l'écran, [`LURK_STAY`] après sa dernière arrivée sur un côté) : sans
+    /// bord, elle chercherait sinon une autre place toutes les 30 s à 2 min, toute la journée.
     floor_next: f64,
-    /// Au pas précédent : on la tenait ou elle volait ; elle était posée.
+    /// Au pas précédent : on la tenait ou elle volait ; elle était posée ; elle guettait.
     was_carried: bool,
     was_perched: bool,
+    was_lurking: bool,
     /// Où elle va en marchant, pendant qu'elle marche.
     walk: Option<Vec2>,
     /// Ses éclats, assise.
@@ -611,6 +721,7 @@ impl Roamer {
             floor_next: now,
             was_carried: false,
             was_perched: false,
+            was_lurking: false,
             walk: None,
             fidget: Fidget { rng: Rng::new(seed ^ FIDGET_SEED), next: now, seated: false },
             nap: Nap {
@@ -654,7 +765,7 @@ impl Roamer {
         self.nap.quiet = None;
         // cachée en marchant : sa marche s'est arrêtée là, ce n'est pas une arrivée
         self.walk = None;
-        let why = if capri.perched().is_some() { Stay::Seated } else { Stay::Standing };
+        let why = staying(capri);
         // revenir ne raccourcit jamais une attente en cours (posée à la main, par exemple)
         let waiting = self.roam.next;
         self.roam.stay(now, why);
@@ -927,8 +1038,7 @@ impl Roamer {
         if look.is_traveling() && busy.talking {
             look.turn_back(capri, frame);
             self.trip = None;
-            let why = if capri.perched().is_some() { Stay::Seated } else { Stay::Standing };
-            self.roam.stay(now, why);
+            self.roam.stay(now, staying(capri));
             return vec![Event::TurnedBack];
         }
         if look.is_between() {
@@ -938,14 +1048,29 @@ impl Roamer {
         if !look.is_traveling() {
             self.trip = None;
         }
+        // guetter est de sa vie : sa case décochée, elle ne guette plus (debout, là où elle est), et
+        // c'est un geste de l'utilisateur, pas un côté perdu
+        if !self.enabled && capri.lurking().is_some() && look.is_here() {
+            capri.take_off();
+            self.was_lurking = false;
+            self.roam.stay(now, Stay::ByHand);
+        }
         let carried = matches!(capri.stance(), Stance::Held { .. } | Stance::Thrown { .. });
         let perched = capri.perched().is_some();
+        let lurking = capri.lurking().is_some();
         let was_carried = std::mem::replace(&mut self.was_carried, carried);
         let was_perched = std::mem::replace(&mut self.was_perched, perched);
+        let was_lurking = std::mem::replace(&mut self.was_lurking, lurking);
+        let left = (was_perched && !perched) || (was_lurking && !lurking);
         if was_carried && !carried {
             self.roam.stay(now, Stay::ByHand);
-        } else if was_perched && !perched && !carried && !look.is_traveling() {
+        } else if left && !carried && !look.is_traveling() {
             self.roam.stay(now, Stay::Lost);
+            // son côté parti sous elle : elle se choisit vite une autre place, debout ou sur un
+            // autre côté compris, sans l'attente d'après une arrivée
+            if was_lurking {
+                self.floor_next = now;
+            }
         }
         let hold = if carried {
             Some(Hold::Carried)
@@ -984,8 +1109,10 @@ impl Roamer {
     /// déplacée hors de portée, recouverte) vaut [`LOST`].
     pub fn touched(&mut self, now: f64, capri: &Capri) {
         self.nap.quiet = None;
-        let perched = capri.perched().is_some();
-        if std::mem::replace(&mut self.was_perched, perched) && !perched {
+        let (perched, lurking) = (capri.perched().is_some(), capri.lurking().is_some());
+        let off_ledge = std::mem::replace(&mut self.was_perched, perched) && !perched;
+        let off_flank = std::mem::replace(&mut self.was_lurking, lurking) && !lurking;
+        if off_ledge || off_flank {
             self.roam.stay(now, Stay::ByHand);
         }
     }
@@ -1003,18 +1130,27 @@ impl Roamer {
     ) -> Vec<Event> {
         let stature = look.stature();
         let screen = world.screen();
-        let benches = if world.perch_allowed() {
-            world.seen(stature).map(|seen| perch::benches(&seen, screen, stature)).unwrap_or_default()
-        } else {
-            Vec::new()
+        // guetter : seulement en vivant sa vie, et avec ses planches debout
+        let lurking = look.lurk_stature().filter(|_| self.enabled);
+        let (benches, flanks) = match world.perch_allowed().then(|| world.seen(stature)).flatten() {
+            Some(seen) => (
+                perch::benches(&seen, screen, stature),
+                lurking.map(|lurking| perch::flanks(&seen, screen, lurking)).unwrap_or_default(),
+            ),
+            None => (Vec::new(), Vec::new()),
         };
         let from = match capri.stance() {
             Stance::Perched { spot, seat } => Origin::Seated { window: spot.window, at: seat },
+            Stance::Lurking { lurk, .. } => {
+                Origin::Lurking { window: lurk.spot.window, side: lurk.spot.side, at: lurk.at }
+            }
             _ => Origin::Standing { feet: capri.feet() },
         };
         let standing = Stature::standing(look.standing_size(), look.standing_feet(), stature.height);
         let options = Options {
             benches: &benches,
+            flanks: &flanks,
+            lurking,
             screen,
             seated: stature,
             standing,
@@ -1023,15 +1159,15 @@ impl Roamer {
             asked,
         };
         let choice = choose(&mut self.roam.rng, &options);
-        let count = benches.len();
-        // debout sans bord : d'elle-même, elle ne change de place debout que de loin en loin ; elle
+        let (count, sides) = (benches.len(), flanks.len());
+        // sans bord : d'elle-même, elle ne va debout ou guetter ailleurs que de loin en loin ; elle
         // revient chercher un bord à la cadence courte, sans lire la liste si elle ne s'assoit pas
-        if matches!(choice, Choice::Floor(_)) && !asked && now < self.floor_next {
-            self.roam.stay(now, Stay::Standing);
+        if matches!(choice, Choice::Floor(_) | Choice::Flank(_)) && !asked && now < self.floor_next {
+            self.roam.stay(now, staying(capri));
             if !world.perch_allowed() {
                 self.roam.next = self.roam.next.max(self.floor_next);
             }
-            return vec![Event::Stays { benches: count, asked }];
+            return vec![Event::Stays { benches: count, flanks: sides, asked }];
         }
         // debout en bas de l'écran, vers un autre endroit du bas, dans le sens où elle regarde, et
         // pas trop loin : elle y va en marchant
@@ -1040,14 +1176,14 @@ impl Roamer {
             && look.walk(capri, frame, to.x)
         {
             self.walk = Some(to);
-            return vec![Event::Leaves { to: choice, benches: count, asked, walking: true }];
+            return vec![Event::Leaves { to: choice, benches: count, flanks: sides, asked, walking: true }];
         }
         if choice == Choice::Stay || !look.travel(capri, frame) {
             self.roam.stay(now, Stay::Nowhere);
-            return vec![Event::Stays { benches: count, asked }];
+            return vec![Event::Stays { benches: count, flanks: sides, asked }];
         }
         self.trip = Some(choice);
-        let leaves = Event::Leaves { to: choice, benches: count, asked, walking: false };
+        let leaves = Event::Leaves { to: choice, benches: count, flanks: sides, asked, walking: false };
         // sans ses planches de vie, elle est déjà effacée : elle apparaît là-bas tout de suite
         if look.is_between() {
             return vec![leaves, self.arrive(look, capri, world, now, frame)];
@@ -1075,7 +1211,8 @@ impl Roamer {
         self.roam.stay(now, Stay::Standing);
         self.was_carried = false;
         self.was_perched = false;
-        Event::Arrived { seated: false, lost: false }
+        self.was_lurking = false;
+        Event::Arrived { seated: false, lurking: false, lost: false }
     }
 
     /// Effacée : déplacée là où elle allait (sa fenêtre relue, s'il s'agit d'un bord), elle y
@@ -1092,7 +1229,21 @@ impl Roamer {
         match to {
             Some(Choice::Ledge(perch)) => {
                 capri.set_on(perch);
-                world.recheck(capri, look.stature());
+                world.recheck(capri, look.stature(), look.lurk_stature());
+            }
+            Some(Choice::Flank(lurk)) => {
+                match look.lurk_fit().filter(|_| self.enabled) {
+                    Some(fit) => {
+                        capri.lurk_on(lurk, fit);
+                        world.recheck(capri, look.stature(), look.lurk_stature());
+                    }
+                    // sa case « Vivre sa vie » décochée en chemin : debout, là où elle allait guetter
+                    None => capri.set_at(lurk.at),
+                }
+                // y guettant, une attente ordinaire avant d'aller ailleurs qu'assise ; son côté parti
+                // entre-temps, aucune : elle se choisit vite une autre place
+                self.floor_next =
+                    if capri.lurking().is_some() { now + LURK_STAY.pick(&mut self.roam.rng) } else { now };
             }
             Some(Choice::Floor(feet)) => {
                 capri.set_at(feet);
@@ -1101,19 +1252,25 @@ impl Roamer {
             Some(Choice::Stay) | None => {}
         }
         look.arrive(capri, frame);
-        let seated = capri.perched().is_some();
-        let lost = matches!(to, Some(Choice::Ledge(_))) && !seated;
-        let why = if lost {
-            Stay::Lost
-        } else if seated {
-            Stay::Seated
-        } else {
-            Stay::Standing
-        };
-        self.roam.stay(now, why);
+        let (seated, lurking) = (capri.perched().is_some(), capri.lurking().is_some());
+        let lost = (matches!(to, Some(Choice::Ledge(_))) && !seated)
+            || (matches!(to, Some(Choice::Flank(_))) && !lurking && self.enabled);
+        self.roam.stay(now, if lost { Stay::Lost } else { staying(capri) });
         self.was_carried = false;
         self.was_perched = seated;
-        Event::Arrived { seated, lost }
+        self.was_lurking = lurking;
+        Event::Arrived { seated, lurking, lost }
+    }
+}
+
+/// Pourquoi elle reste là un moment, arrivée ou revenue : assise, guettant, ou debout.
+fn staying(capri: &Capri) -> Stay {
+    if capri.perched().is_some() {
+        Stay::Seated
+    } else if capri.lurking().is_some() {
+        Stay::Lurking
+    } else {
+        Stay::Standing
     }
 }
 
@@ -1147,6 +1304,8 @@ mod tests {
     fn options<'a>(benches: &'a [Bench], cursor: Option<Vec2>, from: Origin) -> Options<'a> {
         Options {
             benches,
+            flanks: &[],
+            lurking: None,
             screen: SCREEN,
             seated: sitting(),
             standing: upright(),
@@ -1206,7 +1365,15 @@ mod tests {
         assert!(!roam.due(1.0, false));
         assert_eq!(roam.next(), later);
         // chaque raison tire dans sa plage
-        for why in [Stay::Start, Stay::Seated, Stay::Standing, Stay::ByHand, Stay::Lost, Stay::Nowhere] {
+        for why in [
+            Stay::Start,
+            Stay::Seated,
+            Stay::Standing,
+            Stay::Lurking,
+            Stay::ByHand,
+            Stay::Lost,
+            Stay::Nowhere,
+        ] {
             for _ in 0..200 {
                 roam.stay(50.0, why);
                 let span = why.span();
@@ -1424,7 +1591,14 @@ mod tests {
             self.reads += 1;
             Some(self.windows.clone())
         }
-        fn recheck(&mut self, capri: &mut Capri, stature: Stature) {
+        fn recheck(&mut self, capri: &mut Capri, stature: Stature, lurking: Option<LurkStature>) {
+            if let (Some(lurk), Some(lurking)) = (capri.lurking(), lurking) {
+                match perch::follow_flank(&self.windows, SCREEN, lurking, lurk.spot) {
+                    Ok(lurk) if self.perch => capri.ride_flank(lurk),
+                    _ => capri.take_off(),
+                }
+                return;
+            }
             let Some(spot) = capri.perched() else { return };
             match perch::follow(&self.windows, SCREEN, stature, spot) {
                 Ok(perch) if self.perch => capri.ride(perch),
@@ -1520,7 +1694,7 @@ mod tests {
                 assert!(capri.perched().is_none(), "pas encore déplacée");
             }
         }
-        assert_eq!(arrived, [Event::Arrived { seated: true, lost: false }]);
+        assert_eq!(arrived, [Event::Arrived { seated: true, lurking: false, lost: false }]);
         assert_eq!(capri.seat(), Some(to.feet));
         assert!(look.is_here() && look.is_seated(&capri));
         // elle y reste de 3 à 8 minutes
@@ -1617,7 +1791,7 @@ mod tests {
         // sa fenêtre se ferme pendant qu'elle s'efface
         desk.windows.clear();
         let events = run(&mut roamer, &mut look, &mut capri, &mut desk, Busy::default(), 101..140);
-        assert_eq!(events, [Event::Arrived { seated: false, lost: true }]);
+        assert_eq!(events, [Event::Arrived { seated: false, lurking: false, lost: true }]);
         assert!(capri.perched().is_none());
         assert!((capri.feet() - to.feet).length() < 1.0, "debout là où elle allait");
         let now = 139.0 / 24.0;
@@ -1640,7 +1814,7 @@ mod tests {
                 run(&mut roamer, &mut look, &mut capri, &mut desk, Busy::default(), start..start + 100);
             assert_eq!(events.len(), 2, "{events:?}");
             assert_eq!(ledge(&events[0]), Some((false, 0, true)));
-            assert_eq!(events[1], Event::Arrived { seated: false, lost: false });
+            assert_eq!(events[1], Event::Arrived { seated: false, lurking: false, lost: false });
         }
         assert_eq!(desk.reads, 0);
     }
@@ -1761,7 +1935,7 @@ mod tests {
         let events = run(&mut roamer, &mut look, &mut capri, &mut desk, Busy::default(), 10..11);
         assert_eq!(events.len(), 2, "{events:?}");
         let Event::Leaves { to: Choice::Ledge(perch), .. } = events[0] else { panic!("{events:?}") };
-        assert_eq!(events[1], Event::Arrived { seated: true, lost: false });
+        assert_eq!(events[1], Event::Arrived { seated: true, lurking: false, lost: false });
         assert_eq!(capri.seat(), Some(perch.feet));
     }
 
@@ -1844,6 +2018,225 @@ mod tests {
             (roamer.next(), capri.seat())
         };
         assert_eq!(ledge(77), ledge(77));
+    }
+
+    // --- elle guette ---
+
+    /// Une grande fenêtre dont le haut touche presque le haut de l'écran : aucun bord ne la porte,
+    /// mais ses deux côtés, oui.
+    fn tall() -> Seen {
+        seen(1, rect(600.0, 40.0, 1600.0, 1800.0))
+    }
+
+    fn lurking() -> LurkStature {
+        crate::look::lurking_stature(HEIGHT)
+    }
+
+    /// Ce qu'il faut pour choisir, avec les côtés de `windows`.
+    fn with_flanks<'a>(flanks: &'a [Flank], from: Origin, cursor: Option<Vec2>) -> Options<'a> {
+        Options { flanks, lurking: Some(lurking()), ..options(&[], cursor, from) }
+    }
+
+    #[test]
+    fn without_any_edge_she_lurks_behind_a_side_rather_than_standing_and_never_under_the_cursor() {
+        let flanks = perch::flanks(&[tall()], SCREEN, lurking());
+        assert_eq!(flanks.len(), 2);
+        assert!(perch::benches(&[tall()], SCREEN, sitting()).is_empty());
+        let mut rng = Rng::new(6);
+        let cursor = Vec2::new(600.0, 900.0);
+        let margin = AVOID * HEIGHT;
+        let mut sides = [0usize; 2];
+        for _ in 0..2000 {
+            let from = Origin::Standing { feet: Vec2::new(2500.0, 1700.0) };
+            let choice = choose(&mut rng, &with_flanks(&flanks, from, Some(cursor)));
+            let Choice::Flank(lurk) = choice else { panic!("{choice:?}") };
+            let flank = flanks.iter().find(|f| f.side == lurk.spot.side).unwrap();
+            assert_eq!(lurk, flank.at(lurk.at.y), "sur un côté où elle tient");
+            sides[lurk.spot.side.index()] += 1;
+            // jamais sous le curseur (ici, sur le côté gauche)
+            let reach = lurking().on(lurk.spot.side);
+            let (x, y) = (lurk.at.x, lurk.at.y);
+            let under = x - reach.left - margin < cursor.x
+                && cursor.x < x + reach.right + margin
+                && y - reach.up - margin < cursor.y
+                && cursor.y < y + reach.down + margin;
+            assert!(!under, "sous le curseur : {lurk:?}");
+        }
+        assert!(sides[0] > 300 && sides[1] > 300, "{sides:?}");
+        // assise sans autre bord, elle reste ; demandé, elle va guetter
+        let from = Origin::Seated { window: 9, at: Vec2::new(100.0, 100.0) };
+        assert_eq!(choose(&mut rng, &with_flanks(&flanks, from, None)), Choice::Stay);
+        let asked = Options { asked: true, ..with_flanks(&flanks, from, None) };
+        assert!(matches!(choose(&mut rng, &asked), Choice::Flank(_)));
+        // un bord, et elle préfère s'asseoir
+        let benches = perch::benches(&desk(), SCREEN, sitting());
+        let both = Options { benches: &benches, ..with_flanks(&flanks, from, None) };
+        assert!(matches!(choose(&mut rng, &Options { asked: true, ..both }), Choice::Ledge(_)));
+        // sans pouvoir guetter (sa vie, ses planches) : debout, comme avant
+        let without =
+            Options { lurking: None, ..with_flanks(&flanks, Origin::Standing { feet: cursor }, None) };
+        assert!(matches!(choose(&mut rng, &without), Choice::Floor(_)));
+    }
+
+    #[test]
+    fn lurking_she_never_takes_the_same_side_twice_and_otherwise_stays_unless_asked() {
+        let flanks = perch::flanks(&[tall()], SCREEN, lurking());
+        let left = flanks.iter().find(|f| f.side == Side::Left).unwrap();
+        let at = left.at((left.lo + left.hi) / 2.0);
+        let from = Origin::Lurking { window: 1, side: Side::Left, at: at.at };
+        let mut rng = Rng::new(8);
+        for _ in 0..500 {
+            let Choice::Flank(lurk) = choose(&mut rng, &with_flanks(&flanks, from, None)) else { panic!() };
+            assert_eq!(lurk.spot.side, Side::Right, "jamais le même côté quand un autre existe");
+        }
+        // seule, sur son côté : plus loin le long de lui
+        let only = [*left];
+        for _ in 0..500 {
+            let Choice::Flank(lurk) = choose(&mut rng, &with_flanks(&only, from, None)) else { panic!() };
+            assert!((lurk.at.y - at.at.y).abs() >= HOP * HEIGHT, "{lurk:?}");
+        }
+        // un côté trop court pour aller plus loin : elle reste, sauf si on le lui demande
+        let short = [perch::Flank { lo: at.at.y - 10.0, hi: at.at.y + 10.0, ..*left }];
+        assert_eq!(choose(&mut rng, &with_flanks(&short, from, None)), Choice::Stay);
+        let asked = Options { asked: true, ..with_flanks(&short, from, None) };
+        assert!(matches!(choose(&mut rng, &asked), Choice::Floor(_)));
+    }
+
+    /// Une vie lancée à l'image 0, qui part vers un côté de `tall` et y est sortie : l'image où elle
+    /// l'est, et l'heure de son arrivée.
+    fn lurking_life(seed: u64) -> (Roamer, Look, Capri, Desk, u64, f64) {
+        let (mut roamer, mut look, mut capri) = launched(seed, true);
+        let mut desk = Desk { windows: vec![tall()], ..world() };
+        let first = (roamer.next() * 24.0).ceil() as u64;
+        let events = run(&mut roamer, &mut look, &mut capri, &mut desk, Busy::default(), 1..first + 1);
+        let [Event::Leaves { to: Choice::Flank(lurk), benches: 0, flanks: 2, asked: false, walking: false }] =
+            events[..]
+        else {
+            panic!("{events:?}")
+        };
+        assert_eq!(desk.reads, 1);
+        let mut frame = first + 1;
+        let arrived_at = loop {
+            let events =
+                run(&mut roamer, &mut look, &mut capri, &mut desk, Busy::default(), frame..frame + 1);
+            frame += 1;
+            if !events.is_empty() {
+                assert_eq!(events, [Event::Arrived { seated: false, lurking: true, lost: false }]);
+                break frame as f64 / 24.0;
+            }
+            assert!(!look.is_gone() && frame < first + 100);
+        };
+        assert_eq!(capri.lurking().map(|l| (l.spot.window, l.spot.side)), Some((1, lurk.spot.side)));
+        assert_eq!(desk.reads, 1, "sa fenêtre relue à l'arrivée sans lire la liste de plus");
+        while !look.is_here() {
+            run(&mut roamer, &mut look, &mut capri, &mut desk, Busy::default(), frame..frame + 1);
+            frame += 1;
+            assert!(frame < first + 200, "elle sort de derrière la fenêtre");
+        }
+        (roamer, look, capri, desk, frame, arrived_at)
+    }
+
+    #[test]
+    fn lurking_she_looks_for_an_edge_at_her_standing_pace_and_sits_as_soon_as_one_frees_up() {
+        let (mut roamer, mut look, mut capri, mut desk, frame, arrived) = lurking_life(4);
+        let next = roamer.next();
+        assert!((arrived + LURKING.min - 0.1..=arrived + LURKING.max + 0.1).contains(&next), "{next}");
+        // à son heure, pas de bord : elle reste là, et n'ira guetter ailleurs qu'après une attente
+        let due = (next * 24.0).ceil() as u64;
+        let events = run(&mut roamer, &mut look, &mut capri, &mut desk, Busy::default(), frame..due + 1);
+        assert!(matches!(events[..], [Event::Stays { benches: 0, flanks: 2, asked: false }]), "{events:?}");
+        assert!(capri.lurking().is_some() && look.is_here());
+        // ni sommeil, ni éclat, même longtemps tranquille
+        let calm =
+            run(&mut roamer, &mut look, &mut capri, &mut desk, Busy::default(), due + 1..due + 24 * 60);
+        assert!(calm.iter().all(|e| matches!(e, Event::Stays { .. })), "{calm:?}");
+        assert_eq!(look.rest(), Rest::Awake);
+        // un bord se libère : à son heure suivante, elle va s'asseoir
+        desk.windows.insert(0, seen(2, rect(2400.0, 1000.0, 600.0, 800.0)));
+        let from = due + 24 * 60;
+        let events =
+            run(&mut roamer, &mut look, &mut capri, &mut desk, Busy::default(), from..from + 24 * 130);
+        let leaves = events.iter().find(|e| matches!(e, Event::Leaves { .. })).expect("elle part");
+        assert!(matches!(leaves, Event::Leaves { to: Choice::Ledge(_), .. }), "{leaves:?}");
+        assert!(events.contains(&Event::Arrived { seated: true, lurking: false, lost: false }), "{events:?}");
+        assert!(capri.perched().is_some() && capri.lurking().is_none());
+    }
+
+    #[test]
+    fn lurking_she_goes_to_another_side_only_after_an_ordinary_wait() {
+        let (mut roamer, mut look, mut capri, mut desk, frame, arrived) = lurking_life(9);
+        let side = capri.lurking().unwrap().spot.side;
+        let until = ((arrived + LURK_STAY.max + LURKING.max + 5.0) * 24.0) as u64;
+        let events =
+            timed(&mut roamer, &mut look, &mut capri, &mut desk, Busy::default(), false, frame..until);
+        let (at, leaves) =
+            events.iter().find(|(_, e)| matches!(e, Event::Leaves { .. })).expect("elle repart");
+        assert!(*at >= arrived + LURK_STAY.min, "partie trop tôt : {at}");
+        let Event::Leaves { to: Choice::Flank(lurk), .. } = leaves else { panic!("{leaves:?}") };
+        assert_ne!(lurk.spot.side, side, "de l'autre côté");
+    }
+
+    #[test]
+    fn her_side_gone_she_stands_and_soon_moves_and_unchecked_she_stops_lurking() {
+        let (mut roamer, mut look, mut capri, mut desk, frame, _) = lurking_life(4);
+        // son côté parti sans geste (sa veille posée l'a vu) : un côté perdu, et elle repart vite,
+        // debout en bas de l'écran s'il n'y a rien d'autre (pas d'attente de guetteuse)
+        desk.windows.clear();
+        capri.take_off();
+        run(&mut roamer, &mut look, &mut capri, &mut desk, Busy::default(), frame..frame + 1);
+        let now = frame as f64 / 24.0;
+        assert!((now + LOST.min..=now + LOST.max).contains(&roamer.next()), "{}", roamer.next());
+        assert!(look.is_here() && capri.stance() == Stance::Floating);
+        let until = frame + ((LOST.max + 1.0) * 24.0) as u64;
+        let events = run(&mut roamer, &mut look, &mut capri, &mut desk, Busy::default(), frame + 1..until);
+        assert!(
+            events.iter().any(|e| matches!(e, Event::Leaves { to: Choice::Floor(_), asked: false, .. })),
+            "elle repart : {events:?}"
+        );
+        // de même si son côté est parti pendant qu'elle y allait : arrivée debout, elle repart vite
+        let (mut roamer, mut look, mut capri) = launched(4, true);
+        let mut desk = Desk { windows: vec![tall()], ..world() };
+        let first = (roamer.next() * 24.0).ceil() as u64;
+        run(&mut roamer, &mut look, &mut capri, &mut desk, Busy::default(), 1..first + 1);
+        assert!(matches!(roamer.heading(), Some(Choice::Flank(_))));
+        desk.windows.clear();
+        let mut frame = first + 1;
+        let arrived = loop {
+            let events =
+                run(&mut roamer, &mut look, &mut capri, &mut desk, Busy::default(), frame..frame + 1);
+            frame += 1;
+            if let Some(event) = events.into_iter().find(|e| matches!(e, Event::Arrived { .. })) {
+                break event;
+            }
+            assert!(frame < first + 100);
+        };
+        assert_eq!(arrived, Event::Arrived { seated: false, lurking: false, lost: true });
+        let until = frame + ((LOST.max + 1.0) * 24.0) as u64;
+        let events = run(&mut roamer, &mut look, &mut capri, &mut desk, Busy::default(), frame..until);
+        assert!(events.iter().any(|e| matches!(e, Event::Leaves { .. })), "elle repart : {events:?}");
+        // « Vivre sa vie » décochée pendant qu'elle guette : debout, là, comme posée à la main
+        let (mut roamer, mut look, mut capri, mut desk, frame, _) = lurking_life(4);
+        let position = capri.position();
+        roamer.set_enabled(false, frame as f64 / 24.0);
+        run(&mut roamer, &mut look, &mut capri, &mut desk, Busy::default(), frame..frame + 1);
+        let now = frame as f64 / 24.0;
+        assert!(capri.lurking().is_none() && capri.stance() == Stance::Floating);
+        assert!((capri.position() - position).length() < 1.0, "là où elle est");
+        assert!((roamer.next() - (now + BY_HAND.min)).abs() < 1e-6);
+        // décochée, « Changer de place » ne la fait jamais guetter : debout en bas de l'écran
+        roamer.ask();
+        let events =
+            run(&mut roamer, &mut look, &mut capri, &mut desk, Busy::default(), frame + 1..frame + 2);
+        assert!(
+            matches!(events[..], [Event::Leaves { to: Choice::Floor(_), asked: true, .. }]),
+            "{events:?}"
+        );
+        // « S'asseoir sur les fenêtres » décochée : un geste aussi
+        let (mut roamer, _, mut capri, _, frame, _) = lurking_life(4);
+        capri.take_off();
+        let now = frame as f64 / 24.0;
+        roamer.touched(now, &capri);
+        assert!((roamer.next() - (now + BY_HAND.min)).abs() < 1e-6);
     }
 
     // --- sa marche, ses éclats ---
@@ -1943,7 +2336,7 @@ mod tests {
                         break;
                     }
                 }
-                assert_eq!(arrived, [Event::Arrived { seated: false, lost: false }]);
+                assert_eq!(arrived, [Event::Arrived { seated: false, lurking: false, lost: false }]);
                 assert!((capri.feet().x - to.x).abs() <= 1.0 && !look.is_walking(&capri));
                 assert_eq!(roamer.walking_to(), None);
             } else {
@@ -2079,7 +2472,7 @@ mod tests {
             );
             assert_eq!(
                 events.first().map(|(_, event)| *event),
-                Some(Event::Arrived { seated: false, lost: false }),
+                Some(Event::Arrived { seated: false, lurking: false, lost: false }),
                 "{stop} : {events:?}"
             );
             assert!(events.len() == 1, "{stop} : elle se repose là, sans repartir : {events:?}");
@@ -2199,7 +2592,7 @@ mod tests {
         for frame in frames.step_by(every as usize) {
             let now = frame as f64 / 24.0;
             capri.step(every as f32 / 24.0, frame);
-            desk.recheck(capri, look.stature());
+            desk.recheck(capri, look.stature(), look.lurk_stature());
             let room = look
                 .lying_stature()
                 .zip(capri.perched())

@@ -37,9 +37,10 @@ use std::time::Instant;
 
 use capri_core::Rect;
 use capri_core::intro::act;
-use capri_core::look::{Drawing, Look, Moves, Picture, Wants, Wardrobe};
+use capri_core::look::{Drawing, Lean, Look, Moves, Picture, Wants, Wardrobe};
+use capri_core::perch::Side;
 use capri_core::sheets::{self, Shown, lie, life, stand};
-use capri_render::{Crop, GHOST, ImageId, RenderError, SpriteDraw, SpriteImage, Tint};
+use capri_render::{Crop, GHOST, ImageId, Keep, RenderError, SpriteDraw, SpriteImage, Tint, Turn};
 
 use crate::assets::Sprite;
 use crate::assets::life::LifeSheets;
@@ -259,8 +260,11 @@ impl Figure {
 
     /// Ce qu'il faut dessiner pour `picture`, dans l'ordre : elle, puis sa bouche par-dessus ;
     /// quand elle se rassemble (une intro), ses bandes, étirées vers les bords de l'écran `screen`.
+    /// Guettant, elle et sa bouche penchées autour de sa hanche, et coupées net au bord de sa
+    /// fenêtre (ses images telles quelles : la carte graphique les tourne et les découpe).
     pub fn layers(&self, picture: &Picture, screen: Rect) -> Vec<(ImageId, SpriteDraw)> {
         let rect = picture.rect;
+        let (turn, keep) = leaning(picture.lean);
         let plain = SpriteDraw {
             min: [rect.min.x, rect.min.y],
             size: [rect.size.x, rect.size.y],
@@ -271,6 +275,8 @@ impl Figure {
             opacity: 1.0,
             crop: Crop::WHOLE,
             tint: Tint::NONE,
+            turn,
+            keep,
         };
         let cutout = || {
             let unit = rect.size.y / 420.0; // son dessin d'avant fait 420 px de haut
@@ -352,4 +358,47 @@ impl Figure {
 /// L'image confiée pour cette planche, si elle l'a été.
 fn image_of<T: PartialEq>(images: &[(T, ImageId)], strip: T) -> Option<ImageId> {
     images.iter().find(|(confided, _)| *confided == strip).map(|&(_, id)| id)
+}
+
+/// Guettant (`lean`), comment la carte graphique la dessine : tournée comme son masque de clic la
+/// voit (`Lean::turned`), et gardée là où elle se voit (`Lean::shows`) : à gauche du bord sur le
+/// côté gauche d'une fenêtre, à droite sur le droit. Sinon, droite et entière.
+fn leaning(lean: Option<Lean>) -> (Turn, Keep) {
+    let Some(lean) = lean else { return (Turn::NONE, Keep::ALL) };
+    let turn = Turn { angle: lean.angle, pivot: [lean.pivot.x, lean.pivot.y] };
+    let keep = match lean.side {
+        Side::Left => Keep { min: [f32::MIN, f32::MIN], max: [lean.wall, f32::MAX] },
+        Side::Right => Keep { min: [lean.wall, f32::MIN], max: [f32::MAX, f32::MAX] },
+    };
+    (turn, keep)
+}
+
+#[cfg(test)]
+mod tests {
+    use capri_core::Vec2;
+    use capri_core::look::Lean;
+    use capri_core::perch::Side;
+    use capri_core::sheets::stand;
+    use capri_render::{Keep, Turn};
+
+    use super::leaning;
+
+    #[test]
+    fn leaning_she_is_turned_and_kept_exactly_as_her_click_mask_sees_her() {
+        for side in Side::ALL {
+            let lean = Lean { angle: stand::lean(side), pivot: Vec2::new(500.0, 600.0), wall: 450.0, side };
+            let (turn, keep) = leaning(Some(lean));
+            // tournée du même angle autour du même point : sa tête vers l'extérieur de la fenêtre
+            assert_eq!(turn, Turn { angle: lean.angle, pivot: [500.0, 600.0] });
+            let head = lean.turned(Vec2::new(500.0, 300.0));
+            assert!((head.x - 500.0) * side.outward() > 0.0, "{side:?}");
+            // gardée exactement là où elle se voit (`min` compris, `max` exclu)
+            for x in [0.0, 440.0, 449.0, 449.9, 450.0, 450.1, 451.0, 460.0, 3000.0] {
+                let kept = keep.min[0] <= x && x < keep.max[0];
+                assert_eq!(kept, lean.shows(Vec2::new(x, 600.0)), "{side:?} en x = {x}");
+            }
+            assert!(keep.min[1] <= -1e9 && keep.max[1] >= 1e9, "toute la hauteur");
+        }
+        assert_eq!(leaning(None), (Turn::NONE, Keep::ALL), "droite et entière");
+    }
 }

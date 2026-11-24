@@ -9,7 +9,10 @@
 //! côté. Chaque image dessinée en est une part rectangulaire ([`Crop`]) : une case de planche, ou
 //! l'image entière. Une fois confiée, l'image n'a plus besoin d'être gardée en mémoire. Un dessin
 //! peut porter une teinte ([`Tint`] : sa silhouette d'un aplat de couleur, pour les doubles du
-//! glitch de l'intro) ; sans elle, il est exactement le même qu'avant elle.
+//! glitch de l'intro) ; sans elle, il est exactement le même qu'avant elle. Il peut aussi être
+//! tourné autour d'un point ([`Turn`]) et n'être dessiné que dans une part de la surface ([`Keep`],
+//! le rectangle de découpe de la carte graphique) : c'est ainsi qu'elle guette, penchée et coupée
+//! net au bord d'une fenêtre ; sans eux, de même, rien ne change.
 //!
 //! **Une toile** ([`Renderer::add_canvas`]) est une image qu'on réécrit en place, d'une seule
 //! texture : l'intro du lancement y peint ses images l'une après l'autre
@@ -97,6 +100,51 @@ pub struct SpriteDraw {
     pub crop: Crop,
     /// Une teinte : sa silhouette, d'un aplat de couleur ([`Tint::NONE`] : elle telle quelle).
     pub tint: Tint,
+    /// Tourné autour d'un point ([`Turn::NONE`] : droit).
+    pub turn: Turn,
+    /// Seulement ce qui tombe dans cette part de la surface ([`Keep::ALL`] : tout).
+    pub keep: Keep,
+}
+
+/// Un dessin tourné de `angle` radians autour de `pivot` (pixels de la surface ; y vers le bas :
+/// positif dans le sens des aiguilles d'une montre). La part d'image qu'il lit ne change pas : une
+/// case ne prend jamais rien à ses voisines, même penchée.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Turn {
+    pub angle: f32,
+    pub pivot: [f32; 2],
+}
+
+impl Turn {
+    /// Droit : le dessin exactement comme sans lui.
+    pub const NONE: Self = Self { angle: 0.0, pivot: [0.0, 0.0] };
+}
+
+/// La part de la surface où un dessin se voit, en pixels de la surface, du coin haut gauche `min`
+/// au coin bas droit `max` (exclu) : le rectangle de découpe de la carte graphique
+/// (`RenderPass::set_scissor_rect`), aux pixels entiers, ramené dans la surface. Une part vide : le
+/// dessin ne se fait pas.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Keep {
+    pub min: [f32; 2],
+    pub max: [f32; 2],
+}
+
+impl Keep {
+    /// Toute la surface : le dessin exactement comme sans elle.
+    pub const ALL: Self = Self { min: [f32::MIN, f32::MIN], max: [f32::MAX, f32::MAX] };
+
+    /// Le rectangle de découpe, en pixels entiers, dans une surface de `width` × `height` : `x`,
+    /// `y`, largeur, hauteur ; `None` s'il est vide (rien ne se dessine). Un bord qui n'est pas un
+    /// nombre compte pour celui de la surface.
+    fn scissor(&self, width: u32, height: u32) -> Option<[u32; 4]> {
+        let clamp = |v: f32, limit: u32, missing: u32| {
+            if v.is_nan() { missing } else { v.round().clamp(0.0, limit as f32) as u32 }
+        };
+        let (x0, y0) = (clamp(self.min[0], width, 0), clamp(self.min[1], height, 0));
+        let (x1, y1) = (clamp(self.max[0], width, width), clamp(self.max[1], height, height));
+        (x0 < x1 && y0 < y1).then_some([x0, y0, x1 - x0, y1 - y0])
+    }
 }
 
 /// Une teinte posée sur un dessin : sa silhouette (sa copie violette comprise), d'un aplat de
@@ -146,6 +194,8 @@ struct Uniforms {
     ghost_strength: f32,
     /// La teinte : sa couleur, puis sa force.
     tint: [f32; 4],
+    /// Tourné : le cosinus et le sinus de l'angle, puis le pivot.
+    turn: [f32; 4],
 }
 
 impl Uniforms {
@@ -163,6 +213,13 @@ impl Uniforms {
             opacity: draw.opacity,
             ghost_strength: draw.ghost_strength,
             tint: [r, g, b, draw.tint.strength],
+            turn: if draw.turn.angle == 0.0 {
+                // droit : exactement le dessin d'avant (le shader ne tourne rien)
+                [1.0, 0.0, 0.0, 0.0]
+            } else {
+                let (sin, cos) = draw.turn.angle.sin_cos();
+                [cos, sin, draw.turn.pivot[0], draw.turn.pivot[1]]
+            },
         }
     }
 }
@@ -533,9 +590,14 @@ impl Painter {
         layers: &[(ImageId, SpriteDraw)],
         banner: Option<&SpriteDraw>,
     ) -> wgpu::CommandBuffer {
-        // ce qui se dessine vraiment : une image inconnue est sautée, le bandeau seulement s'il existe
+        // ce qui se dessine vraiment : une image inconnue est sautée, une part de surface vide aussi,
+        // le bandeau seulement s'il existe
+        let (width, height) = (viewport[0] as u32, viewport[1] as u32);
         let mut draws: Vec<(&wgpu::BindGroup, &SpriteDraw)> = Vec::with_capacity(layers.len() + 1);
         for (id, draw) in layers {
+            if draw.keep.scissor(width, height).is_none() {
+                continue;
+            }
             match self.images.get(id.0) {
                 Some(Some(image)) => draws.push((&image.bind_group, draw)),
                 _ => log::warn!("image n° {} inconnue : pas dessinée", id.0),
@@ -572,7 +634,11 @@ impl Painter {
                 multiview_mask: None,
             });
             pass.set_pipeline(&self.pipeline);
-            for ((image, _), slot) in draws.iter().zip(&self.slots) {
+            for ((image, draw), slot) in draws.iter().zip(&self.slots) {
+                // sa part de la surface (toute, par défaut) : redite à chaque dessin, la découpe
+                // restant sinon celle du précédent ; vide, il a été sauté plus haut
+                let [x, y, w, h] = draw.keep.scissor(width, height).unwrap_or([0, 0, width, height]);
+                pass.set_scissor_rect(x, y, w, h);
                 pass.set_bind_group(0, &slot.bind_group, &[]);
                 pass.set_bind_group(1, *image, &[]);
                 pass.draw(0..6, 0..1);
@@ -881,9 +947,89 @@ mod tests {
 
     #[test]
     fn uniforms_match_the_wgsl_layout() {
-        // le WGSL aligne la teinte (un vec4f) sur 16 octets : elle commence juste après les 64 d'avant
-        assert_eq!(std::mem::size_of::<Uniforms>(), 80);
+        // le WGSL aligne la teinte et la rotation (des vec4f) sur 16 octets : la teinte commence
+        // juste après les 64 d'avant, la rotation après elle
+        assert_eq!(std::mem::size_of::<Uniforms>(), 96);
         assert_eq!(std::mem::offset_of!(Uniforms, tint), 64);
+        assert_eq!(std::mem::offset_of!(Uniforms, turn), 80);
+    }
+
+    #[test]
+    fn a_kept_part_becomes_a_scissor_inside_the_surface_or_nothing() {
+        assert_eq!(Keep::ALL.scissor(1920, 1080), Some([0, 0, 1920, 1080]));
+        let left = Keep { min: [f32::MIN, f32::MIN], max: [700.4, f32::MAX] };
+        assert_eq!(left.scissor(1920, 1080), Some([0, 0, 700, 1080]));
+        let right = Keep { min: [700.6, f32::MIN], max: [f32::MAX, f32::MAX] };
+        assert_eq!(right.scissor(1920, 1080), Some([701, 0, 1219, 1080]));
+        // hors de la surface, ou vide : rien
+        let beyond = Keep { min: [2000.0, f32::MIN], max: [f32::MAX, f32::MAX] };
+        assert_eq!(beyond.scissor(1920, 1080), None);
+        assert_eq!(Keep { min: [10.0, 10.0], max: [10.0, 50.0] }.scissor(1920, 1080), None);
+        // un bord qui n'est pas un nombre : celui de la surface
+        let odd = Keep { min: [f32::NAN, 5.0], max: [f32::NAN, f32::NAN] };
+        assert_eq!(odd.scissor(1920, 1080), Some([0, 5, 1920, 1075]));
+    }
+
+    /// La rotation que fait le shader (`sprite.wgsl`, `vs_main`), écrite une seconde fois ici pour
+    /// s'essayer sans carte graphique : l'essai vérifie que le shader dit bien la même.
+    fn shader_turn(turn: [f32; 4], p: [f32; 2]) -> [f32; 2] {
+        let [cos, sin, x, y] = turn;
+        let d = [p[0] - x, p[1] - y];
+        [x + d[0] * cos - d[1] * sin, y + d[0] * sin + d[1] * cos]
+    }
+
+    #[test]
+    fn a_positive_turn_leans_her_head_to_the_right_clockwise_on_screen() {
+        // le shader tourne comme ceci, et rien d'autre
+        let shader = include_str!("sprite.wgsl");
+        assert!(
+            shader.contains("vec2f(d.x * u.turn.x - d.y * u.turn.y, d.x * u.turn.y + d.y * u.turn.x)"),
+            "la rotation du shader a changé : l'essai doit la suivre"
+        );
+        let draw = |angle: f32| SpriteDraw {
+            min: [0.0, 0.0],
+            size: [1.0, 1.0],
+            ghost: [0.0, 0.0],
+            ghost_strength: 0.0,
+            boil_seed: 0,
+            boil: 0.0,
+            opacity: 1.0,
+            crop: Crop::WHOLE,
+            tint: Tint::NONE,
+            turn: Turn { angle, pivot: [100.0, 200.0] },
+            keep: Keep::ALL,
+        };
+        // un point au-dessus du pivot (y vers le bas) : un angle positif l'emmène à droite, un
+        // négatif à gauche, à la même distance
+        for (angle, right) in [(0.3f32, true), (-0.3, false)] {
+            let turned = shader_turn(Uniforms::of(&draw(angle), [10.0, 10.0]).turn, [100.0, 100.0]);
+            assert_eq!(turned[0] > 100.0, right, "{angle} : {turned:?}");
+            assert!((turned[0] - 100.0 - 100.0 * angle.sin()).abs() < 1e-3, "{angle} : {turned:?}");
+            assert!((turned[1] - 200.0 + 100.0 * angle.cos()).abs() < 1e-3, "{angle} : {turned:?}");
+        }
+    }
+
+    #[test]
+    fn upright_draws_carry_no_turn() {
+        let draw = SpriteDraw {
+            min: [0.0, 0.0],
+            size: [1.0, 1.0],
+            ghost: [0.0, 0.0],
+            ghost_strength: 0.0,
+            boil_seed: 0,
+            boil: 0.0,
+            opacity: 1.0,
+            crop: Crop::WHOLE,
+            tint: Tint::NONE,
+            turn: Turn::NONE,
+            keep: Keep::ALL,
+        };
+        assert_eq!(Uniforms::of(&draw, [10.0, 10.0]).turn, [1.0, 0.0, 0.0, 0.0]);
+        let turned = SpriteDraw { turn: Turn { angle: 0.5, pivot: [3.0, 4.0] }, ..draw };
+        let [cos, sin, x, y] = Uniforms::of(&turned, [10.0, 10.0]).turn;
+        assert!(
+            (cos - 0.5f32.cos()).abs() < 1e-6 && (sin - 0.5f32.sin()).abs() < 1e-6 && (x, y) == (3.0, 4.0)
+        );
     }
 
     #[test]
@@ -931,6 +1077,8 @@ mod gpu_tests {
             opacity: 1.0,
             crop: Crop::pixels((8, 0), (4, 4), (16, 4)),
             tint: Tint::NONE,
+            turn: Turn::NONE,
+            keep: Keep::ALL,
         };
         let pixels = offscreen.render(&[(grid, draw)], None).expect("relue");
         let at = |x: usize, y: usize| &pixels[(y * 64 + x) * 4..(y * 64 + x) * 4 + 4];
@@ -947,6 +1095,65 @@ mod gpu_tests {
         let pixels = offscreen.render(&[(grid, ghosted)], None).expect("relue");
         let beside = &pixels[(30 * 64 + 58) * 4..(30 * 64 + 58) * 4 + 4];
         assert!(beside[3] > 0 && beside[2] > beside[1], "{beside:?}");
+    }
+
+    /// Sur la vraie carte graphique : un dessin tourné l'est autour de son pivot, sans rien prendre à
+    /// la case voisine ; gardé à une part de la surface, il s'arrête net à son bord ; droit et
+    /// entier, il est exactement le même que sans ces réglages.
+    #[test]
+    #[ignore = "dessine sur la vraie carte graphique de cette machine"]
+    fn a_turned_and_kept_draw_leans_stops_at_its_edge_and_upright_changes_nothing() {
+        // deux cases de 4 × 4 px côte à côte : rouge, puis verte
+        let mut rgba = Vec::new();
+        for _y in 0..4 {
+            for color in [[255u8, 0, 0, 255], [0, 255, 0, 255]] {
+                for _x in 0..4 {
+                    rgba.extend_from_slice(&color);
+                }
+            }
+        }
+        let mut offscreen = Offscreen::new(64, 64).expect("une carte graphique");
+        let grid = offscreen.add_image(SpriteImage { width: 8, height: 4, rgba: &rgba }).expect("confiée");
+        let draw = SpriteDraw {
+            min: [16.0, 16.0],
+            size: [32.0, 32.0],
+            ghost: [0.0, 0.0],
+            ghost_strength: 0.0,
+            boil_seed: 0,
+            boil: 0.0,
+            opacity: 1.0,
+            crop: Crop::pixels((0, 0), (4, 4), (8, 4)),
+            tint: Tint::NONE,
+            turn: Turn::NONE,
+            keep: Keep::ALL,
+        };
+        let at = |pixels: &[u8], x: usize, y: usize| pixels[(y * 64 + x) * 4..(y * 64 + x) * 4 + 4].to_vec();
+        let plain = offscreen.render(&[(grid, draw)], None).expect("relue");
+        assert_eq!(at(&plain, 17, 17), [255, 0, 0, 255]);
+        // un angle nul, un pivot ailleurs : à l'octet près la même image
+        let zero = SpriteDraw { turn: Turn { angle: 0.0, pivot: [5.0, 9.0] }, ..draw };
+        assert_eq!(offscreen.render(&[(grid, zero)], None).expect("relue"), plain);
+        // tourné d'un huitième de tour autour de son centre : ses coins sont rentrés, ses côtés
+        // dépassent, et jamais de vert
+        let turned =
+            SpriteDraw { turn: Turn { angle: std::f32::consts::FRAC_PI_4, pivot: [32.0, 32.0] }, ..draw };
+        let pixels = offscreen.render(&[(grid, turned)], None).expect("relue");
+        assert_eq!(at(&pixels, 32, 32), [255, 0, 0, 255], "le centre");
+        assert_eq!(at(&pixels, 17, 17), [0, 0, 0, 0], "un coin rentré");
+        assert_eq!(at(&pixels, 32, 11), [255, 0, 0, 255], "la pointe du haut dépasse");
+        assert!(pixels.as_chunks::<4>().0.iter().all(|p| p[1] == 0), "rien de la case voisine");
+        // gardé à droite de x = 32 : coupé net
+        let kept = SpriteDraw { keep: Keep { min: [32.0, f32::MIN], max: [f32::MAX, f32::MAX] }, ..turned };
+        let pixels = offscreen.render(&[(grid, kept)], None).expect("relue");
+        assert_eq!(at(&pixels, 31, 32), [0, 0, 0, 0]);
+        assert_eq!(at(&pixels, 32, 32), [255, 0, 0, 255]);
+        // et un dessin gardé ne coupe pas le suivant
+        let pixels = offscreen.render(&[(grid, kept), (grid, draw)], None).expect("relue");
+        assert_eq!(at(&pixels, 17, 17), [255, 0, 0, 255]);
+        // une part vide : rien
+        let nothing = SpriteDraw { keep: Keep { min: [80.0, 0.0], max: [90.0, 10.0] }, ..draw };
+        let pixels = offscreen.render(&[(grid, nothing)], None).expect("relue");
+        assert!(pixels.iter().all(|&byte| byte == 0));
     }
 
     /// L'empreinte mémoire de ce processus (`phys_footprint`, mémoire graphique comprise sur un Mac
@@ -1039,6 +1246,8 @@ mod gpu_tests {
             opacity: 1.0,
             crop: Crop::WHOLE,
             tint: Tint::NONE,
+            turn: Turn::NONE,
+            keep: Keep::ALL,
         };
         let middle = |pixels: &[u8]| pixels[(8 * 16 + 8) * 4..(8 * 16 + 8) * 4 + 4].to_vec();
         assert_eq!(middle(&offscreen.render(&[(canvas, draw)], None).expect("relue")), [0, 0, 0, 0]);
@@ -1080,6 +1289,8 @@ mod gpu_tests {
             opacity: 1.0,
             crop: Crop::WHOLE,
             tint: Tint::NONE,
+            turn: Turn::NONE,
+            keep: Keep::ALL,
         };
         let at = |pixels: &[u8], x: usize| pixels[(8 * 16 + x) * 4..(8 * 16 + x) * 4 + 4].to_vec();
         let plain = offscreen.render(&[(image, draw)], None).expect("relue");

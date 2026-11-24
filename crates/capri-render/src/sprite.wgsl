@@ -1,6 +1,7 @@
 // Capri : un quad texturé, une part rectangulaire de son image (une case de planche, ou l'image
-// entière), son « boil », sa copie violette mal repérée, et une teinte (les doubles colorés du
-// glitch de l'intro : sa silhouette d'un aplat de couleur).
+// entière), son « boil », sa copie violette mal repérée, une teinte (les doubles colorés du
+// glitch de l'intro : sa silhouette d'un aplat de couleur), et une rotation autour d'un point
+// (penchée quand elle guette ; la coupe au bord d'une fenêtre est le rectangle de découpe).
 // Couleurs prémultipliées de bout en bout (macOS et DirectComposition composent ainsi).
 
 struct Uniforms {
@@ -15,6 +16,7 @@ struct Uniforms {
     opacity: f32,
     ghost_strength: f32, // 0 : pas de copie violette
     tint: vec4f,       // teinte : sa couleur (rgb), sa force (a) ; 0 : aucune
+    turn: vec4f,       // rotation : cosinus, sinus, pivot (px) ; (1, 0, …) : droite
 }
 
 @group(0) @binding(0) var<uniform> u: Uniforms;
@@ -36,7 +38,12 @@ fn vs_main(@builtin(vertex_index) i: u32) -> VsOut {
     let margin = abs(u.ghost) + vec2f(u.boil + 2.0);
     let c = corners[i];
     let px = u.rect_min - margin + c * (u.rect_size + 2.0 * margin);
-    let ndc = vec2f(px.x / u.viewport.x * 2.0 - 1.0, 1.0 - px.y / u.viewport.y * 2.0);
+    // tournée autour de son pivot : le quad tourne, la part de l'image qu'il lit (uv) ne change pas ;
+    // droite, `select` rend exactement le point d'avant
+    let d = px - u.turn.zw;
+    let turned = u.turn.zw + vec2f(d.x * u.turn.x - d.y * u.turn.y, d.x * u.turn.y + d.y * u.turn.x);
+    let at = select(px, turned, u.turn.y != 0.0 || u.turn.x != 1.0);
+    let ndc = vec2f(at.x / u.viewport.x * 2.0 - 1.0, 1.0 - at.y / u.viewport.y * 2.0);
     var out: VsOut;
     out.pos = vec4f(ndc, 0.0, 1.0);
     out.uv = (px - u.rect_min) / u.rect_size;

@@ -1172,7 +1172,167 @@ mod tests {
                     }
                 }
             }
+
+            // pour qu'elle guette : sa silhouette bande par bande, dans tous ses dessins debout (sa
+            // variante glitchée comprise, si elle est là) ; chaque bande va exactement d'un bout à
+            // l'autre de ce qui est dessiné
+            let mut drawings: Vec<Vec<u8>> = [Strip::Stand, Strip::StandBlink, Strip::StandMouth]
+                .into_iter()
+                .flat_map(|strip| (0..strip.count()).map(move |index| (strip, index)))
+                .map(|(strip, index)| cell(strip, index))
+                .collect();
+            if let Some(glitchy) = sheets.extra(Strip::StandBlinkGlitch) {
+                let strip = Strip::StandBlinkGlitch;
+                drawings.extend(
+                    (0..strip.count()).map(|index| stand::cell_pixels(strip, &glitchy.rgba, index).unwrap()),
+                );
+            }
+            let mut found = vec![(u32::MAX, 0u32); stand::OUTLINE.len()];
+            for pixels in &drawings {
+                for y in 0..384 {
+                    for x in (0..CELL_WIDTH).filter(|&x| alpha(pixels, x, y) > 0) {
+                        assert!((stand::TOP..stand::BOTTOM).contains(&y), "({x}, {y}) hors de ses bandes");
+                        let band = &mut found[((y - stand::TOP) / stand::BAND) as usize];
+                        *band = (band.0.min(x), band.1.max(x));
+                    }
+                }
+            }
+            assert_eq!(found, stand::OUTLINE, "sa silhouette, bande par bande");
+            // sa hanche : le milieu de sa silhouette à sa ligne, dans chaque dessin de sa boucle
+            for index in 0..Strip::Stand.count() {
+                let pixels = cell(Strip::Stand, index);
+                let row = stand::HIP.1 as u32;
+                let solid: Vec<u32> = (0..CELL_WIDTH).filter(|&x| alpha(&pixels, x, row) > 96).collect();
+                let middle = (solid[0] + solid[solid.len() - 1]) as f32 / 2.0;
+                assert!((middle - stand::HIP.0).abs() <= 1.0, "dessin {index} : sa hanche en {middle}");
+            }
+            // ses yeux : le vert autour d'eux, au-dessus de son cou, dans chaque dessin de sa boucle
+            // et de son clignement ; tous ensemble, exactement la boîte mesurée
+            let green = |p: &[u8]| p[3] > 200 && p[1] > 150 && p[0] < 110 && p[2] < 160;
+            let mut eyes = ((u32::MAX, u32::MAX), (0u32, 0u32));
+            for strip in [Strip::Stand, Strip::StandBlink] {
+                for index in 0..strip.count() {
+                    let pixels = cell(strip, index);
+                    for y in 95..128 {
+                        for x in 0..CELL_WIDTH {
+                            let at = ((y * CELL_WIDTH + x) * 4) as usize;
+                            if green(&pixels[at..at + 4]) {
+                                eyes =
+                                    ((eyes.0.0.min(x), eyes.0.1.min(y)), (eyes.1.0.max(x), eyes.1.1.max(y)));
+                            }
+                        }
+                    }
+                }
+            }
+            assert_eq!(eyes, stand::EYES, "ses yeux");
+
+            // guettant, sur ses vrais dessins
+            use capri_core::Vec2;
+            use capri_core::perch::Side;
+            let hip = Vec2::new(stand::HIP.0, stand::HIP.1);
+            let corners = |x: u32, y: u32| {
+                let (x, y) = (x as f32, y as f32);
+                [Vec2::new(x, y), Vec2::new(x + 1.0, y), Vec2::new(x, y + 1.0), Vec2::new(x + 1.0, y + 1.0)]
+            };
+            for side in Side::ALL {
+                let (angle, cut, o) = (stand::lean(side), stand::cut(side), side.outward());
+                // de combien un point penché est dehors de la coupe (négatif : derrière la fenêtre)
+                let out = |p: Vec2| (stand::turn(p, hip, angle).x - cut) * o;
+                // ce qui se voit vraiment d'elle (les centres de ses pixels) : dans ce que dit
+                // `lurk_bounds`, et, en bas, à gauche jusqu'à sa hanche, à droite pas plus bas que sa taille
+                let bounds = stand::lurk_bounds(side);
+                let mut lowest = f32::MIN;
+                for pixels in &drawings {
+                    for y in 0..384 {
+                        for x in (0..CELL_WIDTH).filter(|&x| alpha(pixels, x, y) > 0) {
+                            let center = Vec2::new(x as f32 + 0.5, y as f32 + 0.5);
+                            if out(center) < 0.0 {
+                                continue;
+                            }
+                            let p = stand::turn(center, hip, angle) - Vec2::new(cut, hip.y);
+                            assert!(bounds.to_unit(p).is_some(), "{side:?} : ({x}, {y}) hors de {bounds:?}");
+                            lowest = lowest.max(p.y);
+                        }
+                    }
+                }
+                match side {
+                    Side::Left => assert!((-10.0..0.0).contains(&lowest), "à gauche, jusqu'à {lowest}"),
+                    Side::Right => assert!(lowest < -25.0, "à droite, jusqu'à {lowest}"),
+                }
+                // ses yeux, dans sa boucle et son clignement ordinaire : à `EYE_MARGIN` au moins ;
+                // dans son clignement glitché : la marge mesurée, à peu près exactement
+                let ((_, y0), (_, y1)) = stand::EYES;
+                let margin = |pixels: &[u8]| {
+                    let mut least = f32::MAX;
+                    for y in y0..=y1 {
+                        for x in 0..CELL_WIDTH {
+                            let at = ((y * CELL_WIDTH + x) * 4) as usize;
+                            if green(&pixels[at..at + 4]) {
+                                least = corners(x, y).into_iter().map(out).fold(least, f32::min);
+                            }
+                        }
+                    }
+                    least
+                };
+                for strip in [Strip::Stand, Strip::StandBlink] {
+                    for index in 0..strip.count() {
+                        let least = margin(&cell(strip, index));
+                        assert!(least >= stand::EYE_MARGIN, "{side:?}, {strip:?} {index} : {least}");
+                    }
+                }
+                if let Some(glitchy) = sheets.extra(Strip::StandBlinkGlitch) {
+                    let strip = Strip::StandBlinkGlitch;
+                    let least = (0..strip.count())
+                        .map(|index| margin(&stand::cell_pixels(strip, &glitchy.rgba, index).unwrap()))
+                        .fold(f32::MAX, f32::min);
+                    let measured = stand::GLITCHY_EYE_MARGIN[side.index()];
+                    assert!(
+                        (least - measured).abs() < 0.05,
+                        "{side:?} : clignement glitché à {least}, pas {measured}"
+                    );
+                }
+                // la marge de son masque de clic : la dilatation des pixels tout entiers derrière la
+                // fenêtre ne passe jamais dehors au-delà de `lurk_edge`, qui en est la vraie portée
+                let grow = super::super::GRAB_MARGIN as f32;
+                let mut reach = f32::MIN;
+                for strip in [Strip::Stand, Strip::StandBlink] {
+                    for index in 0..strip.count() {
+                        let pixels = cell(strip, index);
+                        for y in 0..384 {
+                            for x in (0..CELL_WIDTH)
+                                .filter(|&x| alpha(&pixels, x, y) > super::super::ALPHA_THRESHOLD)
+                            {
+                                if corners(x, y).into_iter().any(|corner| out(corner) > 0.0) {
+                                    continue;
+                                }
+                                let (x0, y0) = (x as f32 - grow, y as f32 - grow);
+                                let (x1, y1) = (x as f32 + 1.0 + grow, y as f32 + 1.0 + grow);
+                                for corner in [
+                                    Vec2::new(x0, y0),
+                                    Vec2::new(x1, y0),
+                                    Vec2::new(x0, y1),
+                                    Vec2::new(x1, y1),
+                                ] {
+                                    reach = reach.max(out(corner));
+                                }
+                            }
+                        }
+                    }
+                }
+                let edge = capri_core::look::lurk_edge(angle);
+                assert!(
+                    reach <= edge + 1e-3 && reach > edge - 1.0,
+                    "{side:?} : portée {reach}, marge {edge}"
+                );
+            }
         }
+    }
+
+    /// Guettant, `look` compte la dilatation de son masque de clic pour qu'elle ne déborde pas dehors
+    /// au bord de sa fenêtre (`look::lurk_edge`) : c'est celle de l'app.
+    #[test]
+    fn the_grab_margin_is_the_one_she_lurks_with() {
+        assert_eq!(super::GRAB_MARGIN as f32, capri_core::look::MASK_GROW);
     }
 
     /// Les vraies images de l'intro, si `tools/fetch-assets.sh` les a téléchargées (rien n'est

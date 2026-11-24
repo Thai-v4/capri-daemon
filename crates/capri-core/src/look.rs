@@ -63,6 +63,21 @@
 //! ([`Look::is_traveling`]) ne se confondent jamais ; ni l'une ni l'autre n'est libre
 //! ([`Look::is_away`]).
 //!
+//! **Elle guette** de derrière le côté d'une fenêtre (`Stance::Lurking`, où et quand : `perch` et
+//! `roam`) : sa boucle debout, ses clignements (glitché compris) et sa bouche, rien d'autre, penchés
+//! vers l'extérieur de la fenêtre et coupés net à son bord ([`Lean`], calculé à l'affichage : ses
+//! images ne sont jamais modifiées, ni retournées, le même dessin des deux côtés) ; ce qui se voit
+//! d'elle est dit dans [`stand`] (sa tête et ses cheveux ; à gauche, aussi son épaule, son haut, son
+//! bras et un bout de sa jupe, le long de la coupe). Elle y arrive cachée derrière la fenêtre et en sort
+//! en glissant ([`Clip::Slide`] : son corps glisse à la cadence de l'écran, `Capri::emerge`), et
+//! s'y retire de même avant de partir ou d'être cachée ; jamais ses planches de vie sur un côté.
+//! Ses gestes ne s'y jouent pas (sourire, se relever, s'endormir : dessinés dans ses planches de
+//! vie, d'un dessin plus ancien, ils ne s'alignent pas sur sa hanche ni ne garantissent ses yeux) ;
+//! un clic sur elle n'y fait rien. Seul ce qui se voit d'elle attrape le curseur
+//! ([`Look::is_over`]) ; attrapée, elle se redresse autour de ce que tient le curseur
+//! ([`Look::grab_origin`]) ; son bandeau se place au-dessus de sa tête penchée ([`Look::shown`]).
+//! Son côté parti, elle ne guette plus : debout, entière, là où elle est.
+//!
 //! **Ses gestes** ([`Gesture`]) : une suite jouée une fois par-dessus sa boucle, puis sa boucle
 //! reprend, par une coupe franche. Lâchée debout après avoir été tenue ou lancée, elle se relève
 //! ([`life::rising`], dans `update`) ; un clic sur elle ([`Look::poke`]) la fait sourire debout
@@ -137,12 +152,12 @@
 //! au hasard : la même image donne toujours le même dessin.
 
 use crate::anim::Sheet;
-use crate::body::{Capri, Stance};
+use crate::body::{Capri, LurkFit, Stance};
 use crate::geom::{Rect, Vec2};
 use crate::input::Grab;
 use crate::intro::{self, Act, End, act};
 use crate::mask::AlphaMask;
-use crate::perch::{FOOT, Reach, Stature};
+use crate::perch::{FOOT, LurkStature, Reach, Side, Stature};
 use crate::roam::Hold;
 use crate::sheets::{self, lie, life, stand};
 
@@ -302,6 +317,20 @@ enum Repose {
     },
 }
 
+/// De combien de pixels de ses planches son masque de clic est dilaté, dans chaque sens (un carré :
+/// la marge de l'app, `GRAB_MARGIN`, pour attraper ses membres fins ; un essai de l'app vérifie
+/// qu'elles sont égales).
+pub const MASK_GROW: f32 = 3.0;
+
+/// Guettant, rien ne l'attrape à moins de tant de pixels de ses planches du bord de sa fenêtre,
+/// dehors : la dilatation de son masque ([`MASK_GROW`], un carré), penchée de `angle`, porte au
+/// plus de `MASK_GROW · (|cos| + |sin|)` en largeur (3,9 px à 22°) ; ce qui est derrière la
+/// fenêtre, juste au bord, ne doit pas déborder dehors. L'essai des vraies planches de l'app la
+/// compare à la vraie portée.
+pub fn lurk_edge(angle: f32) -> f32 {
+    MASK_GROW * (angle.cos().abs() + angle.sin().abs())
+}
+
 /// Le plus long de ses gestes, en images : son sourire, 4 s. Aucun ne dure plus.
 pub const LONGEST_GESTURE: u64 = 96;
 
@@ -336,6 +365,41 @@ pub struct Picture {
     /// sont nettes, et ont déjà leur liseré).
     pub boil_seed: u32,
     pub ghost: Vec2,
+    /// Elle guette : penchée et coupée net au bord de sa fenêtre, sa bouche avec elle ; `None` :
+    /// dessinée telle quelle.
+    pub lean: Option<Lean>,
+}
+
+/// Guettant, comment son dessin se montre, calculé à l'affichage (ses images ne sont jamais
+/// modifiées) : tourné de `angle` radians autour de `pivot` (sa hanche, en pixels de l'overlay ; à
+/// l'écran, positif dans le sens des aiguilles d'une montre), et seul ce qui est dehors du bord de
+/// sa fenêtre, en x = `wall`, se voit (à gauche du bord sur le côté gauche, à droite sur le droit).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Lean {
+    pub angle: f32,
+    pub pivot: Vec2,
+    pub wall: f32,
+    pub side: Side,
+}
+
+impl Lean {
+    /// Le point `p` de l'écran se voit-il (est-il dehors du bord) ?
+    pub fn shows(&self, p: Vec2) -> bool {
+        match self.side {
+            Side::Left => p.x < self.wall,
+            Side::Right => p.x >= self.wall,
+        }
+    }
+
+    /// Le point de son image droite qui se dessine en `p` (le dessin redressé autour de sa hanche).
+    pub fn upright(&self, p: Vec2) -> Vec2 {
+        stand::turn(p, self.pivot, -self.angle)
+    }
+
+    /// Où se dessine le point `p` de son image droite.
+    pub fn turned(&self, p: Vec2) -> Vec2 {
+        stand::turn(p, self.pivot, self.angle)
+    }
 }
 
 /// Les masques de clic de sa pose assise : l'union des quatre boucles (cases étroites), et celle
@@ -396,6 +460,21 @@ enum Clip {
     LieLeave {
         at: Vec2,
     },
+    /// Guettant, elle sort de derrière sa fenêtre (à l'endroit) ou s'y retire (à l'envers) : sa
+    /// position glisse (`Capri::emerge`, `Capri::withdraw`), ses dessins restent sa boucle debout ;
+    /// c'est son corps qui dit quand c'est fini, pas une feuille d'exposition.
+    Slide,
+}
+
+/// Guettant, sa glissade, à l'image `frame` : elle sort de derrière sa fenêtre (`out`) ou s'y
+/// retire, d'où elle en est (son corps glisse ; voir [`Clip::Slide`]).
+fn slide(capri: &mut Capri, out: bool, frame: u64) -> Run {
+    if out {
+        capri.emerge();
+    } else {
+        capri.withdraw();
+    }
+    Run { clip: Clip::Slide, since: frame, from: 0, len: 1, backward: !out }
 }
 
 /// Une suite jouée une fois, dans un sens ou dans l'autre : à l'image d'animation `since`, elle en
@@ -445,7 +524,7 @@ impl Run {
     fn seat(self) -> Option<Vec2> {
         match self.clip {
             Clip::PerchArrive { at } | Clip::PerchLeave { at } | Clip::LieLeave { at } => Some(at),
-            Clip::Arrive | Clip::Leave => None,
+            Clip::Arrive | Clip::Leave | Clip::Slide => None,
         }
     }
 
@@ -714,6 +793,12 @@ impl Look {
             Presence::Vanishing(run, _) if run.seat().is_some() && capri.seat().is_none() => {
                 self.entrance(capri, frame)
             }
+            // elle se retirait derrière sa fenêtre : elle en ressort, d'où elle en est ; plus sur son
+            // côté (son côté parti), elle apparaît comme d'habitude
+            Presence::Vanishing(run, _) if run.clip == Clip::Slide => match capri.lurking() {
+                Some(_) => Presence::Appearing(slide(capri, true, frame)),
+                None => self.entrance(capri, frame),
+            },
             Presence::Vanishing(run, _) => {
                 let run = run.turned(frame);
                 self.resume_after(capri, run, frame);
@@ -747,14 +832,20 @@ impl Look {
                 self.leave_stage(capri);
                 Presence::Gone(None, Exit::Hidden)
             }
+            // elle sortait de derrière sa fenêtre : elle s'y retire, d'où elle en est
+            Presence::Appearing(run) if run.clip == Clip::Slide => {
+                Presence::Vanishing(slide(capri, false, frame), Exit::Hidden)
+            }
             Presence::Appearing(run) => {
                 if run.seat().is_none() {
                     capri.still(None);
                 }
                 Presence::Vanishing(run.turned(frame), Exit::Hidden)
             }
-            Presence::Here if !self.has_life() => Presence::Gone(None, Exit::Hidden),
-            Presence::Here => Presence::Vanishing(self.exit(capri, picture.drawing, frame), Exit::Hidden),
+            Presence::Here => match self.leaving(capri, picture.drawing, frame) {
+                Some(run) => Presence::Vanishing(run, Exit::Hidden),
+                None => Presence::Gone(None, Exit::Hidden),
+            },
         };
     }
 
@@ -784,10 +875,9 @@ impl Look {
         let picture = self.picture(capri);
         self.frame = self.frame.max(frame);
         self.stop(capri);
-        self.presence = if self.has_life() {
-            Presence::Vanishing(self.exit(capri, picture.drawing, frame), Exit::Trip)
-        } else {
-            Presence::Gone(None, Exit::Trip)
+        self.presence = match self.leaving(capri, picture.drawing, frame) {
+            Some(run) => Presence::Vanishing(run, Exit::Trip),
+            None => Presence::Gone(None, Exit::Trip),
         };
         true
     }
@@ -876,10 +966,9 @@ impl Look {
         let picture = self.picture(capri);
         self.frame = self.frame.max(frame);
         self.stop(capri);
-        self.presence = if self.has_life() {
-            Presence::Vanishing(self.exit(capri, picture.drawing, frame), Exit::Encore)
-        } else {
-            Presence::Gone(None, Exit::Encore)
+        self.presence = match self.leaving(capri, picture.drawing, frame) {
+            Some(run) => Presence::Vanishing(run, Exit::Encore),
+            None => Presence::Gone(None, Exit::Encore),
         };
         Ok(())
     }
@@ -1114,6 +1203,7 @@ impl Look {
                 mouth: None,
                 boil_seed: 0,
                 ghost: Vec2::ZERO,
+                lean: None,
             },
         }
     }
@@ -1150,6 +1240,13 @@ impl Look {
     fn entrance(&mut self, capri: &mut Capri, frame: u64) -> Presence {
         self.act = None;
         self.wake_up(capri);
+        // guettant : elle sort de derrière sa fenêtre, sa boucle debout en marche (rien de ses
+        // planches de vie ne se montre sur un côté)
+        if capri.lurking().is_some() {
+            self.seat = Seat::Standing;
+            capri.unstill();
+            return Presence::Appearing(slide(capri, true, frame));
+        }
         if !self.has_life() {
             return Presence::Here;
         }
@@ -1184,6 +1281,16 @@ impl Look {
     /// ordinaire ([`Seat::Leaving`]).
     fn run_seat(&self, capri: &Capri, was: Vec2) -> Vec2 {
         capri.seat().or(self.last_seat).unwrap_or(was)
+    }
+
+    /// Comment elle s'en va de là où elle est (`drawing` : ce qui est dessiné) : guettant, elle se
+    /// retire derrière sa fenêtre ; sinon elle s'efface ([`Look::exit`]) ; sans ses planches de vie,
+    /// `None` : elle est partie tout de suite.
+    fn leaving(&self, capri: &mut Capri, drawing: Drawing, frame: u64) -> Option<Run> {
+        if capri.lurking().is_some() {
+            return Some(slide(capri, false, frame));
+        }
+        self.has_life().then(|| self.exit(capri, drawing, frame))
     }
 
     /// Comment elle s'efface, d'après ce qui est dessiné (`drawing`) : assise, de son bord (en
@@ -1316,10 +1423,12 @@ impl Look {
             && match capri.stance() {
                 Stance::Floating => true,
                 Stance::Perched { .. } => !self.has_perch(),
+                // guettant, ses gestes ne se jouent pas (voir le module)
                 Stance::Held { .. }
                 | Stance::Thrown { .. }
                 | Stance::Walking { .. }
-                | Stance::Falling { .. } => false,
+                | Stance::Falling { .. }
+                | Stance::Lurking { .. } => false,
             }
     }
 
@@ -1673,6 +1782,18 @@ impl Look {
         }
     }
 
+    /// Ce qu'il lui faut sur le côté d'une fenêtre pour y guetter ([`lurking_stature`]), si elle le
+    /// peut : seulement avec ses planches debout, les seules qu'elle montre là.
+    pub fn lurk_stature(&self) -> Option<LurkStature> {
+        self.has_stand().then(|| lurking_stature(self.height))
+    }
+
+    /// Guettant, comment son image se place ([`lurk_fit`]), si elle peut guetter (ses planches
+    /// debout là).
+    pub fn lurk_fit(&self) -> Option<LurkFit> {
+        self.has_stand().then(lurk_fit)
+    }
+
     /// Posée, avec ses planches assises : c'est alors seulement que la musique peut la faire se
     /// balancer.
     pub fn wants_music(&self, capri: &Capri) -> bool {
@@ -1722,6 +1843,22 @@ impl Look {
         // qu'elle apparaît, ou si elle n'est plus là où elle apparaissait (posée, ou plus posée)
         self.presence = match self.presence {
             Presence::Appearing(_) if capri.is_held() => Presence::Here,
+            // sortie de derrière sa fenêtre : là ; ou elle ne guette plus (son côté parti), et elle
+            // est là, debout
+            Presence::Appearing(run) if run.clip == Clip::Slide => match capri.lurk_out() {
+                Some(out) if out < 1.0 => Presence::Appearing(run),
+                _ => Presence::Here,
+            },
+            // retirée derrière sa fenêtre, rien ne se voit d'elle : partie ; son côté parti en
+            // chemin, debout, elle s'efface comme d'habitude
+            Presence::Vanishing(run, exit) if run.clip == Clip::Slide => match capri.lurk_out() {
+                Some(out) if out > 0.0 => Presence::Vanishing(run, exit),
+                Some(_) => Presence::Gone(Some(run), exit),
+                None => match self.leaving(capri, Drawing::Cutout, frame) {
+                    Some(run) => Presence::Vanishing(run, exit),
+                    None => Presence::Gone(None, exit),
+                },
+            },
             Presence::Appearing(run) if run.seat().is_some() != seat.is_some() => Presence::Here,
             Presence::Appearing(run) if run.left(frame) == 0 => Presence::Here,
             Presence::Vanishing(run, exit) if run.left(frame) == 0 => Presence::Gone(Some(run), exit),
@@ -1974,13 +2111,29 @@ impl Look {
             // ses bandes, d'un bord à l'autre de l'écran : rien ne l'attrape, elle n'est pas là
             Drawing::Gather(_) => return false,
         };
+        // guettant : ce qui est derrière sa fenêtre laisse passer le clic, et la marge de son masque
+        // ne passe pas le bord ; ce qui se voit, son dessin redressé le dit
+        let cursor = match picture.lean {
+            Some(lean) => {
+                let edge = lurk_edge(lean.angle) * picture.rect.size.x / stand::CELL_WIDTH as f32;
+                if !lean.shows(Vec2::new(cursor.x - lean.side.outward() * edge, cursor.y)) {
+                    return false;
+                }
+                lean.upright(cursor)
+            }
+            None => cursor,
+        };
         picture.rect.to_unit(cursor).is_some_and(|uv| mask.hit(uv))
     }
 
     /// Ce qu'elle occupe à l'écran, sans son flottement ni ses gestes : de quoi placer son
     /// bandeau au-dessus d'elle et le champ de saisie sous ses pieds.
     pub fn shown(&self, capri: &Capri) -> Rect {
-        let drawing = self.picture(capri).drawing;
+        let picture = self.picture(capri);
+        if let Some(lean) = picture.lean {
+            return self.lurk_shown(picture.rect, lean);
+        }
+        let drawing = picture.drawing;
         if let (Drawing::Lie(_), Some(at)) = (drawing, self.seated_at(capri)) {
             let k = lie::scale(self.height);
             let left = (lie::SEAT_X - lie::SPAN.0 as f32) * k;
@@ -2002,6 +2155,33 @@ impl Look {
         }
         let (top, tall) = self.standing_content();
         Rect::new(capri.position() + Vec2::new(0.0, top), Vec2::new(capri.size().x, tall))
+    }
+
+    /// Ce qui se voit d'elle à l'écran : guettant, sa part dehors de sa fenêtre (sa silhouette
+    /// penchée, un peu plus large que le vrai) ; sinon, son dessin entier (`Picture::rect`). Pas ce
+    /// qui place son bandeau ([`Look::shown`]).
+    pub fn visible(&self, capri: &Capri) -> Rect {
+        let picture = self.picture(capri);
+        match picture.lean {
+            Some(lean) => lurk_seen(picture.rect, lean),
+            None => picture.rect,
+        }
+    }
+
+    /// Guettant, de quoi placer son bandeau et son champ de saisie : la hauteur de ce qui se voit
+    /// d'elle ([`lurk_seen`]) ; en largeur, autour de sa tête penchée, aussi loin que ce qui se voit
+    /// d'elle de part et d'autre : son bandeau se centre au-dessus de sa tête, son champ de saisie en
+    /// dessous.
+    fn lurk_shown(&self, rect: Rect, lean: Lean) -> Rect {
+        let seen = lurk_seen(rect, lean);
+        let (left, right) = (seen.min.x, seen.max().x);
+        let k = rect.size.x / stand::CELL_WIDTH as f32;
+        // sa tête : le milieu de ses yeux, penché
+        let ((x0, y0), (x1, y1)) = stand::EYES;
+        let eyes = Vec2::new((x0 + x1 + 1) as f32 / 2.0, (y0 + y1 + 1) as f32 / 2.0);
+        let head = lean.turned(rect.min + eyes * k).x.clamp(left, right);
+        let half = (head - left).min(right - head);
+        Rect::new(Vec2::new(head - half, seen.min.y), Vec2::new(2.0 * half, seen.size.y))
     }
 
     /// Une prise (`input::Grab`, faite par l'app au moment où un appui en devient une) : là où
@@ -2027,8 +2207,14 @@ impl Look {
 
     /// On l'attrape assise, le curseur en `cursor` : où mettre le coin haut gauche de son image
     /// debout pour que le curseur tienne le même endroit d'elle (sa tête, ses pieds…), à
-    /// proportion de sa silhouette. `None` si elle n'est pas dessinée assise.
+    /// proportion de sa silhouette. Guettant : son image redressée autour du point d'elle que
+    /// tient le curseur, qui reste sous lui. `None` si elle n'est dessinée ni assise ni penchée.
     pub fn grab_origin(&self, capri: &Capri, cursor: Vec2) -> Option<Vec2> {
+        let picture = self.picture(capri);
+        // guettant : elle se redresse autour de ce que tient le curseur, qui reste sous lui
+        if let Some(lean) = picture.lean {
+            return Some(picture.rect.min + (cursor - lean.upright(cursor)));
+        }
         if !self.is_seated(capri) {
             return None;
         }
@@ -2074,6 +2260,7 @@ impl Look {
                 mouth: None,
                 boil_seed: pose.boil_seed,
                 ghost: pose.ghost,
+                lean: None,
             };
         }
         // en marche, ou un geste : ses planches de vie, par-dessus son image debout
@@ -2116,6 +2303,7 @@ impl Look {
             mouth: self.talking.then(|| self.sheets.mouth.at(self.frame)),
             boil_seed: 0,
             ghost: Vec2::ZERO,
+            lean: lean(capri, pose.rect),
         }
     }
 
@@ -2135,6 +2323,8 @@ impl Look {
                 self.lain(seat(was), self.sheets.lying_leave.at(at))
             }
             Clip::LieLeave { at: was } => self.seated(seat(was), self.sheets.leaving.at(at)),
+            // sa boucle debout, penchée et coupée, là où sa glissade la met
+            Clip::Slide => self.standing(capri),
         }
     }
 
@@ -2152,6 +2342,7 @@ impl Look {
             mouth: None,
             boil_seed: 0,
             ghost: Vec2::ZERO,
+            lean: None,
         }
     }
 
@@ -2164,6 +2355,7 @@ impl Look {
             mouth: None,
             boil_seed: 0,
             ghost: Vec2::ZERO,
+            lean: None,
         }
     }
 
@@ -2180,7 +2372,74 @@ impl Look {
             mouth: None,
             boil_seed: 0,
             ghost: Vec2::ZERO,
+            lean: None,
         }
+    }
+}
+
+/// Guettant, ce qui se voit d'elle, son dessin debout en `rect` penché selon `lean` : sa silhouette
+/// penchée ([`stand::lurk_bounds`], un peu plus large que le vrai), là où sa glissade la met, et
+/// rien derrière sa fenêtre (en train de glisser, ce qui se voit est plus étroit ; cachée, vide).
+fn lurk_seen(rect: Rect, lean: Lean) -> Rect {
+    let k = rect.size.x / stand::CELL_WIDTH as f32;
+    let side = lean.side;
+    // son point d'accroche dans sa case penchée : sur la coupe, à la hauteur de sa hanche (qui ne
+    // bouge pas quand elle se penche)
+    let anchor = lean.pivot + Vec2::new((stand::cut(side) - stand::HIP.0) * k, 0.0);
+    let bounds = stand::lurk_bounds(side);
+    let (lo, hi) = (anchor + bounds.min * k, anchor + bounds.max() * k);
+    let (left, right) = match side {
+        Side::Left => (lo.x.min(lean.wall), hi.x.min(lean.wall)),
+        Side::Right => (lo.x.max(lean.wall), hi.x.max(lean.wall)),
+    };
+    Rect::new(Vec2::new(left, lo.y), Vec2::new(right - left, hi.y - lo.y))
+}
+
+/// Guettant (`capri` derrière le côté d'une fenêtre), son dessin debout en `rect` : penché autour de
+/// sa hanche vers l'extérieur de la fenêtre, et coupé au bord ; `None` sinon.
+fn lean(capri: &Capri, rect: Rect) -> Option<Lean> {
+    let lurk = capri.lurking()?;
+    let side = lurk.spot.side;
+    let pivot = rect.min
+        + Vec2::new(
+            stand::HIP.0 * rect.size.x / stand::CELL_WIDTH as f32,
+            stand::HIP.1 * rect.size.y / sheets::CELL_HEIGHT as f32,
+        );
+    Some(Lean { angle: stand::lean(side), pivot, wall: lurk.at.x, side })
+}
+
+/// Ce qui se voit d'elle quand elle guette, pour une hauteur debout de `height` pixels, autour de
+/// son point d'accroche (sur le côté de la fenêtre, à la hauteur de sa hanche), de chaque côté
+/// ([`stand::lurk_bounds`]), et un pixel de plus ([`ROUNDING`] : son image est posée au pixel
+/// entier) ; rien derrière la fenêtre.
+pub fn lurking_stature(height: f32) -> LurkStature {
+    let k = stand::scale(height);
+    let reach = |side: Side| {
+        let bounds = stand::lurk_bounds(side);
+        let (lo, hi) = (bounds.min * k, bounds.max() * k);
+        let out = |v: f32| if v > 0.0 { v + ROUNDING } else { 0.0 };
+        Reach { left: out(-lo.x), up: -lo.y + ROUNDING, right: out(hi.x), down: hi.y + ROUNDING }
+    };
+    LurkStature { height, left: reach(Side::Left), right: reach(Side::Right) }
+}
+
+/// Son image est posée au pixel entier ([`crate::body::Pose`]) : ce qui se voit d'elle peut être
+/// jusqu'à un demi-pixel plus loin que prévu. Guettant, la place qu'il lui faut compte ce pixel.
+pub const ROUNDING: f32 = 1.0;
+
+/// Guettant, comment son image debout se place, pour [`Capri::lurk_on`] : sa hanche
+/// ([`stand::HIP`]), de combien elle est dehors ([`stand::hip_out`]), et de combien elle glisse pour
+/// que rien ne se voie d'elle (ce qui se voit d'elle de plus loin, et un pixel de ses planches).
+pub fn lurk_fit() -> LurkFit {
+    let w = stand::CELL_WIDTH as f32;
+    let reach = |side: Side| {
+        let bounds = stand::lurk_bounds(side);
+        (-bounds.min.x).max(bounds.max().x)
+    };
+    LurkFit {
+        hip: Vec2::new(stand::HIP.0 / w, stand::HIP.1 / sheets::CELL_HEIGHT as f32),
+        hip_out: Side::ALL.map(|side| stand::hip_out(side) / w),
+        slide: Side::ALL.map(|side| (reach(side) + 1.0) / w),
     }
 }
 
@@ -3008,6 +3267,363 @@ mod tests {
         let standing = at(&mut look, &mut c, start + life::arriving().len() + 30, false, false);
         assert!(matches!(standing.drawing, Drawing::Stand(_)) && look.is_here());
         assert_eq!(c.tour(), tour + 30, "son tour a repris à la fin de son arrivée");
+    }
+
+    /// Sur le côté `side` d'une fenêtre (n° 4), son point d'accroche en (1500, 900).
+    fn side_of(side: Side) -> crate::perch::Lurk {
+        let spot = crate::perch::FlankSpot { window: 4, side, along: 700.0, top: 200.0, height: 1400.0 };
+        crate::perch::Lurk { spot, at: Vec2::new(1500.0, 900.0) }
+    }
+
+    /// Effacée pour changer de place, puis mise derrière le côté `side` d'une fenêtre : elle y
+    /// arrive à l'image rendue.
+    fn to_a_side(look: &mut Look, c: &mut Capri, side: Side) -> u64 {
+        entered(look, c, 100);
+        assert!(look.travel(c, 100));
+        let mut frame = 100;
+        while !look.is_between() {
+            frame += 1;
+            at(look, c, frame, false, false);
+            assert!(frame < 300, "effacée");
+        }
+        c.lurk_on(side_of(side), look.lurk_fit().expect("ses planches debout"));
+        look.arrive(c, frame);
+        frame
+    }
+
+    /// Un pas : son corps avance d'un vingt-quatrième de seconde, puis son dessin.
+    fn glide(look: &mut Look, c: &mut Capri, frame: u64) -> Picture {
+        c.step(1.0 / 24.0, frame);
+        look.update(c, frame, false, false);
+        look.picture(c)
+    }
+
+    #[test]
+    fn lurking_she_glides_out_leaning_cut_at_the_edge_then_back_and_never_her_life_sheets() {
+        for side in Side::ALL {
+            let mut look = dressed(true, true);
+            let mut c = capri(&look);
+            let mut frame = to_a_side(&mut look, &mut c, side);
+            let o = side.outward();
+            assert!(!look.is_here() && !look.is_traveling() && !look.is_hidden());
+            // elle sort de derrière la fenêtre : sa boucle debout, penchée, coupée au bord ; sa
+            // position glisse vers l'extérieur, sans jamais reculer
+            let mut last = None;
+            let mut steps = 0;
+            while !look.is_here() {
+                frame += 1;
+                steps += 1;
+                let picture = glide(&mut look, &mut c, frame);
+                assert!(matches!(picture.drawing, Drawing::Stand(_)), "{side:?} : {picture:?}");
+                let lean = picture.lean.expect("penchée");
+                assert_eq!((lean.wall, lean.side, lean.angle), (1500.0, side, stand::lean(side)));
+                if let Some(last) = last {
+                    assert!((lean.pivot.x - last) * o >= 0.0, "{side:?} : elle recule");
+                }
+                last = Some(lean.pivot.x);
+                // derrière la fenêtre, rien ne l'attrape
+                assert!(!look.is_over(&c, Vec2::new(1500.0 - o * 3.0, lean.pivot.y)));
+                assert!(steps < 40, "{side:?} : elle n'en finit pas de sortir");
+            }
+            assert!((steps as f32 / 24.0 - crate::body::GLIDE).abs() < 0.1, "{side:?} : {steps} pas");
+            // sortie : sa hanche derrière le bord, ses yeux dehors, à `EYE_MARGIN` du bord au plus près
+            let picture = look.picture(&c);
+            let lean = picture.lean.expect("penchée");
+            let k = picture.rect.size.x / stand::CELL_WIDTH as f32;
+            assert!(((lean.pivot.x - 1500.0) * o - stand::hip_out(side) * k).abs() <= 1.0, "{lean:?}");
+            assert!((lean.pivot.y - 900.0).abs() <= 1.0);
+            let ((x0, y0), (x1, y1)) = stand::EYES;
+            for (x, y) in [(x0, y0), (x1 + 1, y0), (x1 + 1, y1 + 1), (x0, y1 + 1)] {
+                let eye = lean.turned(picture.rect.min + Vec2::new(x as f32, y as f32) * k);
+                assert!((eye.x - 1500.0) * o >= stand::EYE_MARGIN * k - 1.0, "{side:?} : {eye:?}");
+                assert!(lean.shows(eye));
+            }
+            // ce qui se voit d'elle l'attrape : le milieu de ses yeux
+            let eyes = Vec2::new((x0 + x1 + 1) as f32 / 2.0, (y0 + y1 + 1) as f32 / 2.0);
+            let face = lean.turned(picture.rect.min + eyes * k);
+            assert!(look.is_over(&c, face), "{side:?}");
+            // son bandeau : au-dessus de sa tête penchée, rien derrière la fenêtre
+            let shown = look.shown(&c);
+            assert!(shown.min.x <= face.x && face.x <= shown.max().x, "{side:?} : {shown:?}");
+            assert!((shown.min.x - 1500.0) * o >= -0.01 && (shown.max().x - 1500.0) * o >= -0.01);
+            assert!(shown.min.y < face.y - 50.0 * k && shown.max().y > face.y, "{side:?} : {shown:?}");
+            // ni sourire, ni sommeil, ni marche : un clic n'y fait rien
+            assert_eq!(look.poke(&mut c, frame), None);
+            assert!(!look.cheer(&mut c, frame) && !look.walk(&mut c, frame, 100.0));
+            // elle parle : sa bouche, penchée avec elle
+            c.step(1.0 / 24.0, frame + 1);
+            look.update(&mut c, frame + 1, true, false);
+            let talking = look.picture(&c);
+            assert!(talking.mouth.is_some() && talking.lean == Some(lean));
+            // elle repart : elle se retire derrière la fenêtre, toujours sa boucle, jamais sa vie
+            frame += 2;
+            assert!(look.travel(&mut c, frame));
+            let mut steps = 0;
+            while !look.is_between() {
+                frame += 1;
+                steps += 1;
+                let picture = glide(&mut look, &mut c, frame);
+                assert!(
+                    matches!(picture.drawing, Drawing::Stand(_)) && picture.lean.is_some(),
+                    "{picture:?}"
+                );
+                assert!(look.is_traveling() && !look.is_here());
+                assert!(steps < 40);
+            }
+            // partie : rien ne se voit d'elle
+            let shown = look.shown(&c);
+            assert!(shown.size.x.abs() < 0.01, "{side:?} : {shown:?}");
+        }
+    }
+
+    #[test]
+    fn hidden_or_shown_while_she_glides_she_turns_back_from_where_she_is() {
+        let mut look = dressed(true, true);
+        let mut c = capri(&look);
+        let mut frame = to_a_side(&mut look, &mut c, Side::Left);
+        for _ in 0..5 {
+            frame += 1;
+            glide(&mut look, &mut c, frame);
+        }
+        let out = c.lurk_out().unwrap();
+        assert!(out > 0.2 && out < 0.9, "{out}");
+        // cachée en sortant : elle se retire d'où elle en est
+        let before = c.position();
+        look.vanish(&mut c, frame);
+        assert!(look.is_hidden() && !look.is_gone());
+        frame += 1;
+        glide(&mut look, &mut c, frame);
+        assert!(c.lurk_out().unwrap() < out && (c.position() - before).length() < 30.0);
+        // montrée en se retirant : elle ressort
+        look.appear(&mut c, frame);
+        assert!(!look.is_hidden());
+        let back = c.lurk_out().unwrap();
+        frame += 1;
+        glide(&mut look, &mut c, frame);
+        assert!(c.lurk_out().unwrap() > back);
+        // cachée jusqu'au bout : partie, la fenêtre peut se cacher ; montrée, elle ressort
+        look.vanish(&mut c, frame);
+        while !look.is_gone() {
+            frame += 1;
+            glide(&mut look, &mut c, frame);
+            assert!(frame < 1000);
+        }
+        assert_eq!(c.lurk_out(), Some(0.0));
+        look.appear(&mut c, frame);
+        while !look.is_here() {
+            frame += 1;
+            glide(&mut look, &mut c, frame);
+            assert!(frame < 1000);
+        }
+        assert_eq!(c.lurk_out(), Some(1.0));
+    }
+
+    #[test]
+    fn her_side_gone_while_she_glides_she_stands_whole_where_she_is() {
+        // en sortant : debout, là, tout de suite
+        let mut look = dressed(true, true);
+        let mut c = capri(&look);
+        let mut frame = to_a_side(&mut look, &mut c, Side::Right);
+        frame += 3;
+        glide(&mut look, &mut c, frame);
+        c.take_off();
+        let picture = glide(&mut look, &mut c, frame + 1);
+        assert!(look.is_here() && picture.lean.is_none() && matches!(picture.drawing, Drawing::Stand(_)));
+        // en se retirant pour partir : debout, elle s'efface comme d'habitude, et part
+        let mut look = dressed(true, true);
+        let mut c = capri(&look);
+        let mut frame = to_a_side(&mut look, &mut c, Side::Right);
+        while !look.is_here() {
+            frame += 1;
+            glide(&mut look, &mut c, frame);
+        }
+        assert!(look.travel(&mut c, frame));
+        frame += 2;
+        glide(&mut look, &mut c, frame);
+        c.take_off();
+        frame += 1;
+        let picture = glide(&mut look, &mut c, frame);
+        assert!(life_cell(&picture).is_some_and(|cell| cell.strip == life::Strip::Leave), "{picture:?}");
+        while !look.is_between() {
+            frame += 1;
+            glide(&mut look, &mut c, frame);
+            assert!(frame < 1000);
+        }
+        // partie derrière sa fenêtre, qui s'en va : rien à montrer, comme d'habitude
+        let mut look = dressed(true, true);
+        let mut c = capri(&look);
+        let mut frame = to_a_side(&mut look, &mut c, Side::Left);
+        look.vanish(&mut c, frame);
+        while !look.is_gone() {
+            frame += 1;
+            glide(&mut look, &mut c, frame);
+        }
+        c.take_off();
+        glide(&mut look, &mut c, frame + 1);
+        assert!(look.is_gone());
+    }
+
+    #[test]
+    fn lurking_her_click_mask_stops_short_of_the_edge_by_its_turned_margin() {
+        // la dilatation de son masque (un carré), penchée de 22°, porte de 3·(cos + sin) en largeur
+        let edge = lurk_edge(stand::lean(Side::Left));
+        assert!((edge - 3.0 * (22f32.to_radians().cos() + 22f32.to_radians().sin())).abs() < 1e-4);
+        assert!((edge - 3.906).abs() < 1e-3 && lurk_edge(0.0) == MASK_GROW);
+        for side in Side::ALL {
+            let mut look = dressed(true, true);
+            let mut c = capri(&look);
+            let mut frame = to_a_side(&mut look, &mut c, side);
+            while !look.is_here() {
+                frame += 1;
+                glide(&mut look, &mut c, frame);
+            }
+            // son masque est plein : seule la distance au bord décide, à la hauteur de sa hanche
+            let picture = look.picture(&c);
+            let k = picture.rect.size.x / stand::CELL_WIDTH as f32;
+            let lean = picture.lean.unwrap();
+            let at = |gap: f32| Vec2::new(1500.0 + side.outward() * gap, lean.pivot.y);
+            assert!(!look.is_over(&c, at(edge * k - 0.2)), "{side:?} : dans la marge");
+            assert!(look.is_over(&c, at(edge * k + 0.2)), "{side:?} : au-delà");
+        }
+    }
+
+    #[test]
+    fn grabbed_lurking_she_straightens_around_what_the_cursor_holds() {
+        let mut look = dressed(true, true);
+        let mut c = capri(&look);
+        let mut frame = to_a_side(&mut look, &mut c, Side::Left);
+        while !look.is_here() {
+            frame += 1;
+            glide(&mut look, &mut c, frame);
+        }
+        let picture = look.picture(&c);
+        let lean = picture.lean.unwrap();
+        // le curseur sur ses yeux
+        let k = picture.rect.size.x / stand::CELL_WIDTH as f32;
+        let held = Vec2::new(65.0, 115.0);
+        let cursor = lean.turned(picture.rect.min + held * k);
+        let origin = look.grab_origin(&c, cursor).expect("guettant");
+        c.grab_at(cursor, origin, 0.0);
+        let after = at(&mut look, &mut c, frame + 1, false, false);
+        assert!(after.lean.is_none() && c.lurking().is_none() && c.is_held());
+        // le même endroit d'elle sous le curseur, à un pixel près (son image arrondie)
+        let now = after.rect.min + held * k;
+        assert!((now - cursor).length() <= 1.5, "{now:?} / {cursor:?}");
+    }
+
+    #[test]
+    fn grabbed_lurking_near_the_edges_of_the_screen_what_the_cursor_holds_stays_under_it() {
+        let screen = Rect::new(Vec2::ZERO, Vec2::new(3024.0, 1964.0));
+        for height in [240.0, 480.0, 840.0] {
+            let mut look = Look::new(wardrobe(true, true, true), height);
+            let (need, fit) = (look.lurk_stature().unwrap(), look.lurk_fit().unwrap());
+            // son côté au plus près du bord de l'écran qu'il permet, et le haut de la fenêtre tout en haut
+            let left = need.on(Side::Left).left + 0.5;
+            let right = screen.max().x - need.on(Side::Right).right - 0.5;
+            let windows = [
+                crate::perch::Seen {
+                    id: 1,
+                    rect: Rect::new(Vec2::new(left, 0.0), Vec2::new(1500.0, 1964.0)),
+                },
+                crate::perch::Seen {
+                    id: 2,
+                    rect: Rect::new(Vec2::new(right - 1500.0, 0.0), Vec2::new(1500.0, 1964.0)),
+                },
+            ];
+            for (index, window) in windows.iter().enumerate() {
+                let flanks = crate::perch::flanks(&windows[index..=index], screen, need);
+                for flank in &flanks {
+                    for y in [flank.lo, flank.hi] {
+                        let mut c = Capri::new(look.standing_size(), screen, Vec2::new(1000.0, 800.0));
+                        c.set_feet(look.standing_feet());
+                        c.step(0.0, 0);
+                        look.enter(&mut c, 0);
+                        c.lurk_on(flank.at(y), fit);
+                        c.emerge();
+                        for frame in 1..40 {
+                            glide(&mut look, &mut c, frame);
+                        }
+                        assert!(look.is_here(), "{window:?}");
+                        let picture = look.picture(&c);
+                        let lean = picture.lean.unwrap();
+                        let k = picture.rect.size.x / stand::CELL_WIDTH as f32;
+                        for held in [
+                            Vec2::new(66.0, 30.0),
+                            Vec2::new(66.0, 60.0),
+                            Vec2::new(40.0, 80.0),
+                            Vec2::new(66.0, 115.0),
+                        ] {
+                            let cursor = lean.turned(picture.rect.min + held * k);
+                            if !look.is_over(&c, cursor) {
+                                continue;
+                            }
+                            let mut h = c.clone();
+                            assert!(look.hold(&mut h, &Grab { at: cursor, since: 0.0, trail: Vec::new() }));
+                            let now = h.position() + held * k;
+                            assert!(
+                                (now - cursor).length() < 1e-2,
+                                "{height} px, {:?} : le point tenu à {} px du curseur",
+                                flank.side,
+                                (now - cursor).length()
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn she_glides_without_her_life_sheets_and_cannot_lurk_without_her_standing_ones() {
+        let mut look = Look::new(wardrobe(true, true, false), HEIGHT);
+        let mut c = capri(&look);
+        at(&mut look, &mut c, 0, false, false);
+        assert!(look.travel(&mut c, 0) && look.is_between(), "partie d'un coup");
+        c.lurk_on(side_of(Side::Right), look.lurk_fit().unwrap());
+        look.arrive(&mut c, 0);
+        assert!(!look.is_here(), "elle glisse quand même");
+        let mut frame = 0;
+        while !look.is_here() {
+            frame += 1;
+            glide(&mut look, &mut c, frame);
+            assert!(frame < 40);
+        }
+        // sans ses planches debout, rien
+        let bare = Look::new(wardrobe(false, true, true), HEIGHT);
+        assert!(bare.lurk_fit().is_none() && bare.lurk_stature().is_none());
+    }
+
+    #[test]
+    fn what_she_needs_to_lurk_scales_with_her_and_hides_her_whole_at_the_start() {
+        let fit = lurk_fit();
+        for height in [240.0, 600.0, 840.0] {
+            let need = lurking_stature(height);
+            let k = stand::scale(height);
+            for side in Side::ALL {
+                let bounds = stand::lurk_bounds(side);
+                let reach = need.on(side);
+                assert!((reach.up + bounds.min.y * k - ROUNDING).abs() < 1e-3);
+                assert_eq!(reach.left.min(reach.right), 0.0, "rien derrière la fenêtre");
+                let out = (-bounds.min.x).max(bounds.max().x) * k + ROUNDING;
+                assert!((reach.left.max(reach.right) - out).abs() < 1e-3);
+            }
+        }
+        // cachée au départ de sa glissade : chaque coin de sa silhouette penchée derrière le bord
+        for side in Side::ALL {
+            let i = side.index();
+            let w = stand::CELL_WIDTH as f32;
+            let shift = (fit.hip_out[i] - fit.slide[i]) * w; // hanche dehors, glissée vers l'intérieur
+            let hip = Vec2::new(stand::HIP.0, stand::HIP.1);
+            for (band, &(x0, x1)) in stand::OUTLINE.iter().enumerate() {
+                let y = (stand::TOP + band as u32 * stand::BAND) as f32;
+                for corner in [Vec2::new(x0 as f32, y), Vec2::new((x1 + 1) as f32, y + stand::BAND as f32)] {
+                    let p = stand::turn(corner, hip, stand::lean(side));
+                    // en x, depuis le bord, vers l'extérieur
+                    let out = (p.x - stand::HIP.0) * side.outward() + shift;
+                    assert!(out < 0.0, "{side:?} : {corner:?} dépasse de {out}");
+                }
+            }
+        }
     }
 
     #[test]

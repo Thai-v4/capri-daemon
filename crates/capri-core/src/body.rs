@@ -7,7 +7,7 @@ use std::collections::VecDeque;
 
 use crate::anim::Sheet;
 use crate::geom::{Rect, Vec2};
-use crate::perch::{Perch, Spot};
+use crate::perch::{Lurk, Perch, Spot};
 
 /// Ce qu'elle est en train de faire.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -30,6 +30,37 @@ pub enum Stance {
     /// (`act::fall_at`), à la cadence de l'écran ; le haut de l'écran ne la retient pas. Arrivée,
     /// elle flotte de nouveau.
     Falling { from: f32, to: f32, t: f32 },
+    /// Elle guette de derrière le côté d'une fenêtre (`lurk` dit laquelle, quel côté, et son point
+    /// d'accroche, sur le côté à la hauteur de sa hanche, voir [`crate::perch`]) : elle ne flotte
+    /// pas, suit le côté, et sa hanche est placée d'après [`LurkFit`] ; `look` la dessine penchée et
+    /// coupée net au bord. `out` dit combien elle est sortie de derrière la fenêtre (0 : rien ne se
+    /// voit d'elle ; 1 : penchée dehors), et elle glisse vers `toward` (0 ou 1) à la cadence de
+    /// l'écran, en [`GLIDE`] secondes d'un bout à l'autre.
+    Lurking { lurk: Lurk, out: f32, toward: f32 },
+}
+
+/// Guettant, elle sort de derrière la fenêtre, ou s'y retire, en tant de secondes d'un bout à
+/// l'autre (sa position, à la cadence de l'écran, pas ses dessins).
+pub const GLIDE: f32 = 0.6;
+
+/// Comment son image se place quand elle guette, d'après ses planches debout (`look` le calcule) :
+/// sa hanche dans son image (coordonnées normalisées), et, pour chaque côté
+/// ([`crate::perch::Side::index`]),
+/// de combien sa hanche est dehors, de l'autre côté du bord que la fenêtre (négatif : derrière la
+/// fenêtre), et de combien elle glisse pour être cachée tout entière, en fractions de la largeur de
+/// son image (elle grandit et rapetisse avec elle).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct LurkFit {
+    pub hip: Vec2,
+    pub hip_out: [f32; 2],
+    pub slide: [f32; 2],
+}
+
+/// Sa glissade, adoucie au départ et à l'arrivée (0 et 1 aux bouts, et au milieu à mi-chemin) : de
+/// quoi revenir sur ses pas à tout moment sans saut, sa place ne dépendant que de `out`.
+fn eased(out: f32) -> f32 {
+    let t = out.clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
 }
 
 /// Ce que le rendu doit dessiner à une image donnée.
@@ -142,6 +173,8 @@ pub struct Capri {
     /// Tenue : l'écart entre le curseur et son coin haut gauche vers lequel elle glisse à mesure
     /// que le curseur bouge ([`Capri::hold_toward`]) ; aucun, elle garde l'écart de la prise.
     toward: Option<Vec2>,
+    /// Guettant : comment son image se place ([`Capri::lurk_on`]).
+    fit: LurkFit,
 }
 
 impl Capri {
@@ -161,6 +194,7 @@ impl Capri {
             leave_frames: 0,
             tour: Tour { at: 0, from: 0 },
             toward: None,
+            fit: LurkFit::default(),
         };
         capri.clamp();
         capri
@@ -222,6 +256,47 @@ impl Capri {
         }
     }
 
+    /// Où elle guette, si elle guette.
+    pub fn lurking(&self) -> Option<Lurk> {
+        match self.stance {
+            Stance::Lurking { lurk, .. } => Some(lurk),
+            _ => None,
+        }
+    }
+
+    /// Guettant, combien elle est sortie de derrière la fenêtre (0 : rien ne se voit d'elle ; 1 :
+    /// penchée dehors).
+    pub fn lurk_out(&self) -> Option<f32> {
+        match self.stance {
+            Stance::Lurking { out, .. } => Some(out),
+            _ => None,
+        }
+    }
+
+    /// Guettant, glisse-t-elle (sort-elle de derrière la fenêtre, ou s'y retire-t-elle) ? Sa position
+    /// change alors à chaque rafraîchissement de l'écran.
+    pub fn is_gliding(&self) -> bool {
+        matches!(self.stance, Stance::Lurking { out, toward, .. } if out != toward)
+    }
+
+    /// Son corps suit-il quelque chose à la cadence de l'écran (voir `crate::pace`) : tenue,
+    /// lancée, en marche, en chute, ou en train de glisser de derrière une fenêtre ? Guettant
+    /// immobile, posée, flottant : non (sa fenêtre qui bouge, c'est la veille de `perch` qui le dit).
+    pub fn follows_screen(&self) -> bool {
+        match self.stance {
+            Stance::Held { .. } | Stance::Thrown { .. } | Stance::Walking { .. } | Stance::Falling { .. } => {
+                true
+            }
+            Stance::Lurking { .. } => self.is_gliding(),
+            Stance::Floating | Stance::Perched { .. } => false,
+        }
+    }
+
+    /// Comment son image se place quand elle guette (la dernière donnée par [`Capri::lurk_on`]).
+    pub fn lurk_fit(&self) -> LurkFit {
+        self.fit
+    }
+
     /// Combien d'images dure son départ d'un bord, avant qu'elle flotte de nouveau, debout.
     pub fn set_leave_frames(&mut self, frames: u64) {
         self.leave_frames = frames;
@@ -275,10 +350,61 @@ impl Capri {
         self.stance = Stance::Perched { spot: perch.spot, seat: perch.feet };
     }
 
+    /// Elle se retrouve derrière le côté d'une fenêtre, en `lurk`, d'un coup et sans geste, cachée
+    /// tout entière derrière (rien ne se voit d'elle) ; `fit` : comment son image s'y place (`look`).
+    /// Pour qu'elle en sorte : [`Capri::emerge`].
+    pub fn lurk_on(&mut self, lurk: Lurk, fit: LurkFit) {
+        self.fit = fit;
+        self.stance = Stance::Lurking { lurk, out: 0.0, toward: 0.0 };
+        self.squash = None;
+        self.gesture = None;
+        self.samples.clear();
+        self.place_lurking();
+    }
+
+    /// Guettant, elle suit le côté de sa fenêtre : en `lurk`, sans rien changer à sa glissade. Sans
+    /// effet si elle ne guette pas.
+    pub fn ride_flank(&mut self, lurk: Lurk) {
+        if let Stance::Lurking { out, toward, .. } = self.stance {
+            self.stance = Stance::Lurking { lurk, out, toward };
+            self.place_lurking();
+        }
+    }
+
+    /// Guettant, elle sort de derrière la fenêtre (vers sa pose penchée), d'où elle en est. Sans
+    /// effet si elle ne guette pas.
+    pub fn emerge(&mut self) {
+        if let Stance::Lurking { lurk, out, .. } = self.stance {
+            self.stance = Stance::Lurking { lurk, out, toward: 1.0 };
+        }
+    }
+
+    /// Guettant, elle se retire derrière la fenêtre (jusqu'à ce que rien ne se voie d'elle), d'où
+    /// elle en est. Sans effet si elle ne guette pas.
+    pub fn withdraw(&mut self) {
+        if let Stance::Lurking { lurk, out, .. } = self.stance {
+            self.stance = Stance::Lurking { lurk, out, toward: 0.0 };
+        }
+    }
+
+    /// Guettant, sa place : sa hanche à la hauteur de son point d'accroche, dehors de ce que dit
+    /// [`LurkFit`] une fois sortie, et d'autant plus vers l'intérieur qu'elle est cachée. Son image
+    /// n'est pas ramenée dans l'écran : ce qui se voit d'elle y est (le côté choisi le garantit),
+    /// ce qui est derrière la fenêtre n'est pas dessiné.
+    fn place_lurking(&mut self) {
+        let Stance::Lurking { lurk, out, .. } = self.stance else { return };
+        let (fit, side) = (self.fit, lurk.spot.side);
+        let i = side.index();
+        let dx = (fit.hip_out[i] - (1.0 - eased(out)) * fit.slide[i]) * self.size.x;
+        let hip = Vec2::new(lurk.at.x + side.outward() * dx, lurk.at.y);
+        self.pos = hip - Vec2::new(self.size.x * fit.hip.x, self.size.y * fit.hip.y);
+    }
+
     /// Elle se retrouve debout, ses pieds en `feet`, d'un coup et sans geste ; elle y flotte.
     pub fn set_at(&mut self, feet: Vec2) {
-        self.place_feet(feet);
+        // debout d'abord : guettant, son image n'est pas ramenée dans l'écran
         self.stance = Stance::Floating;
+        self.place_feet(feet);
         self.squash = None;
         self.gesture = None;
         self.samples.clear();
@@ -340,12 +466,20 @@ impl Capri {
     }
 
     /// Elle quitte son bord et se remet à flotter sur place, avec un petit étirement une fois son
-    /// départ joué ([`Capri::set_leave_frames`]). Sans effet si elle n'est pas posée.
+    /// départ joué ([`Capri::set_leave_frames`]). Guettant, elle ne guette plus : debout, entière et
+    /// dans l'écran, là où est son image, sans geste. Sans effet si elle n'est ni posée ni ne guette.
     pub fn take_off(&mut self) {
-        if let Stance::Perched { seat, .. } = self.stance {
-            self.place_feet(seat);
-            self.stance = Stance::Floating;
-            self.gesture = Some((self.frame + self.leave_frames, Gesture::Lifting));
+        match self.stance {
+            Stance::Perched { seat, .. } => {
+                self.place_feet(seat);
+                self.stance = Stance::Floating;
+                self.gesture = Some((self.frame + self.leave_frames, Gesture::Lifting));
+            }
+            Stance::Lurking { .. } => {
+                self.stance = Stance::Floating;
+                self.clamp();
+            }
+            _ => {}
         }
     }
 
@@ -363,6 +497,11 @@ impl Capri {
         if size == self.size {
             return;
         }
+        // guettant, sa hanche reste sur son point d'accroche
+        if self.lurking().is_some() {
+            self.size = size;
+            return self.place_lurking();
+        }
         let feet = self.feet();
         self.size = size;
         self.place_feet(feet);
@@ -374,10 +513,17 @@ impl Capri {
 
     /// On l'attrape avec le curseur en `cursor` à l'instant `t` (secondes), debout, son image
     /// debout replacée d'abord en `origin` (coin haut gauche) : on l'attrape assise, elle se lève
-    /// sous le curseur.
+    /// sous le curseur, ramenée dans l'écran ; guettant, elle se redresse sous lui, **exactement**
+    /// là, même en partie hors de l'écran (ce que tient le curseur reste sous lui) : comme une prise
+    /// ordinaire en partie dehors, l'écran l'empêche ensuite seulement d'en sortir davantage, et,
+    /// lâchée, elle y revient d'elle-même ([`RETURN`]).
     pub fn grab_at(&mut self, cursor: Vec2, origin: Vec2, t: f64) {
+        let lurking = self.lurking().is_some();
         self.pos = origin;
-        self.clamp();
+        self.stance = Stance::Floating;
+        if !lurking {
+            self.clamp();
+        }
         self.grab(cursor, t);
     }
 
@@ -461,6 +607,13 @@ impl Capri {
         if let Stance::Walking { to, speed } = self.stance {
             return self.walk(to, speed * dt.max(0.0));
         }
+        if let Stance::Lurking { lurk, out, toward } = self.stance {
+            // un pas qui n'est pas un nombre ne la fait pas glisser
+            let room = if dt > 0.0 { dt / GLIDE } else { 0.0 };
+            let out = if out < toward { (out + room).min(toward) } else { (out - room).max(toward) };
+            self.stance = Stance::Lurking { lurk, out, toward };
+            return self.place_lurking();
+        }
         if let Stance::Falling { from, to, t } = self.stance {
             return self.drop_by(from, to, t + dt.max(0.0));
         }
@@ -539,8 +692,11 @@ impl Capri {
         match self.stance {
             // en marche, son tour est arrêté : elle garde la hauteur de son flottement
             Stance::Floating | Stance::Walking { .. } => offset.y = self.float.at(self.tour()) * self.size.y,
-            // posée, ou en train de tomber : sans flotter, seul son trait continue de bouillir
-            Stance::Held { .. } | Stance::Perched { .. } | Stance::Falling { .. } => {}
+            // posée, guettant, ou en train de tomber : sans flotter, seul son trait continue de bouillir
+            Stance::Held { .. }
+            | Stance::Perched { .. }
+            | Stance::Falling { .. }
+            | Stance::Lurking { .. } => {}
             Stance::Thrown { vel } => {
                 // étirée dans le sens de la course, sa copie violette traîne derrière
                 let speed = vel.length() / self.size.y;
@@ -635,6 +791,10 @@ impl Capri {
     }
 
     fn clamp(&mut self) {
+        // guettant, sa place est celle de son point d'accroche (voir `place_lurking`)
+        if self.lurking().is_some() {
+            return;
+        }
         let max = self.bounds.max() - self.size;
         self.pos.x = self.pos.x.clamp(self.bounds.min.x, max.x.max(self.bounds.min.x));
         self.pos.y = self.pos.y.clamp(self.bounds.min.y, max.y.max(self.bounds.min.y));
@@ -648,6 +808,143 @@ mod tests {
     fn capri() -> Capri {
         let screen = Rect::new(Vec2::ZERO, Vec2::new(1920.0, 1080.0));
         Capri::new(Vec2::new(160.0, 300.0), screen, Vec2::new(800.0, 400.0))
+    }
+
+    /// Guettant : sa hanche au milieu de son image, 20 % de sa largeur derrière la fenêtre une fois
+    /// sortie, et une glissade de 70 % de sa largeur, des deux côtés.
+    const FIT: LurkFit = LurkFit { hip: Vec2::new(0.5, 0.6), hip_out: [-0.2, -0.2], slide: [0.7, 0.7] };
+
+    /// Sur le côté `side` d'une fenêtre dont le bord est en x = 1000, son point d'accroche en y = 500.
+    fn lurk(side: crate::perch::Side) -> Lurk {
+        let spot = crate::perch::FlankSpot { window: 3, side, along: 300.0, top: 200.0, height: 800.0 };
+        Lurk { spot, at: Vec2::new(1000.0, 500.0) }
+    }
+
+    /// Sa hanche, d'après son image.
+    fn hip(c: &Capri) -> Vec2 {
+        c.position() + Vec2::new(c.size().x * FIT.hip.x, c.size().y * FIT.hip.y)
+    }
+
+    #[test]
+    fn lurking_she_glides_out_from_behind_the_window_and_back_at_the_pace_of_the_screen() {
+        use crate::perch::Side;
+        for side in Side::ALL {
+            let mut c = capri();
+            c.lurk_on(lurk(side), FIT);
+            assert_eq!(c.lurk_out(), Some(0.0));
+            assert!(!c.is_gliding(), "elle attend qu'on la fasse sortir");
+            // cachée : sa hanche à 90 % de sa largeur derrière le bord
+            let o = side.outward();
+            assert!((hip(&c) - Vec2::new(1000.0 - o * 0.9 * 160.0, 500.0)).length() < 1e-3, "{side:?}");
+            assert_eq!(c.pose().rect.min, Vec2::new(c.position().x.round(), c.position().y.round()));
+            // elle sort, à pas de 120 Hz : sans à-coup, toujours vers l'extérieur, en GLIDE secondes
+            c.emerge();
+            let mut last = hip(&c).x;
+            let mut steps = 0;
+            while c.is_gliding() {
+                steps += 1;
+                c.step(1.0 / 120.0, steps / 5);
+                let x = hip(&c).x;
+                assert!((x - last) * o >= 0.0, "{side:?} : elle ne recule pas");
+                assert!((x - last).abs() <= 1.5 * 0.7 * 160.0 / GLIDE / 120.0 + 1e-3, "{side:?} : un saut");
+                last = x;
+                assert!(steps < 200);
+            }
+            assert!((steps as f32 / 120.0 - GLIDE).abs() < 0.02, "{side:?} : {steps}");
+            assert_eq!(c.lurk_out(), Some(1.0));
+            assert!((hip(&c) - Vec2::new(1000.0 - o * 0.2 * 160.0, 500.0)).length() < 1e-3);
+            // elle ne flotte pas, et suit son côté
+            c.step(1.0, 600);
+            assert!((hip(&c) - Vec2::new(1000.0 - o * 0.2 * 160.0, 500.0)).length() < 1e-3);
+            let moved = Lurk { at: Vec2::new(1100.0, 450.0), ..lurk(side) };
+            c.ride_flank(moved);
+            assert!((hip(&c) - Vec2::new(1100.0 - o * 0.2 * 160.0, 450.0)).length() < 1e-3);
+            // à mi-chemin de son retrait, elle revient sur ses pas sans saut
+            c.withdraw();
+            c.step(GLIDE / 2.0, 610);
+            assert!((c.lurk_out().unwrap() - 0.5).abs() < 1e-4);
+            let before = hip(&c);
+            c.emerge();
+            c.step(0.0, 611);
+            assert_eq!(hip(&c), before);
+            // une nouvelle taille : sa hanche reste sur son point d'accroche, à sa place dans la glissade
+            c.set_size(Vec2::new(80.0, 150.0));
+            assert!((hip(&c) - Vec2::new(1100.0 - o * (0.2 + 0.5 * 0.7) * 80.0, 450.0)).length() < 1e-3);
+            // un pas qui n'est pas un nombre ne la fait pas glisser
+            c.step(f32::NAN, 612);
+            assert!((c.lurk_out().unwrap() - 0.5).abs() < 1e-4);
+        }
+    }
+
+    #[test]
+    fn only_a_moving_body_follows_the_screen_and_lurking_only_while_she_glides() {
+        use crate::perch::Side;
+        let mut c = capri();
+        assert!(!c.follows_screen(), "elle flotte");
+        c.lurk_on(lurk(Side::Left), FIT);
+        assert!(!c.follows_screen(), "cachée, immobile");
+        c.emerge();
+        assert!(c.follows_screen(), "elle glisse");
+        c.step(GLIDE / 2.0, 1);
+        assert!(c.follows_screen());
+        c.step(GLIDE, 2);
+        assert!(!c.follows_screen(), "sortie, immobile : la boucle au repos");
+        c.withdraw();
+        assert!(c.follows_screen(), "elle se retire");
+        c.grab(Vec2::new(900.0, 500.0), 0.0);
+        assert!(c.follows_screen(), "tenue");
+        c.release(0.0);
+        assert!(!c.follows_screen());
+        assert!(c.walk_to(100.0, 50.0) && c.follows_screen(), "en marche");
+    }
+
+    #[test]
+    fn she_stops_lurking_whole_and_on_screen_where_she_is_or_when_grabbed() {
+        use crate::perch::Side;
+        // près du haut de l'écran : son image dépasse un peu (sa case a de la marge au-dessus)
+        let mut c = capri();
+        c.lurk_on(Lurk { at: Vec2::new(1000.0, 120.0), ..lurk(Side::Right) }, FIT);
+        assert!(c.position().y < 0.0, "{:?}", c.position());
+        // une nouvelle zone ne la déplace pas
+        let before = c.position();
+        c.set_bounds(Rect::new(Vec2::ZERO, Vec2::new(1920.0, 1080.0)));
+        assert_eq!(c.position(), before);
+        // son côté parti : debout, entière, dans l'écran, là où elle est, sans geste
+        c.take_off();
+        assert_eq!(c.stance(), Stance::Floating);
+        assert_eq!(c.position(), Vec2::new(before.x, 0.0));
+        assert_eq!(c.lurking(), None);
+        // attrapée guettant, son image replacée : tenue, exactement là, même en partie hors de
+        // l'écran (ce que tient le curseur reste sous lui) ; puis comme une prise ordinaire en
+        // partie dehors : l'écran l'empêche seulement d'en sortir davantage, et lâchée, elle y revient
+        for (cursor, origin) in [
+            (Vec2::new(1100.0, 400.0), Vec2::new(1050.0, -20.0)),
+            (Vec2::new(30.0, 400.0), Vec2::new(-47.0, 250.0)),
+            (Vec2::new(1900.0, 400.0), Vec2::new(1790.0, 250.0)),
+        ] {
+            let mut c = capri();
+            c.lurk_on(lurk(Side::Left), FIT);
+            c.emerge();
+            c.step(1.0, 30);
+            c.grab_at(cursor, origin, 0.0);
+            assert!(c.is_held() && c.lurking().is_none());
+            assert_eq!(c.position(), origin, "pas de saut à la prise");
+            let out =
+                |c: &Capri| (0.0 - c.position().x).max(c.position().x + 160.0 - 1920.0).max(-c.position().y);
+            let before = out(&c);
+            c.drag_to(cursor + Vec2::new(-30.0, -30.0), 0.02);
+            assert!(out(&c) <= before + 1e-3, "pas plus dehors");
+            c.release(1.0);
+            for frame in 31..80 {
+                c.step(1.0 / 24.0, frame);
+            }
+            assert!(out(&c) <= 1e-3, "revenue dans l'écran : {:?}", c.position());
+        }
+        // seulement en guettant
+        let mut c = capri();
+        c.emerge();
+        c.ride_flank(lurk(Side::Left));
+        assert_eq!(c.stance(), Stance::Floating);
     }
 
     #[test]

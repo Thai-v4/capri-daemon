@@ -23,8 +23,13 @@
 //! **Pour s'allonger** : de la lecture qu'elle fait déjà posée (ou après un changement de taille),
 //! elle déduit aussi s'il y a la place pour elle allongée là où elle est
 //! (`capri_core::perch::fits` : [`PerchView::room_to_lie`]). Aucune lecture de plus.
+//!
+//! **Quand elle guette** derrière le côté d'une fenêtre (sa vie l'y met, `roam_view`), elle suit sa
+//! fenêtre comme posée : la même veille, à la même cadence (`perch::Watch`), la même lecture
+//! (`capri_core::perch::follow_flank`), et rien d'autre. Son côté parti, recouvert, sorti de
+//! l'écran, sans la place, ou la case décochée : elle ne guette plus, debout, là où elle est.
 
-use capri_core::perch::{self, Seen, Stature, Watch};
+use capri_core::perch::{self, Kept, LurkStature, Seen, Stature, Watch};
 use capri_core::{Capri, Rect, Stance, Vec2};
 use capri_platform::Overlay;
 use capri_platform::desk::{self, DeskError};
@@ -84,23 +89,15 @@ impl PerchView {
 
     /// À chaque pas de la boucle, après celui de Capri, à l'instant `now` (secondes) : si elle
     /// vient de s'arrêter (lâchée doucement, ou au bout d'un lancer), se pose-t-elle sur un bord ?
-    /// Posée, elle suit sa fenêtre, ou la quitte. `period` : la durée d'un rafraîchissement de
-    /// l'écran, en secondes ; `stature` : ce qu'il lui faut sur un bord (`Look::stature`) ;
-    /// `lying` : pour s'y allonger (`Look::lying_stature`), si elle le peut.
-    pub fn tick(
-        &mut self,
-        capri: &mut Capri,
-        overlay: &Overlay,
-        now: f64,
-        period: f64,
-        stature: Stature,
-        lying: Option<Stature>,
-    ) {
+    /// Posée, elle suit sa fenêtre, ou la quitte ; guettant, de même. `period` : la durée d'un
+    /// rafraîchissement de l'écran, en secondes ; `statures` : ce qu'il lui faut sur un bord, pour
+    /// s'y allonger, et pour guetter.
+    pub fn tick(&mut self, capri: &mut Capri, overlay: &Overlay, now: f64, period: f64, statures: Statures) {
         let moving = matches!(capri.stance(), Stance::Held { .. } | Stance::Thrown { .. });
         if std::mem::replace(&mut self.moving, moving) && capri.stance() == Stance::Floating {
-            self.settle(capri, overlay, now, stature);
+            self.settle(capri, overlay, now, statures.seated);
         }
-        self.ride(capri, overlay, now, period, stature, lying);
+        self.ride(capri, overlay, now, period, statures);
     }
 
     /// D'après la dernière lecture faite posée : y a-t-il la place pour elle allongée, là où elle
@@ -121,7 +118,8 @@ impl PerchView {
         if self.trace.as_ref().is_some_and(|trace| trace.legacy) {
             return false; // la répétition « avant » : la boucle à 60 Hz, comme avant ce réglage
         }
-        self.enabled && capri.perched().is_some() && self.watch.hurried(now, self.mouse_down())
+        let watched = capri.perched().is_some() || capri.lurking().is_some();
+        self.enabled && watched && self.watch.hurried(now, self.mouse_down())
     }
 
     /// S'assoit-elle sur les fenêtres ? Le réglage se change dans son menu, qui n'existe que sur
@@ -130,7 +128,8 @@ impl PerchView {
         self.enabled
     }
 
-    /// Le lui permettre, ou le lui interdire : posée, elle repart aussitôt.
+    /// Le lui permettre, ou le lui interdire : posée, elle repart aussitôt ; guettant, elle ne
+    /// guette plus.
     #[cfg(any(target_os = "macos", windows))]
     pub fn set_enabled(&mut self, enabled: bool, capri: &mut Capri) {
         self.enabled = enabled;
@@ -138,21 +137,31 @@ impl PerchView {
             log::debug!("quitte le bord : désactivé");
             capri.take_off();
         }
+        if !enabled && capri.lurking().is_some() {
+            log::debug!("ne guette plus : désactivé");
+            capri.take_off();
+        }
     }
 
     /// Elle vient de changer de taille : posée, la place au-dessus de son bord lui suffit-elle
     /// encore ? Oui : elle y reste, ses pieds glissés s'il le faut pour tenir dans l'écran ; non
-    /// (ou la liste illisible) : elle repart flotter, là où elle est. Et allongée (`lying`) ?
-    pub fn resized(
-        &mut self,
-        capri: &mut Capri,
-        overlay: &Overlay,
-        now: f64,
-        stature: Stature,
-        lying: Option<Stature>,
-    ) {
+    /// (ou la liste illisible) : elle repart flotter, là où elle est. Et allongée ? Guettant, de
+    /// même : elle reste sur son côté, glissée le long de lui s'il le faut, ou ne guette plus.
+    pub fn resized(&mut self, capri: &mut Capri, overlay: &Overlay, now: f64, statures: Statures) {
         self.room_to_lie = false;
+        if capri.lurking().is_some() {
+            return self.follow_flank(
+                capri,
+                overlay,
+                now,
+                0.0,
+                statures,
+                true,
+                " après avoir changé de taille",
+            );
+        }
         let Some(spot) = capri.perched() else { return };
+        let stature = statures.seated;
         let Some(seen) = self.read(stature, overlay) else {
             log::debug!("quitte le bord : liste des fenêtres illisible");
             return capri.take_off();
@@ -161,10 +170,54 @@ impl PerchView {
             Ok(perch) => {
                 capri.ride(perch);
                 self.watch.saw(now, rect_of(&seen, spot.window));
-                self.measure_room(&seen, overlay, perch.spot, lying);
+                self.measure_room(&seen, overlay, perch.spot, statures.lying);
             }
             Err(why) => {
                 log::debug!("quitte le bord après avoir changé de taille : {}", why.describe());
+                capri.take_off();
+            }
+        }
+    }
+
+    /// Guettant, la veille de son côté (`perch::Watch::flank`, à sa cadence : `period`, un bouton
+    /// de la souris enfoncé ; `now_please` : relire tout de suite, après un changement de taille ou à
+    /// son arrivée) : elle le suit, ou ne guette plus (`when` : pour le journal). Sans effet si elle ne
+    /// guette pas.
+    #[allow(clippy::too_many_arguments)]
+    fn follow_flank(
+        &mut self,
+        capri: &mut Capri,
+        overlay: &Overlay,
+        now: f64,
+        period: f64,
+        statures: Statures,
+        now_please: bool,
+        when: &str,
+    ) {
+        let Some(lurk) = capri.lurking() else { return };
+        let (Some(lurking), true) = (statures.lurking, self.enabled) else {
+            log::debug!("ne guette plus : désactivé");
+            return capri.take_off();
+        };
+        if now_please {
+            self.watch.wake();
+        }
+        let mouse_down = self.mouse_down();
+        // la veille est à part le temps de la lecture, que fait `self`
+        let mut watch = std::mem::take(&mut self.watch);
+        let kept = watch.flank(lurk.spot, now, mouse_down, period, screen(overlay), lurking, || {
+            self.read(statures.seated, overlay)
+        });
+        self.watch = watch;
+        match kept {
+            Kept::Waiting => {}
+            Kept::Follows(lurk) => capri.ride_flank(lurk),
+            Kept::Lost(None) => {
+                log::debug!("ne guette plus{when} : liste des fenêtres illisible");
+                capri.take_off();
+            }
+            Kept::Lost(Some(why)) => {
+                log::debug!("ne guette plus{when} : {}", why.describe_side());
                 capri.take_off();
             }
         }
@@ -175,13 +228,25 @@ impl PerchView {
         self.watch.wake();
     }
 
-    /// Elle vient d'être posée sur le bord qu'elle a choisi (`roam_view`), à l'instant `now`, et va
-    /// y apparaître : sa fenêtre relue tout de suite, comme le ferait sa veille posée. Toujours
-    /// là, elle la suit ; partie, déplacée hors de sa portée, la liste illisible, ou si elle ne
-    /// s'assoit plus sur les fenêtres : elle la quitte, et apparaîtra debout.
-    pub fn arrived(&mut self, capri: &mut Capri, overlay: &Overlay, now: f64, stature: Stature) {
+    /// Elle vient d'être posée sur le bord qu'elle a choisi (`roam_view`), ou mise derrière le côté
+    /// qu'elle a choisi, à l'instant `now`, et va y apparaître : sa fenêtre relue tout de suite,
+    /// comme le ferait sa veille posée. Toujours là, elle la suit ; partie, déplacée hors de sa
+    /// portée, la liste illisible, ou si elle ne s'assoit plus sur les fenêtres : elle la quitte, et
+    /// apparaîtra debout. `lurking` : ce qui se voit d'elle quand elle guette.
+    pub fn arrived(
+        &mut self,
+        capri: &mut Capri,
+        overlay: &Overlay,
+        now: f64,
+        stature: Stature,
+        lurking: Option<LurkStature>,
+    ) {
         // la place pour s'allonger sera sue à la lecture suivante de sa veille posée
         self.room_to_lie = false;
+        if capri.lurking().is_some() {
+            let statures = Statures { seated: stature, lying: None, lurking };
+            return self.follow_flank(capri, overlay, now, 0.0, statures, true, " sur le côté choisi");
+        }
         let Some(spot) = capri.perched() else { return };
         if !self.enabled {
             return capri.take_off();
@@ -247,15 +312,17 @@ impl PerchView {
     }
 
     /// Posée, elle suit sa fenêtre, ou la quitte ; et sait s'il y a la place pour elle allongée.
-    fn ride(
-        &mut self,
-        capri: &mut Capri,
-        overlay: &Overlay,
-        now: f64,
-        period: f64,
-        stature: Stature,
-        lying: Option<Stature>,
-    ) {
+    /// Guettant, elle suit sa fenêtre, ou ne guette plus.
+    fn ride(&mut self, capri: &mut Capri, overlay: &Overlay, now: f64, period: f64, statures: Statures) {
+        let Statures { seated: stature, lying, .. } = statures;
+        if capri.lurking().is_some() {
+            self.room_to_lie = false;
+            if !self.enabled || statures.lurking.is_none() {
+                log::debug!("ne guette plus : désactivé");
+                return capri.take_off();
+            }
+            return self.follow_flank(capri, overlay, now, period, statures, false, "");
+        }
         let Some(spot) = capri.perched() else {
             self.room_to_lie = false;
             return;
@@ -326,6 +393,22 @@ impl PerchView {
                 None
             }
         }
+    }
+}
+
+/// Ce qu'il lui faut sur les fenêtres, tel que son dessin le dit : sur un bord (`Look::stature`),
+/// pour s'y allonger (`Look::lying_stature`) et pour guetter derrière un côté
+/// (`Look::lurk_stature`), si elle le peut.
+#[derive(Clone, Copy, Debug)]
+pub struct Statures {
+    pub seated: Stature,
+    pub lying: Option<Stature>,
+    pub lurking: Option<LurkStature>,
+}
+
+impl Statures {
+    pub fn of(look: &capri_core::look::Look) -> Self {
+        Self { seated: look.stature(), lying: look.lying_stature(), lurking: look.lurk_stature() }
     }
 }
 
