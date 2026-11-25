@@ -2507,7 +2507,8 @@ d'après son journal, et aucun de ces points n'a été confirmé un par un). Il 
 
 **Elle guette de derrière une fenêtre : à regarder à la main** (écrit et testé sans écran le 24
 novembre 2026 ; vu par l'utilisateur le même jour, « tout est bon », dans l'ensemble : aucun de
-ces points n'a été confirmé un par un). Il faut qu'aucun bord ne convienne : une
+ces points n'a été confirmé un par un ; d'après son journal du 24 au 25 novembre, elle est allée
+trois fois derrière un côté d'elle-même, sans avertissement ni erreur). Il faut qu'aucun bord ne convienne : une
 fenêtre dont le haut est près de la barre des menus, avec de la place à côté, puis « Changer de
 place » dans son menu :
 
@@ -2530,8 +2531,10 @@ place » dans son menu :
 12. **le processeur** : au repos quand elle guette sans bouger.
 
 **Elle se repose : à regarder à la main** (écrit et testé sans écran le 24 novembre 2026 ;
-d'après son journal, elle s'est endormie debout une fois dans la vraie app le même jour, ses
-planches chargées en 35 ms ; rien n'a été confirmé à l'œil). Il faut la laisser tranquille 6 à 12 minutes, assise sur un
+d'après son journal du 24 au 25 novembre, elle s'est endormie debout six fois dans la vraie
+app, ses planches chargées en 35 à 43 ms puis rendues, réveillée quatre fois parce qu'on
+s'occupait d'elle et une fois d'elle-même ; elle ne s'y est jamais assise d'elle-même, aucun
+bord ne convenant, donc jamais allongée ; rien n'a été confirmé à l'œil). Il faut la laisser tranquille 6 à 12 minutes, assise sur un
 bord assez large, sans musique :
 
 1. **elle s'allonge** : le passage d'assise à allongée, et sa hanche qui reste au même endroit ;
