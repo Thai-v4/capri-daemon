@@ -100,7 +100,11 @@ côté d'une fenêtre, penchée et coupée au bord, au lieu d'aller debout en ba
 lancée avec ses vrais réglages : « tout est bon » (la pose, la glissade, un clic à côté d'elle
 qui va à la fenêtre), dans l'ensemble, pas point par point (son journal : derrière le côté
 gauche puis le droit sur demande, assise dès qu'un bord existait, debout en bas de l'écran sans
-bord ni côté).
+bord ni côté). Le 25 novembre 2026, la Capri du dépôt, avec tous ces lots, est installée dans
+`/Applications` par `tools/install-macos.sh`, signée par l'identité de l'utilisateur : 49 images
+dans l'app, signature vérifiée, rien resté à côté ; pas lancée par le script. Elle porte encore
+le numéro 0.2.0, comme la version publiée, qui n'a aucun de ces lots ; le hook de Claude Code
+n'était pas branché, rien n'y a été écrit.
 Reste : se tourner des deux côtés (lot 7). Des dessins
 générés par un outil d'images ont été essayés le même jour pour un coucou de la main, trois
 fois, et écartés : aucun ne se mêlait à ses dessins ; deux essais de plus le 24 novembre, pour
